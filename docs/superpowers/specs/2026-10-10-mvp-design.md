@@ -43,7 +43,7 @@ The MVP is done when **10 real tasks** across at least two target repositories h
 Review with a pull request, and for each of them:
 
 - the cost of every step is visible on the card;
-- the board's computed cost is within 2% of the `total_cost_usd` Claude Code reported;
+- the board's computed cost is within 2% of the cost Claude Code reported (§4);
 
 and **at least one** of the ten paused on an approval request and resumed correctly from an
 answer given on the board.
@@ -155,11 +155,27 @@ and kept honest by the reconciliation below: a price that goes stale shows up as
 that model drifting from what Claude Code reported. Tests use fixture prices and never the real
 ones.
 
-**Usage sources.** Assistant messages in `stream-json` carry `usage` and the model id; those of
-subagents carry `parent_tool_use_id`, which attributes them to the subagent. Hooks add tool
-calls, which carry no usage. The `result` message that ends each `claude -p` carries
-`total_cost_usd`; the runner records it on the `phase_end` event, and the cost tab flags a phase
-whose computed cost differs from it by more than 2%.
+**Usage sources.** Corrected on 2026-10-11 from two recorded runs of Claude Code 2.1.212, before
+anything was built; the first version of this paragraph assumed per-message usage was final.
+
+- **The phase agent's messages:** `message_start` and `message_delta` stream events, which
+  `--include-partial-messages` turns on. `message_delta` carries the final output count. The
+  `assistant` events cannot be used for this: each content block of one message repeats the
+  same `usage`, and its `output_tokens` is the count when streaming began.
+- **A subagent:** the `tool_use_result` of the phase agent's `Agent` call, which carries the
+  subagent's whole usage, its type and its model. Subagents run as background tasks and send
+  no stream events of their own; their messages carry `parent_tool_use_id`.
+- **Claude Code's own calls:** small requests the CLI makes that appear as no message. The last
+  `result` message of a process carries `modelUsage`, the process's cumulative totals per
+  model. The runner records the difference between those totals and everything it attributed
+  as one `message` event with agent `claude-code`, so the counters on the card sum to exactly
+  what Claude Code counted.
+- Hooks add tool calls, which carry no usage.
+
+One process can emit several `result` messages, since a subagent's completion starts a new turn;
+only the last one counts. `modelUsage` also carries Claude Code's own `costUSD` per model, which
+the runner records on `phase_end`. The cost tab flags a phase whose computed cost differs from it
+by more than 2%: with the counters exact, that difference can only be a stale price row.
 
 **Event types** are the platform design's list without `budget_threshold`: `phase_start`,
 `phase_end`, `message`, `tool_call`, `subagent_start`, `subagent_stop`,
@@ -263,9 +279,15 @@ claude -p "<handoff>" \
   --allowedTools <the phase's tools> \
   --settings <rundir>/settings.json \
   --mcp-config <rundir>/mcp.json --strict-mcp-config \
+  --setting-sources project \
   [--max-budget-usd <task budget>] \
-  --output-format stream-json --verbose
+  --include-partial-messages --output-format stream-json --verbose
 ```
+
+`--setting-sources project` keeps the owner's user-level plugins, hooks and permissions out of
+the run: a recorded run without it carried a user plugin's session hook into the agent's
+context. The target repository's own project settings and `CLAUDE.md` still load. `--bare`
+would isolate further but reads no OAuth login, and the runner uses the owner's.
 
 The phase's tools go both into the agent's `tools` and into `--allowedTools`, so a headless run
 never stops on a permission prompt; what those tools may touch is the guard's job, below. The
@@ -426,7 +448,9 @@ and testable on its own, each with its own plan.
 table in §4; projects, tasks and the spec editor with lint and approval; the runner with Plan,
 Build and Verify, the event and guard hooks (deny list only — an out-of-plan edit is denied
 outright), the board MCP tools without `request_approval`; push, PR and the poller; the board,
-the Timeline, Cost and PR tabs. Every plan goes straight to Build, its confidence recorded. At
+the Timeline, Cost and PR tabs. Every plan goes straight to Build, its confidence recorded. Until
+slice 2 brings Blocked and Resume, a failed `git` or `gh` step fails the run, with the command
+and its output on the card, and Re-run starts it again. At
 the end of this slice the owner writes a spec, approves it and gets a pull request with every
 step's cost on the card. **This is the slice that delivers the driving case in §1**, and nothing
 below it starts first.
