@@ -198,7 +198,9 @@ git switch -c feat/slice-1-task-to-pr
   "description": "A board where Claude carries out each task through Spec, Plan, Build and Verify",
   "license": "UNLICENSED",
   "workspaces": ["server"],
-  "engines": { "node": ">=24.0.0" },
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "prettier": "charter/stacks/typescript/prettier",
   "scripts": {
     "test": "./run test",
@@ -438,7 +440,9 @@ esac
   "name": "@board/server",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=24.0.0" },
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/src/server.js",
@@ -500,7 +504,12 @@ npm install
 cp node_modules/charter/core/ignore/prettierignore .prettierignore
 diff .gitignore node_modules/charter/core/ignore/gitignore
 npx --no charter init backend typescript node vitest --workspace server
+npx prettier --write package.json server/package.json
 ```
+
+Prettier lays out a `package.json` the way npm writes it, with every array and object
+expanded, which a `json` block in this plan cannot show. Format each `package.json` this way
+whenever a later task writes or edits one.
 
 Expected: `npm install` succeeds; `diff` prints nothing (the founding commit copied
 `.gitignore` from the kit, and 3.3.0's copy is the same file); `init` writes `charter.json`,
@@ -7586,8 +7595,12 @@ send(events: RunnerEvent[]): Promise<void>; flush(): Promise<void> }` — append
   "name": "@board/runner",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=24.0.0" },
-  "bin": { "board-cli": "bin/board-cli" },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "bin": {
+    "board-cli": "bin/board-cli"
+  },
   "scripts": {
     "daemon": "bin/board-cli daemon",
     "test": "vitest run"
@@ -11347,7 +11360,9 @@ exercised by the browser journey in Task 26.
   "name": "@board/web",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=24.0.0" },
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
