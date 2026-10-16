@@ -21,3 +21,5 @@ playwright-report/
 
 # Scratch for plan execution: ledgers, briefs, review packages. Git history is the record.
 .superpowers/
+
+.claude/rules/charter/

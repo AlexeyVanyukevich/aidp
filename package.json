@@ -1,0 +1,25 @@
+{
+  "name": "ai-task-board",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A board where Claude carries out each task through Spec, Plan, Build and Verify",
+  "license": "UNLICENSED",
+  "workspaces": [
+    "server"
+  ],
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "prettier": "charter/stacks/typescript/prettier",
+  "scripts": {
+    "test": "./run test",
+    "check": "./run check",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "charter": "github:AlexeyVanyukevich/charter#v3.3.0",
+    "prettier": "^3.9.6",
+    "typescript": "^7.0.2"
+  }
+}

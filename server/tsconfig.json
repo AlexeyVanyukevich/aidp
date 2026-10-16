@@ -1,0 +1,5 @@
+{
+  "extends": "charter/stacks/node/tsconfig",
+  "compilerOptions": { "outDir": "dist", "rootDir": "." },
+  "include": ["src", "tests", "scripts"]
+}
