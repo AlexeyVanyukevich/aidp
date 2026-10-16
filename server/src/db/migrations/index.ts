@@ -1,0 +1,11 @@
+import type { Migration } from 'kysely/migration'
+import * as initial from './001_initial.js'
+
+/**
+ * Listed rather than discovered from disk: a file provider imports at runtime, which fails
+ * wherever TypeScript cannot be loaded directly, such as Vitest's global setup. Keys are the
+ * names Kysely records; they apply in lexicographic order, so keep the numeric prefix.
+ */
+export const migrations: Record<string, Migration> = {
+  '001_initial': initial,
+}
