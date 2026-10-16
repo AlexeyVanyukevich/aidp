@@ -857,8 +857,8 @@ export interface ApprovalRequestsTable {
   recommendation: string | null
   context_md: string | null
   status: 'open' | 'answered' | 'expired'
-  answer: JSONColumnType<unknown, string | null, string | null>
-  checkpoint: JSONColumnType<unknown, string | null, string | null>
+  answer: ColumnType<unknown, string | null, string | null>
+  checkpoint: ColumnType<unknown, string | null, string | null>
   created_at: Generated<Date>
   answered_at: NullableTimestamp
 }
@@ -870,7 +870,7 @@ export interface ArtifactsTable {
   kind: ArtifactKind
   body_md: string
   uri: string | null
-  data: JSONColumnType<unknown, string | null, string | null>
+  data: ColumnType<unknown, string | null, string | null>
   created_at: Generated<Date>
 }
 
