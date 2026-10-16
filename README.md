@@ -18,5 +18,5 @@ that drives Claude Code in git worktrees of the owner's repositories.
 
 ## Conventions
 
-This repository follows the shared `dev-kit` package, from `v2.2.0`. Slice 1 installs it and
-loads its sections; until then, the rules are in that package's README.
+This repository follows the shared `charter` package, from `v3.3.0`. Slice 1 installs it and
+records each workspace's modules; until then, the rules are in that package's README.

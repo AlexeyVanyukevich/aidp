@@ -15,8 +15,8 @@ Vite + React single-page app the server serves from the same origin.
 
 **Tech Stack:** Node 24, TypeScript 7, Fastify 5, TypeBox (`typebox`), Kysely + `pg`,
 PostgreSQL 16, `@modelcontextprotocol/sdk` 1.32 with `zod` 4, Vitest 4 + Testcontainers 12,
-React 19, React Router 7, TanStack Query 5, Vite 8, Playwright 1.62, the `dev-kit` package at
-`v2.2.0`.
+React 19, React Router 7, TanStack Query 5, Vite 8, Playwright 1.62, the `charter` package at
+`v3.3.0`.
 
 **Spec:** [`docs/superpowers/specs/2026-10-10-mvp-design.md`](../specs/2026-10-10-mvp-design.md),
 §13 "Slice 1". Read it before starting; this plan argues from it and does not restate its
@@ -25,18 +25,21 @@ reasons.
 ## Global Constraints
 
 - Node `>=24.0.0`; every workspace's `package.json` says so in `engines`.
-- The kit: `"dev-kit": "github:AlexeyVanyukevich/dev-kit#v2.2.0"`. Root `CLAUDE.md` imports
-  `common` and `testing`; `server/CLAUDE.md` and `runner/CLAUDE.md` import
-  `@../node_modules/dev-kit/backend/rules.md`; `web/CLAUDE.md` imports
-  `@../node_modules/dev-kit/ui/rules.md`.
+- The kit: `"charter": "github:AlexeyVanyukevich/charter#v3.3.0"`. The root `CLAUDE.md` is the
+  one `@` import, `core`'s; every other rule loads by path from the mirror `charter sync`
+  writes. `charter.json` records each workspace's modules, written by `npx --no charter init`:
+  `server` takes `backend typescript node vitest`, `runner` takes `typescript node vitest`, and
+  `web` takes `typescript react vitest`. No workspace has a `CLAUDE.md` of its own; `init`
+  writes each one's `.claude/settings.json` instead.
 - Backend workspaces (`server/`, `runner/`) resolve `NodeNext`: every relative import ends in
   `.js`. `web/` resolves as a bundler: no extension.
 - TypeBox comes from `typebox`, never `@sinclair/typebox`. No `any` in hand-written code;
   `Kysely<any>` only in migrations.
 - Every error response is `{ "error": "<code>", "message": "…", "details"?: {} }` with the
   kit's codes. Every request body schema has `additionalProperties: false`.
-- Commits: Conventional Commits, subject line only, no body, no `Co-Authored-By` trailer.
-  Scopes: `db`, `server`, `mcp`, `runner`, `web`, `ui`, `deps`. Work on branch
+- Commits: Conventional Commits, subject line only, 72 characters at most, no body, no
+  `Co-Authored-By` trailer. The kit's `commit-msg` hook, which `./run` installs, refuses
+  anything else. Scopes: `db`, `server`, `mcp`, `runner`, `web`, `ui`, `deps`. Work on branch
   `feat/slice-1-task-to-pr`; merge by rebase.
 - Tests first for every task. One behaviour's cases in an `it.each` table. Clock and network
   injected. Database tests against a real PostgreSQL from Testcontainers.
@@ -72,6 +75,15 @@ These are not in the spec and a reviewer should know they were made here:
   worktrees of paused runs.
 - Two known gaps are recorded in `docs/backlog.md` by Task 27 rather than closed here: no
   lost-runner sweeper (slice 2), and cache writes priced at one rate.
+- `modules/runner/`, `modules/mcp/` and `modules/stream/` keep singular names. They are named
+  for the interface they serve, not for an entity, so the layout rule's plural directory has
+  nothing to pluralise.
+- The runner takes `typescript node vitest` and not the `backend` domain: it serves no HTTP and
+  has no `src/modules/`, and under the kit's modules it no longer needs `backend` to get the
+  `NodeNext` rule.
+- `web` takes the stacks the kit's 2.x `ui` section held, `typescript react vitest`. The kit's
+  `frontend` domain and `playwright` stack (3.1) are not taken in this slice: they would need
+  the spec to state the board's accessibility and Tasks 22–26 to be rewritten for them.
 
 ## Review Focus
 
@@ -98,9 +110,9 @@ has its test in the task that owns the code.
 ```
 ai-task-board/
   package.json  CLAUDE.md  CONTRIBUTING.md  README.md  run  docker-compose.yml  .env.example
-  .gitignore  .prettierignore  playwright.config.ts
+  .gitignore  .prettierignore  playwright.config.ts  charter.json  .claude/settings.json
   server/
-    package.json  tsconfig.json  vitest.config.ts  CLAUDE.md
+    package.json  tsconfig.json  vitest.config.ts  .claude/settings.json
     scripts/set-price.ts                      price rows from the command line
     src/
       server.ts  app.ts  config.ts
@@ -117,7 +129,7 @@ ai-task-board/
         stream/    stream.routes.ts
     tests/unit/  tests/integration/  (global-setup.ts, helpers.ts, fixtures.ts)
   runner/
-    package.json  tsconfig.json  vitest.config.ts  CLAUDE.md
+    package.json  tsconfig.json  vitest.config.ts  .claude/settings.json
     bin/board-cli                             runs src/cli.ts through tsx
     scripts/record-stream.sh  scripts/smoke.ts
     src/
@@ -130,7 +142,7 @@ ai-task-board/
     tests/fixtures/stream/{plain,subagent}.ndjson   recorded, never hand-written
     tests/fake/{fake-claude, fake-claude.ts, fake-gh, stream-replay.ts}
   web/
-    package.json  tsconfig.json  vite.config.ts  index.html  CLAUDE.md
+    package.json  tsconfig.json  vite.config.ts  index.html  .claude/settings.json
     src/main.tsx  App.tsx  api.ts  types.ts  stream.ts  styles.css
     src/routes/{Projects,Board}.tsx
     src/board/{columns.ts,TaskCardView.tsx,board.css}
@@ -156,7 +168,9 @@ Each module follows the kit's layout. The pure cores — `transitions.ts`, `spec
 - Create: `package.json`, `CLAUDE.md`, `CONTRIBUTING.md`, `.env.example`, `.prettierignore`,
   `docker-compose.yml`, `run`
 - Create: `server/package.json`, `server/tsconfig.json`, `server/vitest.config.ts`,
-  `server/CLAUDE.md`, `server/src/config.ts`
+  `server/src/config.ts`
+- Create through `charter init`: `charter.json`, `.claude/settings.json`,
+  `server/.claude/settings.json`; Modify: `.gitignore`
 - Test: `server/tests/unit/config.test.ts`
 
 **Interfaces:**
@@ -185,14 +199,14 @@ git switch -c feat/slice-1-task-to-pr
   "license": "UNLICENSED",
   "workspaces": ["server"],
   "engines": { "node": ">=24.0.0" },
-  "prettier": "dev-kit/common/prettier",
+  "prettier": "charter/stacks/typescript/prettier",
   "scripts": {
     "test": "./run test",
     "check": "./run check",
     "format": "prettier --write ."
   },
   "devDependencies": {
-    "dev-kit": "github:AlexeyVanyukevich/dev-kit#v2.2.0",
+    "charter": "github:AlexeyVanyukevich/charter#v3.3.0",
     "prettier": "^3.9.6",
     "typescript": "^7.0.2"
   }
@@ -216,12 +230,12 @@ planning.
 
 ## Conventions
 
-The shared ones come from the `dev-kit` package. `common` and `testing` load here; `backend`
-loads in `server/CLAUDE.md` and `runner/CLAUDE.md`, `ui` in `web/CLAUDE.md`. Start sessions at
-the repository root, or the workspaces' imports are not followed.
+The shared ones come from the `charter` package. `core` loads here, always. Each workspace's
+other modules, recorded in `charter.json`, load by path: a rule arrives once a session reads a
+file it applies to. Start sessions at the repository root, where one session works on every
+workspace.
 
-@node_modules/dev-kit/common/rules.md
-@node_modules/dev-kit/testing/rules.md
+@node_modules/charter/core/rules.md
 
 `CONTRIBUTING.md` holds this repository's own conventions.
 ```
@@ -231,13 +245,14 @@ the repository root, or the workspaces' imports are not followed.
 ```markdown
 # Contributing
 
-The conventions this project shares with its siblings come from the `dev-kit` package and are
+The conventions this project shares with its siblings come from the `charter` package and are
 not restated here. After `npm install`, or the first `./run`, which does it, they are in
-`node_modules/dev-kit/`. Everything below is this repository's own.
+`node_modules/charter/`. `charter.json` says which of its modules each workspace takes.
+Everything below is this repository's own.
 
 ## Layout
 
-`server/`, `runner/` and `web/` are npm workspaces. The two backend workspaces follow the kit's
+`server/`, `runner/` and `web/` are npm workspaces. The server follows the kit's backend
 layout; tests sit in each workspace's `tests/{unit,integration}/`, and the browser journeys,
 which drive the whole product, at the root in `tests/ui/`.
 
@@ -309,9 +324,9 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # This script is what installs dependencies, so it cannot source out of node_modules before the
 # kit is there. The test is for the file rather than the directory.
-[ -f node_modules/dev-kit/common/lib.sh ] ||
+[ -f node_modules/charter/core/lib.sh ] ||
   GITHUB_TOKEN="${GITHUB_TOKEN:-$(gh auth token 2>/dev/null || true)}" npm install
-source node_modules/dev-kit/common/lib.sh
+source node_modules/charter/core/lib.sh
 
 load_env_file
 
@@ -357,7 +372,7 @@ run_migrations() {
 # ── scenarios ────────────────────────────────────────────────────────────────
 
 scenario_dev() {
-  need_node; need_deps; need_local_env
+  need_node; need_deps; need_plugins; need_hooks; need_local_env
   start_db
   run_migrations
   export DATABASE_URL="${DATABASE_URL:-$COMPOSE_DB_URL}"
@@ -367,13 +382,13 @@ scenario_dev() {
 }
 
 scenario_test() {
-  need_node; need_deps; need_docker
+  need_node; need_deps; need_plugins; need_hooks; need_docker
   step "Server suite"
   npm run --workspace server test
 }
 
 scenario_check() {
-  need_node; need_deps
+  need_node; need_deps; need_plugins; need_hooks
   step "Types"
   ( cd server && npx tsc --noEmit )
   step "Formatting"
@@ -384,7 +399,7 @@ scenario_check() {
 }
 
 scenario_migrate() {
-  need_node; need_deps; need_local_env
+  need_node; need_deps; need_plugins; need_hooks; need_local_env
   start_db
   run_migrations
   ok "Migrations applied"
@@ -454,7 +469,7 @@ esac
 
 ```json
 {
-  "extends": "dev-kit/backend/tsconfig",
+  "extends": "charter/stacks/node/tsconfig",
   "compilerOptions": { "outDir": "dist", "rootDir": "." },
   "include": ["src", "tests", "scripts"]
 }
@@ -478,27 +493,21 @@ export default defineConfig({
 })
 ```
 
-`server/CLAUDE.md`:
-
-```markdown
-# server
-
-The `backend` section of the shared rules, for the Fastify service and its tests. The
-repository's own conventions are in the root `CLAUDE.md` and `CONTRIBUTING.md`.
-
-@../node_modules/dev-kit/backend/rules.md
-```
-
-- [ ] **Step 5: Install and take the kit's ignore files**
+- [ ] **Step 5: Install, take the kit's ignore files, and record the server's modules**
 
 ```bash
 npm install
-cp node_modules/dev-kit/common/ignore/prettierignore .prettierignore
-diff .gitignore node_modules/dev-kit/common/ignore/gitignore
+cp node_modules/charter/core/ignore/prettierignore .prettierignore
+diff .gitignore node_modules/charter/core/ignore/gitignore
+npx --no charter init backend typescript node vitest --workspace server
 ```
 
-Expected: `npm install` succeeds; `diff` prints nothing (the founding commit already copied
-`.gitignore` from the same kit version).
+Expected: `npm install` succeeds; `diff` prints nothing (the founding commit copied
+`.gitignore` from the kit, and 3.3.0's copy is the same file); `init` writes `charter.json`,
+`.claude/settings.json` and `server/.claude/settings.json`, and appends
+`.claude/rules/charter/` to `.gitignore`. The `CLAUDE.md` import is already there, so it leaves
+that file alone. `ls .claude/rules/charter/server` lists `backend typescript node`, and
+`.git/hooks/commit-msg` calls `node_modules/charter/core/hooks/commit-msg`.
 
 - [ ] **Step 6: Write the failing test**
 
@@ -627,7 +636,7 @@ Expected: ends `✓ Everything is clean`.
 
 ```bash
 git add package.json package-lock.json CLAUDE.md CONTRIBUTING.md .env.example .prettierignore \
-  docker-compose.yml run server
+  .gitignore docker-compose.yml run charter.json .claude/settings.json server
 git commit -m "build: lay out the repository on the kit with the server's configuration"
 ```
 
@@ -2352,7 +2361,7 @@ requirements → criteria → cross-references → coverage, which is the order 
 
 ```bash
 git add server
-git commit -m "feat(server): parse a spec and lint its requirements against its criteria"
+git commit -m "feat(server): parse a spec and lint requirements against its criteria"
 ```
 
 ---
@@ -2729,7 +2738,7 @@ Expected: PASS; `grep` prints nothing.
 
 ```bash
 git add server
-git commit -m "feat(server): price usage at a date and compare it with Claude Code's own cost"
+git commit -m "feat(server): price usage by date and compare it to Claude Code's cost"
 ```
 
 ---
@@ -3397,7 +3406,7 @@ waits on it.
 
 ```bash
 git add server
-git commit -m "feat(server): announce changes over postgres and stream them to the browser"
+git commit -m "feat(server): notify over postgres and stream changes to the browser"
 ```
 
 ---
@@ -3991,7 +4000,7 @@ Expected: PASS.
 
 ```bash
 git add server
-git commit -m "feat(server): create tasks and move them only through the transition table"
+git commit -m "feat(server): create tasks and move them only by the transition table"
 ```
 
 ---
@@ -7503,7 +7512,7 @@ scenario and its `case` line and usage line:
 
 ```bash
 scenario_price_set() {
-  need_node; need_deps; need_local_env
+  need_node; need_deps; need_plugins; need_hooks; need_local_env
   start_db
   run_migrations
   ( cd server && DATABASE_URL="${DATABASE_URL:-$COMPOSE_DB_URL}" npx tsx scripts/set-price.ts "$@" )
@@ -7541,10 +7550,11 @@ type-checks. It is a tool on the owner's machine, never deployed.
 
 **Files:**
 
-- Create: `runner/package.json`, `runner/tsconfig.json`, `runner/vitest.config.ts`, `runner/CLAUDE.md`,
+- Create: `runner/package.json`, `runner/tsconfig.json`, `runner/vitest.config.ts`,
   `runner/bin/board-cli`, `runner/src/config.ts`, `runner/src/contract.ts`, `runner/src/exec.ts`,
   `runner/src/api.ts`, `runner/src/sink.ts`
-- Modify: `package.json` (workspaces), `run` (test and check)
+- Create through `charter init`: `runner/.claude/settings.json`
+- Modify: `package.json` (workspaces), `run` (test and check), `charter.json`
 - Test: `runner/tests/unit/config.test.ts`, `runner/tests/unit/sink.test.ts`
 
 **Interfaces:**
@@ -7594,7 +7604,7 @@ send(events: RunnerEvent[]): Promise<void>; flush(): Promise<void> }` — append
 
 ```json
 {
-  "extends": "dev-kit/backend/tsconfig",
+  "extends": "charter/stacks/node/tsconfig",
   "compilerOptions": { "noEmit": true },
   "include": ["src", "tests"]
 }
@@ -7616,18 +7626,6 @@ export default defineConfig({
 })
 ```
 
-`runner/CLAUDE.md`:
-
-```markdown
-# runner
-
-The `backend` section of the shared rules, for `board-cli` and its tests. The runner serves no
-HTTP and owns no database; it takes the section for the `NodeNext` rule. The repository's own
-conventions are in the root `CLAUDE.md` and `CONTRIBUTING.md`.
-
-@../node_modules/dev-kit/backend/rules.md
-```
-
 `runner/bin/board-cli` (then `chmod +x runner/bin/board-cli`):
 
 ```sh
@@ -7644,7 +7642,7 @@ and the type step of `scenario_check`:
 
 ```bash
 scenario_test() {
-  need_node; need_deps; need_docker
+  need_node; need_deps; need_plugins; need_hooks; need_docker
   step "Server suite"
   npm run --workspace server test
   step "Runner suite"
@@ -7658,7 +7656,15 @@ scenario_test() {
   ( cd runner && npx tsc --noEmit )
 ```
 
-Then `npm install`.
+Then `npm install`, and record the runner's modules — the stacks without the `backend` domain,
+since it serves no HTTP:
+
+```bash
+npx --no charter init typescript node vitest --workspace runner
+```
+
+Expected: `charter.json` gains `"runner": ["typescript", "node", "vitest"]`, and
+`runner/.claude/settings.json` is written.
 
 - [ ] **Step 2: Write the failing tests**
 
@@ -8122,8 +8128,8 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add package.json package-lock.json run runner
-git commit -m "build(runner): add the runner workspace with its board client and event sink"
+git add package.json package-lock.json run charter.json runner
+git commit -m "build(runner): add the runner workspace, its board client and event sink"
 ```
 
 ---
@@ -9187,7 +9193,7 @@ Expected: PASS; `grep` prints nothing.
 
 ```bash
 git add runner
-git commit -m "feat(runner): record tool calls from hooks and guard what an agent may touch"
+git commit -m "feat(runner): record tool calls from hooks and guard what agents touch"
 ```
 
 ---
@@ -10295,7 +10301,7 @@ Expected: PASS.
 
 ```bash
 git add runner
-git commit -m "feat(runner): prepare worktrees, open pull requests and bound the test command"
+git commit -m "feat(runner): prepare worktrees, open pull requests, bound the tests"
 ```
 
 ---
@@ -11303,7 +11309,7 @@ the field the server refused (the 400 body names it) with the contract.
 
 ```bash
 git add runner package-lock.json
-git commit -m "test(runner): run whole deliveries against the real server with a fake claude"
+git commit -m "test(runner): run deliveries against the real server with a fake claude"
 ```
 
 ---
@@ -11318,9 +11324,10 @@ exercised by the browser journey in Task 26.
 **Files:**
 
 - Create: `web/package.json`, `web/tsconfig.json`, `web/vite.config.ts`, `web/index.html`,
-  `web/CLAUDE.md`, `web/src/main.tsx`, `web/src/App.tsx`, `web/src/types.ts`, `web/src/api.ts`,
+  `web/src/main.tsx`, `web/src/App.tsx`, `web/src/types.ts`, `web/src/api.ts`,
   `web/src/stream.ts`, `web/src/styles.css`, `web/src/routes/Projects.tsx`
-- Modify: `package.json` (workspaces), `run` (dev, test, check)
+- Create through `charter init`: `web/.claude/settings.json`
+- Modify: `package.json` (workspaces), `run` (dev, test, check), `charter.json`
 - Test: `web/tests/api.test.ts`, `web/tests/stream.test.ts`
 
 **Interfaces:**
@@ -11366,7 +11373,7 @@ exercised by the browser journey in Task 26.
 
 ```json
 {
-  "extends": "dev-kit/ui/tsconfig",
+  "extends": "charter/stacks/react/tsconfig",
   "compilerOptions": { "types": ["vite/client"] },
   "include": ["src", "tests", "vite.config.ts"]
 }
@@ -11411,16 +11418,14 @@ origin check compares `Origin: http://127.0.0.1:5174` with that same host, which
 </html>
 ```
 
-`web/CLAUDE.md`:
+Record the web workspace's modules, once the directory exists:
 
-```markdown
-# web
-
-The `ui` section of the shared rules, for the React client and its tests. The repository's own
-conventions are in the root `CLAUDE.md` and `CONTRIBUTING.md`.
-
-@../node_modules/dev-kit/ui/rules.md
+```bash
+npx --no charter init typescript react vitest --workspace web
 ```
+
+Expected: `charter.json` gains `"web": ["typescript", "react", "vitest"]`, and
+`web/.claude/settings.json` is written.
 
 Root `package.json`: `"workspaces": ["server", "runner", "web"]`. Add `server/public/` to
 `.gitignore` (the web build lands there). In `run`, replace `scenario_dev`, `scenario_test` and
@@ -11428,7 +11433,7 @@ the type step of `scenario_check`, and add `stop` and the `RUN_STATE` handling:
 
 ```bash
 scenario_dev() {
-  need_node; need_deps; need_local_env
+  need_node; need_deps; need_plugins; need_hooks; need_local_env
   start_db
   run_migrations
   export DATABASE_URL="${DATABASE_URL:-$COMPOSE_DB_URL}"
@@ -11464,7 +11469,7 @@ scenario_stop() {
 }
 
 scenario_test() {
-  need_node; need_deps; need_docker
+  need_node; need_deps; need_plugins; need_hooks; need_docker
   step "Server suite"
   npm run --workspace server test
   step "Runner suite"
@@ -12120,7 +12125,7 @@ Expected: the build writes `server/public/index.html`; check ends `✓ Everythin
 - [ ] **Step 8: Commit**
 
 ```bash
-git add package.json package-lock.json run .gitignore web
+git add package.json package-lock.json run .gitignore charter.json web
 git commit -m "feat(web): register repositories and follow the board's changes live"
 ```
 
@@ -13770,7 +13775,7 @@ Expected: PASS; the build succeeds.
 
 ```bash
 git add web server
-git commit -m "feat(web): show a run's timeline, its costs and its pull request on the card"
+git commit -m "feat(web): show a run's timeline, costs and pull request on the card"
 ```
 
 ---
@@ -13808,7 +13813,7 @@ Add `.runtime.json` under `tests/ui/` to `.gitignore`. In `run`:
 
 ```bash
 scenario_test_ui() {
-  need_node; need_deps; need_docker
+  need_node; need_deps; need_plugins; need_hooks; need_docker
   step "The browser journey against the whole product"
   npx playwright test
 }
@@ -14250,7 +14255,7 @@ In `run`:
 # Real claude, real gh, real tokens — never part of `check`. The target is a throwaway GitHub
 # repository the owner created for this, cloned locally, with `main` pushed.
 scenario_smoke() {
-  need_node; need_deps; need_local_env
+  need_node; need_deps; need_plugins; need_hooks; need_local_env
   [ -n "${SMOKE_REPO_PATH:-}" ] && [ -n "${SMOKE_GITHUB_REPO:-}" ] ||
     die "SMOKE_REPO_PATH and SMOKE_GITHUB_REPO are not set." \
       "Create a throwaway GitHub repository, clone it, and set both in .env — see the README."

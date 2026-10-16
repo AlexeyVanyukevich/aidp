@@ -22,7 +22,7 @@ Throughout:
 - **a target repository** is a repository the board carries tasks out in — the owner's own
   TypeScript projects, hosted on GitHub;
 - **the runner** is the `board-cli daemon` process that runs Claude Code on the owner's machine;
-- **the kit** is the `dev-kit` package that holds the conventions this repository follows.
+- **the kit** is the `charter` package that holds the conventions this repository follows.
 
 ---
 
@@ -92,27 +92,27 @@ ai-task-board/
 
 npm workspaces, Node 24 or later.
 
-**The kit, at `v2.2.0`.** Installed over git, `github:AlexeyVanyukevich/dev-kit#v2.2.0` — the
+**The kit, at `v3.3.0`.** Installed over git, `github:AlexeyVanyukevich/charter#v3.3.0` — the
 kit's documented fallback, which needs no registry configuration; the private registry the kit
-prefers has not been set up. Sections load where the kit's README says a
-repository with a backend and a UI loads them:
+prefers has not been set up. `core` loads always, through the root `CLAUDE.md`; each workspace's
+other modules are recorded in `charter.json` by `charter init` and load by path:
 
-| `CLAUDE.md` | Sections            | tsconfig                   |
-| ----------- | ------------------- | -------------------------- |
-| root        | `common`, `testing` | —                          |
-| `server/`   | `backend`           | `dev-kit/backend/tsconfig` |
-| `runner/`   | `backend`           | `dev-kit/backend/tsconfig` |
-| `web/`      | `ui`                | `dev-kit/ui/tsconfig`      |
+| Workspace | Modules                                   | tsconfig                        |
+| --------- | ----------------------------------------- | ------------------------------- |
+| `server/` | `backend`, `typescript`, `node`, `vitest` | `charter/stacks/node/tsconfig`  |
+| `runner/` | `typescript`, `node`, `vitest`            | `charter/stacks/node/tsconfig`  |
+| `web/`    | `typescript`, `react`, `vitest`           | `charter/stacks/react/tsconfig` |
 
-The runner serves no HTTP and owns no database, so two of the four `backend` rules do not apply
-to it; it takes the section for the `NodeNext` rule, and a section is loaded whole. Prettier is
-`dev-kit/common/prettier`, `./run` sources the kit's `lib.sh`, and `.gitignore` starts as the
-kit's copy.
+The runner serves no HTTP and owns no database, so it takes the stacks without the `backend`
+domain. The web app does not take the `frontend` domain or the `playwright` stack in slice 1:
+they ask this spec to state the board's accessibility, which it does not yet. Prettier is
+`charter/stacks/typescript/prettier`, `./run` sources the kit's `lib.sh` and installs its
+`commit-msg` hook, and `.gitignore` starts as the kit's copy.
 
 **Server.** One Node process: the REST API, the board MCP server at `/mcp` (streamable HTTP),
 server-sent events for the web app, the cost service, the PR poller, and two sweepers (the
 approval timeout and the lost-runner check). PostgreSQL through Kysely, TypeBox from the
-`typebox` package. Code follows the kit's layout, `src/modules/<entity>/` with its routes,
+`typebox` package. Code follows the kit's layout, `src/modules/<entities>/` with its routes,
 schemas, service and repository. Three rules are pure functions in their own files, importing
 nothing from `db/`: the transition table (§5), the spec parser and lint (§4), and pricing.
 
