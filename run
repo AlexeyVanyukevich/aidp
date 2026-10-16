@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+#
+# One entry point for every way of running this project.
+# `./run` with no arguments lists the scenarios.
+#
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")"
+
+# This script is what installs dependencies, so it cannot source out of node_modules before the
+# kit is there. The test is for the file rather than the directory.
+[ -f node_modules/charter/core/lib.sh ] ||
+  GITHUB_TOKEN="${GITHUB_TOKEN:-$(gh auth token 2>/dev/null || true)}" npm install
+source node_modules/charter/core/lib.sh
+
+load_env_file
+
+DB_HOST_PORT=5435
+COMPOSE_DB_URL="postgres://postgres:postgres@localhost:${DB_HOST_PORT}/board"
+RUN_STATE=".run"
+
+# ── preflight ────────────────────────────────────────────────────────────────
+
+# The runner key is a secret both processes read from .env. Generated here rather than left
+# for the owner to invent, because a blank one stops the server at start with a message about
+# a value nobody has been told to choose.
+need_local_env() {
+  need_env || note "Created .env from .env.example"
+  if grep -q '^RUNNER_KEY=$' .env; then
+    local key
+    key=$(openssl rand -hex 32)
+    sed -i.bak "s/^RUNNER_KEY=\$/RUNNER_KEY=${key}/" .env && rm -f .env.bak
+    note "Generated RUNNER_KEY in .env"
+  fi
+  load_env_file
+}
+
+start_db() {
+  need_docker
+  step "Starting PostgreSQL on port ${DB_HOST_PORT}"
+  docker compose up -d db </dev/null >/dev/null
+  local waited=0
+  until docker compose exec -T db pg_isready -U postgres -d board </dev/null >/dev/null 2>&1; do
+    sleep 1
+    waited=$((waited + 1))
+    [ "$waited" -gt 60 ] && die "PostgreSQL did not become ready within a minute." \
+      "Check:  docker compose logs db"
+  done
+  ok "PostgreSQL ready"
+}
+
+run_migrations() {
+  step "Applying migrations"
+  DATABASE_URL="${DATABASE_URL:-$COMPOSE_DB_URL}" npm run --silent --workspace server migrate
+}
+
+# ── scenarios ────────────────────────────────────────────────────────────────
+
+scenario_dev() {
+  need_node; need_deps; need_plugins; need_hooks; need_local_env
+  start_db
+  run_migrations
+  export DATABASE_URL="${DATABASE_URL:-$COMPOSE_DB_URL}"
+  ok "Server on http://127.0.0.1:${PORT:-4100}"
+  note "Ctrl-C stops it"
+  npm run --workspace server dev
+}
+
+scenario_test() {
+  need_node; need_deps; need_plugins; need_hooks; need_docker
+  step "Server suite"
+  npm run --workspace server test
+}
+
+scenario_check() {
+  need_node; need_deps; need_plugins; need_hooks
+  step "Types"
+  ( cd server && npx tsc --noEmit )
+  step "Formatting"
+  npx prettier --check .
+  step "Tests"
+  scenario_test
+  ok "Everything is clean"
+}
+
+scenario_migrate() {
+  need_node; need_deps; need_plugins; need_hooks; need_local_env
+  start_db
+  run_migrations
+  ok "Migrations applied"
+}
+
+usage() {
+  cat <<TEXT
+${BOLD}./run <scenario>${OFF}
+
+  ${BOLD}dev${OFF}        PostgreSQL, migrations and the server
+  ${BOLD}test${OFF}       every workspace's suite
+  ${BOLD}check${OFF}      types, formatting and the suites
+  ${BOLD}migrate${OFF}    apply migrations to the local database
+TEXT
+}
+
+SCENARIO="${1:-}"
+[ $# -gt 0 ] && shift || true
+
+case "$SCENARIO" in
+  dev)          scenario_dev "$@" ;;
+  test)         scenario_test ;;
+  check)        scenario_check ;;
+  migrate)      scenario_migrate ;;
+  ''|-h|--help) usage ;;
+  *)            die "Unknown scenario: ${SCENARIO}" "Run ./run with no arguments to see the list." ;;
+esac
