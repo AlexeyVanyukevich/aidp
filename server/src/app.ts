@@ -8,6 +8,8 @@ import type { Config } from './config.js'
 import type { Database } from './db/schema.js'
 import { registerProjects } from './modules/projects/project.routes.js'
 import { createRepoInspector, type RepoInspector } from './modules/projects/repo-inspector.js'
+import { registerStream } from './modules/stream/stream.routes.js'
+import { Bus } from './shared/bus.js'
 import { ForbiddenOriginError, registerErrorHandler } from './shared/errors.js'
 import { isAllowedHost, isSameOrigin } from './shared/hosts.js'
 
@@ -17,6 +19,7 @@ export interface AppDeps {
   /** Injected so sweepers and expiries are testable without waiting. */
   clock?: () => Date
   repoInspector?: RepoInspector
+  bus?: Bus
 }
 
 declare module 'fastify' {
@@ -25,6 +28,7 @@ declare module 'fastify' {
     config: Config
     clock: () => Date
     repoInspector: RepoInspector
+    bus: Bus
   }
 }
 
@@ -41,6 +45,14 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.decorate('db', deps.db)
   app.decorate('config', deps.config)
   app.decorate('clock', deps.clock ?? (() => new Date()))
+  const bus = deps.bus ?? new Bus(deps.config.databaseUrl)
+  app.decorate('bus', bus)
+  app.addHook('onReady', async () => {
+    if (deps.bus === undefined) await bus.start()
+  })
+  app.addHook('onClose', async () => {
+    if (deps.bus === undefined) await bus.stop()
+  })
   registerErrorHandler(app)
   app.decorate('repoInspector', deps.repoInspector ?? createRepoInspector())
 
@@ -58,6 +70,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   app.get('/api/health', async () => ({ status: 'ok' }))
   registerProjects(app)
+  registerStream(app)
 
   await registerSpa(app)
   return app
