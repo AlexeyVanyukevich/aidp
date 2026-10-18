@@ -1,7 +1,58 @@
 # Backlog
 
 What is known to be wrong and not yet fixed, newest first. The rule for this file is the kit's
-`common/rules/backlog.md`: one entry per finding, deleted by the commit that fixes it.
+`core/rules/backlog.md`: one entry per finding, deleted by the commit that fixes it.
+
+## An unauthenticated runner request with a bad body answers 400, not 401
+
+- Where: `server/src/modules/runner/runner.routes.ts`, where the key and token checks are
+  `preHandler` hooks
+- Found: 2026-10-19, closing slice 1
+- Problem: Fastify validates the body before `preHandler` runs. `POST /api/runner/claim` with
+  no `Authorization` header and `{}` as its body answers `400 validation_error` with the schema
+  issues, instead of the one identical `401` the kit's HTTP rule asks for.
+- Impact: small, on a loopback-only server: an unauthenticated caller learns the shape of the
+  runner endpoints. Moving the checks to `preValidation` closes it.
+
+## The PR tab's file list answers 500 when GitHub does not know the repository
+
+- Where: `server/src/modules/runs/pr-files.ts`
+- Found: 2026-10-18, running the browser journeys
+- Problem: a failing `gh pr view` — an unknown repository, no network, `gh` signed out — throws
+  a plain `Error`, which the error handler logs with its stack as unexpected and answers
+  `500 internal_error`. The journeys hit it on every run, since `owner/pay` does not exist.
+- Impact: the tab handles it and says GitHub did not list the files, but the server log reads
+  as if something broke, and a real outage looks like every other 500.
+
+## A PostgreSQL restart stops the server
+
+- Where: `server/src/shared/bus.ts`, the `Bus`'s `LISTEN` connection
+- Found: 2026-10-18, writing the browser journeys' teardown
+- Problem: the connection has no `error` listener. When PostgreSQL closes it — a restart, the
+  compose database stopped first — `pg` emits `error`, nothing handles it, and Node exits.
+  Stop `./run dev`'s database while the server runs to see it.
+- Impact: any database restart takes the board down with it; the runner then retries until
+  the server is started again by hand. Reconnecting and re-issuing `LISTEN` closes it.
+
+## A runner that dies leaves its card in Running
+
+- Where: `server/src/modules/runner/`, which records heartbeats and has no sweeper
+- Found: 2026-10-11, planning slice 1
+- Problem: heartbeats are stored but nothing reads them. Kill the daemon mid-run: the card
+  stays in Running and its run in `running`. Cancel moves the card; the run row stays
+  `running` with `cancel_requested`.
+- Impact: until slice 2's lost-runner sweeper, a crash needs a Cancel and a Re-run by hand.
+
+## Cache writes are priced at one rate
+
+- Where: `prices.cache_write`, `server/scripts/set-price.ts`
+- Found: 2026-10-11, reading recorded runs
+- Problem: Anthropic prices a one-hour cache write higher than a five-minute one. Claude Code
+  2.1.212 wrote only one-hour entries in the recordings, so the row holds that rate. A run
+  that writes five-minute entries is over-priced on them, and its phase drifts from Claude
+  Code's own figure.
+- Impact: the 2% flag fires on such phases. The usage counters stay exact; only the price is
+  off. Splitting `cache_write` by TTL needs the breakdown `message_start` carries.
 
 ## The platform design's two diagrams are missing from its copy
 

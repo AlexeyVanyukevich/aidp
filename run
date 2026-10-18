@@ -136,6 +136,21 @@ scenario_price_set() {
   ( cd server && DATABASE_URL="${DATABASE_URL:-$COMPOSE_DB_URL}" npx tsx scripts/set-price.ts "$@" )
 }
 
+# Real claude, real gh, real tokens — never part of `check`. The target is a throwaway GitHub
+# repository the owner created for this, cloned locally, with `main` pushed.
+scenario_smoke() {
+  need_node; need_deps; need_plugins; need_hooks; need_local_env
+  [ -n "${SMOKE_REPO_PATH:-}" ] && [ -n "${SMOKE_GITHUB_REPO:-}" ] ||
+    die "SMOKE_REPO_PATH and SMOKE_GITHUB_REPO are not set." \
+      "Create a throwaway GitHub repository, clone it, and set both in .env — see the README."
+  command -v claude >/dev/null || die "claude is not on PATH." "Install Claude Code and sign in."
+  command -v gh >/dev/null || die "gh is not on PATH." "Install the GitHub CLI and run: gh auth login"
+  curl -fsS --max-time 3 "${BOARD_URL:-http://127.0.0.1:4100}/api/health" >/dev/null 2>&1 ||
+    die "The board is not answering." "Start it first:  ./run dev --bg"
+  note "This spends real tokens — a few cents to a dollar — and opens a pull request."
+  npx tsx runner/scripts/smoke.ts
+}
+
 usage() {
   cat <<TEXT
 ${BOLD}./run <scenario>${OFF}
@@ -146,6 +161,7 @@ ${BOLD}./run <scenario>${OFF}
   ${BOLD}test:ui${OFF}    the browser journeys, with a fake claude
   ${BOLD}check${OFF}      types, formatting and the suites
   ${BOLD}migrate${OFF}    apply migrations to the local database
+  ${BOLD}smoke${OFF}      one real task against a throwaway repository (spends tokens)
   ${BOLD}price:set${OFF}  record a model's price: <model> <input> <output> <cache_read> <cache_write> [from]
 TEXT
 }
@@ -161,6 +177,7 @@ case "$SCENARIO" in
   check)        scenario_check ;;
   migrate)      scenario_migrate ;;
   price:set)    scenario_price_set "$@" ;;
+  smoke)        scenario_smoke ;;
   ''|-h|--help) usage ;;
   *)            die "Unknown scenario: ${SCENARIO}" "Run ./run with no arguments to see the list." ;;
 esac
