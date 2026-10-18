@@ -72,7 +72,12 @@ async function guard(): Promise<void> {
 const [command, ...args] = process.argv.slice(2)
 if (command === 'event') await event(args[0] ?? '')
 else if (command === 'guard') await guard()
-else {
-  process.stderr.write('usage: board-cli event <PostToolUse|SubagentStart|SubagentStop> | guard\n')
+else if (command === 'daemon') {
+  const { main } = await import('./daemon.js')
+  await main()
+} else {
+  process.stderr.write(
+    'usage: board-cli daemon | event <PostToolUse|SubagentStart|SubagentStop> | guard\n',
+  )
   process.exit(2)
 }
