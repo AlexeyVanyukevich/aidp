@@ -2,6 +2,7 @@
   "workspaces": {
     "server": ["backend", "typescript", "node", "vitest"],
     "runner": ["typescript", "node", "vitest"],
-    "web": ["frontend", "typescript", "react", "vitest", "playwright"]
+    "web": ["frontend", "typescript", "react", "vitest", "playwright"],
+    ".": ["frontend", "playwright"]
   }
 }
