@@ -10997,6 +10997,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 
 type Step =
   | { tool: string; args: Record<string, unknown> }
@@ -11038,11 +11039,11 @@ const print = (line: object) => process.stdout.write(`${JSON.stringify(line)}\n`
 for (const step of steps) {
   if ('tool' in step) {
     const client = new Client({ name: 'fake-claude', version: '0.0.0' })
-    await client.connect(
-      new StreamableHTTPClientTransport(new URL(`${process.env.BOARD_URL}/mcp`), {
-        requestInit: { headers: { authorization: `Bearer ${process.env.BOARD_RUN_TOKEN}` } },
-      }),
-    )
+    const transport = new StreamableHTTPClientTransport(new URL(`${process.env.BOARD_URL}/mcp`), {
+      requestInit: { headers: { authorization: `Bearer ${process.env.BOARD_RUN_TOKEN}` } },
+    })
+    // The SDK's class and interface disagree under exactOptionalPropertyTypes; see mcp.routes.ts.
+    await client.connect(transport as Transport)
     const result = await client.callTool({ name: step.tool, arguments: step.args })
     print({
       type: 'system',
