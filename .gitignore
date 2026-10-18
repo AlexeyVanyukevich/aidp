@@ -23,3 +23,6 @@ playwright-report/
 .superpowers/
 
 .claude/rules/charter/
+
+# The web build, served by the server.
+server/public/

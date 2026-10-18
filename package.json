@@ -7,7 +7,8 @@
   "license": "UNLICENSED",
   "workspaces": [
     "server",
-    "runner"
+    "runner",
+    "web"
   ],
   "engines": {
     "node": ">=24.0.0"

@@ -1,0 +1,89 @@
+import type {
+  EventView,
+  PrFile,
+  ProjectView,
+  RunView,
+  SpecView,
+  TaskCard,
+  TaskView,
+  CostSummary,
+} from './types'
+
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+    readonly details?: Record<string, unknown>,
+  ) {
+    super(message)
+  }
+}
+
+async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const response = await fetch(path, {
+    method,
+    headers: body === undefined ? {} : { 'content-type': 'application/json' },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  })
+  const text = await response.text()
+  let parsed: unknown
+  try {
+    parsed = text === '' ? undefined : JSON.parse(text)
+  } catch {
+    parsed = undefined
+  }
+  if (!response.ok) {
+    const error = (parsed ?? {}) as {
+      error?: string
+      message?: string
+      details?: Record<string, unknown>
+    }
+    throw new ApiError(
+      response.status,
+      error.error ?? (response.status === 502 ? 'bad_gateway' : 'http_error'),
+      error.message ?? text,
+      error.details,
+    )
+  }
+  return parsed as T
+}
+
+export const api = {
+  projects: () => request<ProjectView[]>('GET', '/api/projects'),
+  createProject: (input: Omit<ProjectView, 'id'>) =>
+    request<ProjectView>('POST', '/api/projects', input),
+  board: (key: string) =>
+    request<{ project: ProjectView; tasks: TaskCard[] }>('GET', `/api/projects/${key}/tasks`),
+  createTask: (key: string, input: { title: string; description_md?: string }) =>
+    request<TaskView>('POST', `/api/projects/${key}/tasks`, input),
+  task: (id: string) => request<TaskView>('GET', `/api/tasks/${id}`),
+  patchTask: (
+    id: string,
+    patch: { title?: string; description_md?: string; position?: number; state?: 'done' },
+  ) => request<TaskView>('PATCH', `/api/tasks/${id}`, patch),
+  action: (id: string, action: 'cancel' | 'rerun') =>
+    request<TaskView>('POST', `/api/tasks/${id}/actions/${action}`),
+  specs: (taskId: string) => request<SpecView[]>('GET', `/api/tasks/${taskId}/specs`),
+  saveSpec: (taskId: string, body_md: string) =>
+    request<SpecView>('POST', `/api/tasks/${taskId}/specs`, { body_md }),
+  approve: (specId: string) =>
+    request<{ spec: SpecView; run_id: string }>('POST', `/api/specs/${specId}/approve`),
+  runs: (taskId: string) => request<RunView[]>('GET', `/api/tasks/${taskId}/runs`),
+  costs: (taskId: string) => request<CostSummary>('GET', `/api/tasks/${taskId}/costs`),
+  prFiles: (runId: string) => request<PrFile[]>('GET', `/api/runs/${runId}/files`),
+  async events(runId: string): Promise<EventView[]> {
+    const all: EventView[] = []
+    let after: string | null = null
+    do {
+      const query: string = after === null ? '' : `&after=${encodeURIComponent(after)}`
+      const page: { events: EventView[]; next: string | null } = await request(
+        'GET',
+        `/api/runs/${runId}/events?limit=1000${query}`,
+      )
+      all.push(...page.events)
+      after = page.next
+    } while (after !== null)
+    return all
+  },
+}

@@ -60,9 +60,35 @@ scenario_dev() {
   start_db
   run_migrations
   export DATABASE_URL="${DATABASE_URL:-$COMPOSE_DB_URL}"
-  ok "Server on http://127.0.0.1:${PORT:-4100}"
-  note "Ctrl-C stops it"
-  npm run --workspace server dev
+
+  if [ "${1:-}" = "--bg" ]; then
+    mkdir -p "$RUN_STATE"
+    npm run --workspace server dev >"$RUN_STATE/server.log" 2>&1 & echo $! >"$RUN_STATE/server.pid"
+    npm run --workspace web dev >"$RUN_STATE/web.log" 2>&1 & echo $! >"$RUN_STATE/web.pid"
+    npm run --workspace runner daemon >"$RUN_STATE/runner.log" 2>&1 & echo $! >"$RUN_STATE/runner.pid"
+    ok "Running in the background"
+    note "http://127.0.0.1:5174   logs: ${RUN_STATE}/*.log   stop: ./run stop"
+    return
+  fi
+
+  ok "Board on http://127.0.0.1:5174"
+  note "Ctrl-C stops the server, the web app and the runner"
+  trap 'kill 0' EXIT INT TERM
+  npm run --workspace server dev 2>&1 | sed "s/^/${DIM}[server]${OFF} /" &
+  npm run --workspace web dev 2>&1 | sed "s/^/${DIM}[web]   ${OFF} /" &
+  npm run --workspace runner daemon 2>&1 | sed "s/^/${DIM}[runner]${OFF} /" &
+  wait
+}
+
+scenario_stop() {
+  local stopped=0
+  for pidfile in "$RUN_STATE"/*.pid; do
+    [ -f "$pidfile" ] || continue
+    local pid; pid=$(cat "$pidfile")
+    if kill -0 "$pid" 2>/dev/null; then kill "$pid" 2>/dev/null || true; stopped=1; fi
+    rm -f "$pidfile"
+  done
+  [ "$stopped" = 1 ] && ok "Stopped" || note "Nothing was running in the background"
 }
 
 scenario_test() {
@@ -71,6 +97,8 @@ scenario_test() {
   npm run --workspace server test
   step "Runner suite"
   npm run --workspace runner test
+  step "Web suite"
+  npm run --workspace web test
 }
 
 scenario_check() {
@@ -78,6 +106,9 @@ scenario_check() {
   step "Types"
   ( cd server && npx tsc --noEmit )
   ( cd runner && npx tsc --noEmit )
+  ( cd web && npx tsc --noEmit )
+  step "Lint"
+  ( cd web && npx oxlint --deny-warnings )
   step "Formatting"
   npx prettier --check .
   step "Tests"
@@ -103,7 +134,8 @@ usage() {
   cat <<TEXT
 ${BOLD}./run <scenario>${OFF}
 
-  ${BOLD}dev${OFF}        PostgreSQL, migrations and the server
+  ${BOLD}dev${OFF}        [--bg]  PostgreSQL, migrations, the server, the web app and the runner
+  ${BOLD}stop${OFF}       stop what dev --bg started
   ${BOLD}test${OFF}       every workspace's suite
   ${BOLD}check${OFF}      types, formatting and the suites
   ${BOLD}migrate${OFF}    apply migrations to the local database
@@ -116,6 +148,7 @@ SCENARIO="${1:-}"
 
 case "$SCENARIO" in
   dev)          scenario_dev "$@" ;;
+  stop)         scenario_stop ;;
   test)         scenario_test ;;
   check)        scenario_check ;;
   migrate)      scenario_migrate ;;

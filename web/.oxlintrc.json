@@ -1,0 +1,6 @@
+{
+  "extends": [
+    "../node_modules/charter/stacks/react/oxlint.json",
+    "../node_modules/charter/stacks/vitest/oxlint.json"
+  ]
+}

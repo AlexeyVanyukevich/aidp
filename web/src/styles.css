@@ -1,0 +1,49 @@
+body {
+  margin: 0;
+}
+.top {
+  display: flex;
+  align-items: center;
+  gap: var(--zl-space-4);
+  padding: var(--zl-space-3) var(--zl-space-5);
+  border-block-end: 1px solid var(--zl-line);
+  background: var(--zl-surface);
+}
+.brand {
+  font-weight: 700;
+  color: var(--zl-ink);
+}
+.page {
+  padding: var(--zl-space-5);
+  max-inline-size: 60rem;
+}
+.muted {
+  color: var(--zl-ink-soft);
+}
+.projects {
+  list-style: none;
+  padding: 0;
+}
+.projects li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--zl-space-3);
+  padding-block: var(--zl-space-2);
+  border-block-end: 1px solid var(--zl-line);
+}
+.register {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: var(--zl-space-3);
+}
+.register > .zl-notice,
+.register > button {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+/* A live region is in the page from the start, so what is written into it is announced. Empty,
+   it takes no room. Unlayered, this wins over the kit's layered rules. */
+.announce:empty {
+  padding: 0;
+  border: 0;
+}

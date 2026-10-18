@@ -1,0 +1,30 @@
+{
+  "name": "@board/web",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.90.2",
+    "@zellige/core": "github:AlexeyVanyukevich/zellige-core#v0.1.1",
+    "@zellige/react": "github:AlexeyVanyukevich/zellige-react#v0.1.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-router": "^7.9.3"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "oxlint": "^1.88.0",
+    "oxlint-tsgolint": "^7.0.2004",
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
+  }
+}

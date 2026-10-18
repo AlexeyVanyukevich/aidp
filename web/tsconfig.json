@@ -1,0 +1,5 @@
+{
+  "extends": "charter/stacks/react/tsconfig",
+  "compilerOptions": { "types": ["vite/client"] },
+  "include": ["src", "tests", "vite.config.ts"]
+}
