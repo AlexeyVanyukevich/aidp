@@ -6008,6 +6008,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { buildTestApp, closeTestDb, getTestDb, resetDb, TEST_RUNNER_KEY } from './helpers.js'
 import { seedQueuedRun } from './fixtures.js'
 
@@ -6060,11 +6061,11 @@ async function session() {
     })
     .execute()
   const client = new Client({ name: 'test', version: '0.0.0' })
-  await client.connect(
-    new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
-      requestInit: { headers: { authorization: `Bearer ${token}` } },
-    }),
-  )
+  const transport = new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
+    requestInit: { headers: { authorization: `Bearer ${token}` } },
+  })
+  // As in mcp.routes.ts: the SDK's class and interface disagree under exactOptionalPropertyTypes.
+  await client.connect(transport as Transport)
   return { ...seeded, phaseId, client }
 }
 
@@ -6314,7 +6315,8 @@ export function registerBoardTools(server: McpServer, ctx: ToolContext): void {
           )
           .min(1)
           .max(50),
-        checks: z.array(z.object({ criterion: z.string(), how: z.string().min(1) })).min(1),
+        // No minimum: an empty list reaches checkPlan, which names each criterion left unchecked.
+        checks: z.array(z.object({ criterion: z.string(), how: z.string().min(1) })),
       },
     },
     async (input) => {
@@ -6403,6 +6405,7 @@ export function registerBoardTools(server: McpServer, ctx: ToolContext): void {
 import type { FastifyInstance } from 'fastify'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { resolveRunToken } from '../../shared/tokens.js'
 import { registerBoardTools } from './board-tools.js'
 
@@ -6415,16 +6418,16 @@ export function registerMcp(app: FastifyInstance): void {
     const context = await resolveRunToken(app.db, request.headers.authorization, app.clock())
     const server = new McpServer({ name: 'board', version: '1.0.0' })
     registerBoardTools(server, { db: app.db, clock: app.clock, ...context })
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined,
-      enableJsonResponse: true,
-    })
+    // No sessionIdGenerator: the SDK reads its absence as stateless.
+    const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true })
     reply.hijack()
     reply.raw.on('close', () => {
       void transport.close()
       void server.close()
     })
-    await server.connect(transport)
+    // The SDK's transport classes declare their optional handlers without `| undefined`, which
+    // `exactOptionalPropertyTypes` will not match to its own Transport interface.
+    await server.connect(transport as Transport)
     await transport.handleRequest(request.raw, reply.raw, request.body)
   })
 
