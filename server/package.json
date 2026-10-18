@@ -10,6 +10,7 @@
     "start": "node dist/src/server.js",
     "dev": "tsx watch src/server.ts",
     "migrate": "tsx src/db/migrate.ts",
+    "price:set": "tsx scripts/set-price.ts",
     "test": "vitest run"
   },
   "dependencies": {

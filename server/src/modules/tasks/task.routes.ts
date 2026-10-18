@@ -1,8 +1,11 @@
 import type { FastifyInstance } from 'fastify'
 import type { TypeBoxTypeProvider } from '@fastify/type-provider-typebox'
+import { Type } from 'typebox'
+import { Uuid } from '../../shared/schemas.js'
 import { CostService } from '../costs/cost.service.js'
 import { ProjectRepository } from '../projects/project.repository.js'
 import { RunRepository } from '../runs/run.repository.js'
+import { ACTIONS, performAction } from './task.actions.js'
 import { TaskRepository } from './task.repository.js'
 import { CreateTaskBody, PatchTaskBody, ProjectKeyParams, TaskParams } from './task.schemas.js'
 import { TaskService } from './task.service.js'
@@ -38,5 +41,18 @@ export function registerTasks(instance: FastifyInstance): void {
     '/api/tasks/:id',
     { schema: { params: TaskParams, body: PatchTaskBody } },
     async (request) => service.patch(request.params.id, request.body),
+  )
+
+  const ActionParams = Type.Object({
+    id: Uuid,
+    action: Type.Enum(ACTIONS),
+  })
+  app.post(
+    '/api/tasks/:id/actions/:action',
+    { schema: { params: ActionParams } },
+    async (request) => {
+      await performAction(app.db, request.params.id, request.params.action, app.clock())
+      return service.get(request.params.id)
+    },
   )
 }

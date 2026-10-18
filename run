@@ -89,6 +89,13 @@ scenario_migrate() {
   ok "Migrations applied"
 }
 
+scenario_price_set() {
+  need_node; need_deps; need_plugins; need_hooks; need_local_env
+  start_db
+  run_migrations
+  ( cd server && DATABASE_URL="${DATABASE_URL:-$COMPOSE_DB_URL}" npx tsx scripts/set-price.ts "$@" )
+}
+
 usage() {
   cat <<TEXT
 ${BOLD}./run <scenario>${OFF}
@@ -97,6 +104,7 @@ ${BOLD}./run <scenario>${OFF}
   ${BOLD}test${OFF}       every workspace's suite
   ${BOLD}check${OFF}      types, formatting and the suites
   ${BOLD}migrate${OFF}    apply migrations to the local database
+  ${BOLD}price:set${OFF}  record a model's price: <model> <input> <output> <cache_read> <cache_write> [from]
 TEXT
 }
 
@@ -108,6 +116,7 @@ case "$SCENARIO" in
   test)         scenario_test ;;
   check)        scenario_check ;;
   migrate)      scenario_migrate ;;
+  price:set)    scenario_price_set "$@" ;;
   ''|-h|--help) usage ;;
   *)            die "Unknown scenario: ${SCENARIO}" "Run ./run with no arguments to see the list." ;;
 esac
