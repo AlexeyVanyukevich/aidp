@@ -26,3 +26,6 @@ playwright-report/
 
 # The web build, served by the server.
 server/public/
+
+# Written by the browser journeys' global setup.
+tests/ui/.runtime.json

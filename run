@@ -101,6 +101,12 @@ scenario_test() {
   npm run --workspace web test
 }
 
+scenario_test_ui() {
+  need_node; need_deps; need_plugins; need_hooks; need_docker
+  step "The browser journeys against the whole product"
+  npx playwright test
+}
+
 scenario_check() {
   need_node; need_deps; need_plugins; need_hooks
   step "Types"
@@ -137,6 +143,7 @@ ${BOLD}./run <scenario>${OFF}
   ${BOLD}dev${OFF}        [--bg]  PostgreSQL, migrations, the server, the web app and the runner
   ${BOLD}stop${OFF}       stop what dev --bg started
   ${BOLD}test${OFF}       every workspace's suite
+  ${BOLD}test:ui${OFF}    the browser journeys, with a fake claude
   ${BOLD}check${OFF}      types, formatting and the suites
   ${BOLD}migrate${OFF}    apply migrations to the local database
   ${BOLD}price:set${OFF}  record a model's price: <model> <input> <output> <cache_read> <cache_write> [from]
@@ -150,6 +157,7 @@ case "$SCENARIO" in
   dev)          scenario_dev "$@" ;;
   stop)         scenario_stop ;;
   test)         scenario_test ;;
+  test:ui)      scenario_test_ui ;;
   check)        scenario_check ;;
   migrate)      scenario_migrate ;;
   price:set)    scenario_price_set "$@" ;;
