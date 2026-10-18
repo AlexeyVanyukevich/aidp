@@ -1,0 +1,77 @@
+.board-page {
+  padding: var(--zl-space-4) var(--zl-space-5);
+}
+.board-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: space-between;
+  gap: var(--zl-space-4);
+}
+.board-head h1 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+.new-task {
+  display: flex;
+  align-items: end;
+  gap: var(--zl-space-2);
+}
+/* No scrolling box: one with nothing focusable inside fails the keyboard (axe's
+   scrollable-region-focusable), so a board wider than the window scrolls the page. */
+.columns {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(150px, 1fr);
+  gap: var(--zl-space-3);
+  padding-block: var(--zl-space-3);
+}
+.column {
+  display: grid;
+  align-content: start;
+  gap: var(--zl-space-2);
+  min-block-size: 160px;
+  padding: var(--zl-space-2);
+  border-radius: var(--zl-radius);
+  background: var(--zl-surface-sunk);
+}
+.column h2 {
+  margin: var(--zl-space-1);
+  font-size: var(--zl-text-sm);
+  color: var(--zl-ink-soft);
+}
+.count {
+  font-weight: 400;
+}
+.drop-zone {
+  min-block-size: 120px;
+}
+.cards {
+  display: grid;
+  gap: var(--zl-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.task-card {
+  display: grid;
+  gap: var(--zl-space-1);
+  color: var(--zl-ink);
+  text-decoration: none;
+}
+.card-key {
+  font-size: var(--zl-text-sm);
+  color: var(--zl-ink-soft);
+}
+.card-title {
+  font-weight: 600;
+}
+.card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--zl-space-1);
+}
+.side summary {
+  cursor: pointer;
+  color: var(--zl-ink-soft);
+}
