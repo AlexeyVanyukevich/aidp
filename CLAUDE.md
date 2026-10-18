@@ -20,3 +20,6 @@ workspace.
 @node_modules/charter/core/rules.md
 
 `CONTRIBUTING.md` holds this repository's own conventions.
+
+UI components come from the `@zellige/react` package, on `@zellige/core`'s tokens and CSS. A
+widget the kit lacks is added to the kit, in its own repository, never written in `web/`.
