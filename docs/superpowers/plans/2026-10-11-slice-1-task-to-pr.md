@@ -14571,9 +14571,14 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     JSON.stringify({ baseURL: `http://127.0.0.1:${PORT}`, repoPath, opsPath }),
   )
 
+  // The database stops last: a server still listening on it when it goes would die of the
+  // closed connection, mid-teardown.
+  const exited = (child: ChildProcess) =>
+    child.exitCode !== null ? Promise.resolve() : new Promise((done) => child.once('exit', done))
   return async () => {
     runner.kill('SIGTERM')
     server.kill('SIGTERM')
+    await Promise.all([exited(runner), exited(server)])
     await db.stop()
   }
 }
@@ -14835,11 +14840,14 @@ test('a repository, the board and a card work from the keyboard alone', async ({
   ).toBeVisible()
   await expectAccessible(page)
 
-  // Escape closes the card and hands focus back to the link that opened it, now first in Backlog.
+  // Saving the spec moved the card to Spec review while it was open. Escape closes the card and
+  // hands focus to its link there, the one that replaced the link that opened it.
   await page.keyboard.press('Escape')
   await expect(card).toBeHidden()
-  await expect(backlog.getByRole('link', { name: /^OPS-2 / })).toBeFocused()
-  await expect(backlog.getByRole('link')).toHaveText([/^OPS-2 /, /^OPS-1 /])
+  await expect(
+    page.getByRole('region', { name: 'Spec review' }).getByRole('link', { name: /^OPS-2 / }),
+  ).toBeFocused()
+  await expect(backlog.getByRole('link')).toHaveText([/^OPS-1 /])
 })
 ```
 
