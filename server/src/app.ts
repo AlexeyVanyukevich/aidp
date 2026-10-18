@@ -9,6 +9,7 @@ import type { Database } from './db/schema.js'
 import { registerProjects } from './modules/projects/project.routes.js'
 import { createRepoInspector, type RepoInspector } from './modules/projects/repo-inspector.js'
 import { registerStream } from './modules/stream/stream.routes.js'
+import { registerTasks } from './modules/tasks/task.routes.js'
 import { Bus } from './shared/bus.js'
 import { ForbiddenOriginError, registerErrorHandler } from './shared/errors.js'
 import { isAllowedHost, isSameOrigin } from './shared/hosts.js'
@@ -70,6 +71,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   app.get('/api/health', async () => ({ status: 'ok' }))
   registerProjects(app)
+  registerTasks(app)
   registerStream(app)
 
   await registerSpa(app)
