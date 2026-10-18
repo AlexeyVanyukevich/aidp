@@ -48,7 +48,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       level: deps.config.logLevel,
       redact: ['req.headers.authorization'],
     },
-    ajv: { customOptions: { removeAdditional: false } },
+    // No coercion: in a `string | null` field it turns a null into "", and in a number one into
+    // 0, so the runner's nulls would arrive as values. Query strings parse their own numbers.
+    ajv: { customOptions: { removeAdditional: false, coerceTypes: false } },
     bodyLimit: 5 * 1024 * 1024,
   }).withTypeProvider<TypeBoxTypeProvider>()
 

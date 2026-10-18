@@ -245,6 +245,26 @@ describe('POST /api/runner/events', () => {
     expect(run.current_phase).toBe('plan')
   })
 
+  // Ajv's default type coercion turned a null in a `string | null` field into "" and a null
+  // duration into 0; found by the first smoke run, 2026-10-18.
+  it('stores the fields an event leaves null as null', async () => {
+    const { runId, token } = await claimed()
+    const sent = event(runId, 'tool_call', {}, { agent: 'runner', tool: 'test_command' })
+    expect((await send(token, [sent])).json()).toEqual({ accepted: 1 })
+    const row = await getTestDb()
+      .selectFrom('events')
+      .select(['model', 'target', 'status', 'duration_ms', 'phase_id'])
+      .where('id', '=', sent.id)
+      .executeTakeFirstOrThrow()
+    expect(row).toEqual({
+      model: null,
+      target: null,
+      status: null,
+      duration_ms: null,
+      phase_id: null,
+    })
+  })
+
   // Review Focus 3: a replay after the server was down counts each event once.
   it('ignores a replayed event', async () => {
     const { runId, token } = await claimed()

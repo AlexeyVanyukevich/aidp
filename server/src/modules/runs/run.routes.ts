@@ -10,7 +10,8 @@ const RunParams = Type.Object({ id: Uuid })
 const EventsQuery = Type.Object(
   {
     after: Type.Optional(Type.String({ maxLength: 100 })),
-    limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000 })),
+    // A query string is text, and the validator coerces nothing: 1 to 1000, as digits.
+    limit: Type.Optional(Type.String({ pattern: '^(?:[1-9][0-9]{0,2}|1000)$' })),
   },
   { additionalProperties: false },
 )
@@ -29,6 +30,6 @@ export function registerRuns(instance: FastifyInstance): void {
     '/api/runs/:id/events',
     { schema: { params: RunParams, querystring: EventsQuery } },
     async (request) =>
-      service.events(request.params.id, request.query.after, request.query.limit ?? 500),
+      service.events(request.params.id, request.query.after, Number(request.query.limit ?? 500)),
   )
 }
