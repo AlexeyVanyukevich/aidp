@@ -6,6 +6,8 @@ import type { TypeBoxTypeProvider } from '@fastify/type-provider-typebox'
 import type { Kysely } from 'kysely'
 import type { Config } from './config.js'
 import type { Database } from './db/schema.js'
+import { registerProjects } from './modules/projects/project.routes.js'
+import { createRepoInspector, type RepoInspector } from './modules/projects/repo-inspector.js'
 import { ForbiddenOriginError, registerErrorHandler } from './shared/errors.js'
 import { isAllowedHost, isSameOrigin } from './shared/hosts.js'
 
@@ -14,6 +16,7 @@ export interface AppDeps {
   db: Kysely<Database>
   /** Injected so sweepers and expiries are testable without waiting. */
   clock?: () => Date
+  repoInspector?: RepoInspector
 }
 
 declare module 'fastify' {
@@ -21,6 +24,7 @@ declare module 'fastify' {
     db: Kysely<Database>
     config: Config
     clock: () => Date
+    repoInspector: RepoInspector
   }
 }
 
@@ -38,6 +42,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.decorate('config', deps.config)
   app.decorate('clock', deps.clock ?? (() => new Date()))
   registerErrorHandler(app)
+  app.decorate('repoInspector', deps.repoInspector ?? createRepoInspector())
 
   // No sign-in is not no protection: any page open in the owner's browser can reach 127.0.0.1.
   app.addHook('onRequest', async (request) => {
@@ -52,6 +57,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   })
 
   app.get('/api/health', async () => ({ status: 'ok' }))
+  registerProjects(app)
 
   await registerSpa(app)
   return app
