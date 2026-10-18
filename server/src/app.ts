@@ -11,6 +11,8 @@ import { registerMcp } from './modules/mcp/mcp.routes.js'
 import { registerProjects } from './modules/projects/project.routes.js'
 import { createRepoInspector, type RepoInspector } from './modules/projects/repo-inspector.js'
 import { registerRunner } from './modules/runner/runner.routes.js'
+import { registerPrFiles } from './modules/runs/pr-files.js'
+import { realGh, type Gh } from './modules/runs/pr-poller.js'
 import { registerRuns } from './modules/runs/run.routes.js'
 import { registerSpecs } from './modules/specs/spec.routes.js'
 import { registerStream } from './modules/stream/stream.routes.js'
@@ -26,6 +28,7 @@ export interface AppDeps {
   clock?: () => Date
   repoInspector?: RepoInspector
   bus?: Bus
+  gh?: Gh
 }
 
 declare module 'fastify' {
@@ -35,6 +38,7 @@ declare module 'fastify' {
     clock: () => Date
     repoInspector: RepoInspector
     bus: Bus
+    gh: Gh
   }
 }
 
@@ -61,6 +65,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   })
   registerErrorHandler(app)
   app.decorate('repoInspector', deps.repoInspector ?? createRepoInspector())
+  app.decorate('gh', deps.gh ?? realGh)
 
   // No sign-in is not no protection: any page open in the owner's browser can reach 127.0.0.1.
   app.addHook('onRequest', async (request) => {
@@ -81,6 +86,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerRunner(app)
   registerMcp(app)
   registerRuns(app)
+  registerPrFiles(app)
   registerCosts(app)
   registerStream(app)
 

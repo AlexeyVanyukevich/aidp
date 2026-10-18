@@ -8,8 +8,11 @@ import { isConflict } from '../errors'
 import { Loaded } from '../Loaded'
 import { useDocumentTitle } from '../page'
 import type { TaskState, TaskView } from '../types'
+import { CostTab } from './CostTab'
 import { PlanTab } from './PlanTab'
+import { PrTab } from './PrTab'
 import { SpecTab } from './SpecTab'
+import { TimelineTab } from './TimelineTab'
 import './card.css'
 
 type Patch = { position: number } | { state: 'done' }
@@ -86,6 +89,9 @@ export function CardDrawer() {
   const items = (t: TaskView) => [
     { id: 'spec', label: 'Spec', panel: <SpecTab task={t} onFrozen={leave} /> },
     { id: 'plan', label: 'Plan', panel: <PlanTab task={t} /> },
+    { id: 'timeline', label: 'Timeline', panel: <TimelineTab task={t} /> },
+    { id: 'cost', label: 'Cost', panel: <CostTab task={t} /> },
+    { id: 'pr', label: 'PR', panel: <PrTab task={t} /> },
   ]
 
   return (
