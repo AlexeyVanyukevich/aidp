@@ -20,6 +20,12 @@ export interface TaskCard {
   title: string
   state: TaskState
   position: number
+  phase: string | null
+  attempt: number | null
+  models: string[]
+  cost_usd: number
+  cost_complete: boolean
+  pr_url: string | null
 }
 
 export class TaskRepository {
@@ -72,6 +78,13 @@ export class TaskRepository {
       title: row.title,
       state: row.state,
       position: row.position,
+      // Filled in by the service from the latest run and the task's events.
+      phase: null,
+      attempt: null,
+      models: [],
+      cost_usd: 0,
+      cost_complete: true,
+      pr_url: null,
     }))
   }
 

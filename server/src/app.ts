@@ -6,10 +6,12 @@ import type { TypeBoxTypeProvider } from '@fastify/type-provider-typebox'
 import type { Kysely } from 'kysely'
 import type { Config } from './config.js'
 import type { Database } from './db/schema.js'
+import { registerCosts } from './modules/costs/cost.routes.js'
 import { registerMcp } from './modules/mcp/mcp.routes.js'
 import { registerProjects } from './modules/projects/project.routes.js'
 import { createRepoInspector, type RepoInspector } from './modules/projects/repo-inspector.js'
 import { registerRunner } from './modules/runner/runner.routes.js'
+import { registerRuns } from './modules/runs/run.routes.js'
 import { registerSpecs } from './modules/specs/spec.routes.js'
 import { registerStream } from './modules/stream/stream.routes.js'
 import { registerTasks } from './modules/tasks/task.routes.js'
@@ -78,6 +80,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerSpecs(app)
   registerRunner(app)
   registerMcp(app)
+  registerRuns(app)
+  registerCosts(app)
   registerStream(app)
 
   await registerSpa(app)

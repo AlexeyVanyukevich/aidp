@@ -2,7 +2,9 @@ import type { Kysely } from 'kysely'
 import type { Database } from '../../db/schema.js'
 import { publish } from '../../shared/bus.js'
 import { NotFoundError } from '../../shared/errors.js'
+import type { CostService } from '../costs/cost.service.js'
 import type { ProjectRepository, ProjectView } from '../projects/project.repository.js'
+import type { RunRepository } from '../runs/run.repository.js'
 import { moveTask } from './task.moves.js'
 import type { TaskCard, TaskRepository, TaskView } from './task.repository.js'
 
@@ -11,6 +13,8 @@ export class TaskService {
     private readonly db: Kysely<Database>,
     private readonly tasks: TaskRepository,
     private readonly projects: ProjectRepository,
+    private readonly runs: RunRepository,
+    private readonly costs: CostService,
   ) {}
 
   private async project(key: string): Promise<ProjectView> {
@@ -27,7 +31,28 @@ export class TaskService {
 
   async board(key: string): Promise<{ project: ProjectView; tasks: TaskCard[] }> {
     const project = await this.project(key)
-    return { project, tasks: await this.tasks.board(project.id, project.key) }
+    const cards = await this.tasks.board(project.id, project.key)
+    const ids = cards.map((card) => card.id)
+    const [latest, totals] = await Promise.all([
+      this.runs.latestByTask(ids),
+      this.costs.totals(ids),
+    ])
+    return {
+      project,
+      tasks: cards.map((card) => {
+        const run = latest.get(card.id)
+        const cost = totals.get(card.id)
+        return {
+          ...card,
+          phase: run?.phase ?? null,
+          attempt: run?.attempt ?? null,
+          pr_url: run?.pr_url ?? null,
+          models: cost?.models ?? [],
+          cost_usd: cost?.usd ?? 0,
+          cost_complete: cost?.complete ?? true,
+        }
+      }),
+    }
   }
 
   async create(
