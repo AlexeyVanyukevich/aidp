@@ -1,13 +1,21 @@
 import type { FastifyInstance } from 'fastify'
 import type { TypeBoxTypeProvider } from '@fastify/type-provider-typebox'
+import { CostService } from '../costs/cost.service.js'
 import { ProjectRepository } from '../projects/project.repository.js'
+import { RunRepository } from '../runs/run.repository.js'
 import { TaskRepository } from './task.repository.js'
 import { CreateTaskBody, PatchTaskBody, ProjectKeyParams, TaskParams } from './task.schemas.js'
 import { TaskService } from './task.service.js'
 
 export function registerTasks(instance: FastifyInstance): void {
   const app = instance.withTypeProvider<TypeBoxTypeProvider>()
-  const service = new TaskService(app.db, new TaskRepository(app.db), new ProjectRepository(app.db))
+  const service = new TaskService(
+    app.db,
+    new TaskRepository(app.db),
+    new ProjectRepository(app.db),
+    new RunRepository(app.db),
+    new CostService(app.db),
+  )
 
   app.get('/api/projects/:key/tasks', { schema: { params: ProjectKeyParams } }, async (request) =>
     service.board(request.params.key),
