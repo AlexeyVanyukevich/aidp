@@ -6556,8 +6556,8 @@ beforeEach(async () => {
     .execute()
   const usage = (input: number) => ({ input, output: 0, cache_read: 0, cache_write: 0 })
   const rows = [
-    { phase: PLAN_PHASE, agent: 'planner', model: 'm', ...usage(1_000_000), at: 0 },
-    { phase: BUILD_PHASE, agent: 'builder', model: 'm', ...usage(500_000), at: 1 },
+    { phase: PLAN_PHASE, agent: 'planner', model: 'm', ...usage(1_000_000), at: 0, tool: null },
+    { phase: BUILD_PHASE, agent: 'builder', model: 'm', ...usage(500_000), at: 1, tool: null },
     { phase: BUILD_PHASE, agent: 'builder', model: null, ...usage(0), at: 2, tool: 'Edit' },
   ]
   await db
@@ -6571,7 +6571,7 @@ beforeEach(async () => {
         type: row.model === null ? 'tool_call' : 'message',
         agent: row.agent,
         model: row.model,
-        tool: row.tool ?? null,
+        tool: row.tool,
         target: null,
         status: null,
         duration_ms: null,
