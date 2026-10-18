@@ -1538,6 +1538,9 @@ describe('isSameOrigin', () => {
   it.each([
     ['no Origin header (curl, the runner)', undefined, 'localhost:4100', true],
     ['the app itself', 'http://localhost:4100', 'localhost:4100', true],
+    ['the default port spelled out in Host', 'http://localhost', 'localhost:80', true],
+    ['the default port spelled out in Origin', 'http://localhost:80', 'localhost', true],
+    ['a Host in another case', 'http://localhost:4100', 'LocalHost:4100', true],
     ['another site', 'https://evil.example', 'localhost:4100', false],
     ['the same host on another port', 'http://localhost:5174', 'localhost:4100', false],
     ['an Origin that is not a URL', 'null', 'localhost:4100', false],
@@ -1573,13 +1576,15 @@ export function isAllowedHost(hostHeader: string | undefined, allowed: string[])
 /**
  * A write from a browser carries `Origin`; one from the runner or curl does not, and those are
  * not what this check is for. An Origin that is present must name the host the request was
- * addressed to, port included.
+ * addressed to, port included. The Host is read as a URL under the Origin's scheme, so a
+ * default port spelled out on one side (`localhost:80`) still matches its absence on the other.
  */
 export function isSameOrigin(origin: string | undefined, hostHeader: string | undefined): boolean {
   if (origin === undefined) return true
   if (hostHeader === undefined) return false
   try {
-    return new URL(origin).host.toLowerCase() === hostHeader.toLowerCase()
+    const from = new URL(origin)
+    return from.host === new URL(`${from.protocol}//${hostHeader}`).host
   } catch {
     return false
   }
