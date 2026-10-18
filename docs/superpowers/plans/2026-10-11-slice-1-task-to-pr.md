@@ -4731,7 +4731,7 @@ export const RunnerEventSchema = Type.Object(
     run_id: Uuid,
     phase_id: Type.Union([Uuid, Type.Null()]),
     ts: Type.String({ format: 'date-time' }),
-    type: Type.Union(EVENT_TYPES.map((type) => Type.Literal(type))),
+    type: Type.Enum(EVENT_TYPES),
     agent: NullableString(100),
     model: NullableString(200),
     tool: NullableString(200),
@@ -5421,7 +5421,6 @@ export class RunnerService {
         'runs.id',
         'runs.kind',
         'runs.spec_version',
-        'runs.created_at',
         'tasks.id as task_id',
         'tasks.number',
         'tasks.title',
@@ -5437,11 +5436,15 @@ export class RunnerService {
       ])
       .where('runs.id', '=', runId)
       .executeTakeFirstOrThrow()
+    // Compared inside the database: a timestamp read into a Date loses its microseconds, and
+    // the run would then not count itself.
     const { count } = await trx
       .selectFrom('runs')
       .select(sql<number>`count(*)::int`.as('count'))
       .where('task_id', '=', row.task_id)
-      .where('created_at', '<=', row.created_at)
+      .where('created_at', '<=', (eb) =>
+        eb.selectFrom('runs as self').select('self.created_at').where('self.id', '=', runId),
+      )
       .executeTakeFirstOrThrow()
     return {
       kind: 'start',
@@ -7372,7 +7375,7 @@ In `server/src/modules/tasks/task.routes.ts`, add:
 ```ts
 const ActionParams = Type.Object({
   id: Uuid,
-  action: Type.Union(ACTIONS.map((a) => Type.Literal(a))),
+  action: Type.Enum(ACTIONS),
 })
 app.post(
   '/api/tasks/:id/actions/:action',
