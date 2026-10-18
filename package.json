@@ -6,7 +6,8 @@
   "description": "A board where Claude carries out each task through Spec, Plan, Build and Verify",
   "license": "UNLICENSED",
   "workspaces": [
-    "server"
+    "server",
+    "runner"
   ],
   "engines": {
     "node": ">=24.0.0"

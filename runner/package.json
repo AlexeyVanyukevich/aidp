@@ -1,0 +1,20 @@
+{
+  "name": "@board/runner",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "bin": {
+    "board-cli": "bin/board-cli"
+  },
+  "scripts": {
+    "daemon": "bin/board-cli daemon",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "tsx": "^4.23.1",
+    "vitest": "^4.1.10"
+  }
+}

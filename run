@@ -69,12 +69,15 @@ scenario_test() {
   need_node; need_deps; need_plugins; need_hooks; need_docker
   step "Server suite"
   npm run --workspace server test
+  step "Runner suite"
+  npm run --workspace runner test
 }
 
 scenario_check() {
   need_node; need_deps; need_plugins; need_hooks
   step "Types"
   ( cd server && npx tsc --noEmit )
+  ( cd runner && npx tsc --noEmit )
   step "Formatting"
   npx prettier --check .
   step "Tests"

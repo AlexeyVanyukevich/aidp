@@ -1,0 +1,6 @@
+#!/bin/sh
+# The runner is a tool on this machine, never deployed: it runs from source through tsx. Hooks
+# call this file by its absolute path, from inside a worktree of another repository, so nothing
+# here may depend on the working directory.
+DIR="$(cd "$(dirname "$0")/.." && pwd)"
+exec "$DIR/../node_modules/.bin/tsx" "$DIR/src/cli.ts" "$@"
