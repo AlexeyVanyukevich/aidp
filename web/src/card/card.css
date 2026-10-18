@@ -55,3 +55,47 @@ td {
   border-block-end: 1px solid var(--zl-line);
   text-align: start;
 }
+.timeline,
+.cost-tab,
+.pr-tab {
+  display: grid;
+  gap: var(--zl-space-3);
+}
+.band {
+  padding: var(--zl-space-2) var(--zl-space-3);
+  border: 1px solid var(--zl-line);
+  border-radius: var(--zl-radius);
+}
+.band h3 {
+  margin: 0 0 var(--zl-space-2);
+  font-size: var(--zl-text);
+}
+.band ol {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/* The summary keeps its own display, and with it the disclosure triangle. */
+.step summary {
+  padding: 2px var(--zl-space-1);
+  cursor: pointer;
+}
+.step-nested summary {
+  padding-inline-start: var(--zl-space-5);
+}
+/* Wrapped, not scrolled: a scrolling box with nothing focusable inside fails the keyboard. */
+.step-detail pre {
+  padding: var(--zl-space-2);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-size: var(--zl-text-sm);
+  background: var(--zl-surface-sunk);
+}
+.summary {
+  color: var(--zl-ink-soft);
+}
+.failure {
+  margin: 0;
+}
