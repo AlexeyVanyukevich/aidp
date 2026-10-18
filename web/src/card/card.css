@@ -1,0 +1,57 @@
+/* Wider than the kit's side dialog: the Cost tab's tables need the room. */
+.card-dialog.zl-dialog--side {
+  inline-size: min(48rem, 100vw);
+}
+.card-body,
+.spec-tab,
+.plan-tab {
+  display: grid;
+  gap: var(--zl-space-3);
+}
+.state-line {
+  margin: 0;
+  color: var(--zl-ink-soft);
+}
+.card-actions,
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--zl-space-2);
+}
+.spec-text {
+  box-sizing: border-box;
+  inline-size: 100%;
+  font-family: var(--zl-font-mono);
+  font-size: var(--zl-text-sm);
+}
+.lint h3 {
+  margin: 0;
+  font-size: var(--zl-text);
+}
+.lint ul {
+  margin: var(--zl-space-1) 0 0;
+  padding-inline-start: var(--zl-space-5);
+}
+.files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--zl-space-2);
+  margin-block: var(--zl-space-1);
+}
+table {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font-size: var(--zl-text-sm);
+}
+caption {
+  padding-block: var(--zl-space-2);
+  font-weight: 600;
+  text-align: start;
+}
+th,
+td {
+  padding: var(--zl-space-1) var(--zl-space-2);
+  border-block-end: 1px solid var(--zl-line);
+  text-align: start;
+}

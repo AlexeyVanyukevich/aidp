@@ -1,5 +1,6 @@
 import { BrowserRouter, Link, Route, Routes } from 'react-router'
 import type { QueryClient } from '@tanstack/react-query'
+import { CardDrawer } from './card/CardDrawer'
 import { useBoardStream } from './stream'
 import { Board } from './routes/Board'
 import { Projects } from './routes/Projects'
@@ -15,7 +16,9 @@ export function App({ client }: { client: QueryClient }) {
       </header>
       <Routes>
         <Route path="/" element={<Projects />} />
-        <Route path="/p/:key" element={<Board />} />
+        <Route path="/p/:key" element={<Board />}>
+          <Route path=":taskId" element={<CardDrawer />} />
+        </Route>
       </Routes>
     </BrowserRouter>
   )
