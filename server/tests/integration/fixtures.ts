@@ -60,3 +60,31 @@ export async function seedTask(
     .returning('id')
     .executeTakeFirstOrThrow()
 }
+
+/** A project, a task in Ready with an approved spec, and its queued delivery run. */
+export async function seedQueuedRun(
+  db: Kysely<Database>,
+  overrides: Partial<{ state: TaskState; projectKey: string }> = {},
+): Promise<{ projectId: string; taskId: string; runId: string }> {
+  const project = await seedProject(db, { key: overrides.projectKey ?? 'PAY' })
+  const task = await seedTask(db, project.id, { state: overrides.state ?? 'ready' })
+  await db
+    .insertInto('specs')
+    .values({
+      task_id: task.id,
+      version: 1,
+      body_md: GOOD_SPEC,
+      status: 'approved',
+      approved_at: new Date(),
+      criteria: JSON.stringify([
+        { id: 'AC1', requirements: ['R1'], text: 'Given a failure Then it retries after 1s' },
+      ]),
+    })
+    .execute()
+  const run = await db
+    .insertInto('runs')
+    .values({ task_id: task.id, kind: 'delivery', spec_version: 1, status: 'queued' })
+    .returning('id')
+    .executeTakeFirstOrThrow()
+  return { projectId: project.id, taskId: task.id, runId: run.id }
+}
