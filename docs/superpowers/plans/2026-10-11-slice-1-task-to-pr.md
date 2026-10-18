@@ -9212,19 +9212,14 @@ async function guard(): Promise<void> {
 const [command, ...args] = process.argv.slice(2)
 if (command === 'event') await event(args[0] ?? '')
 else if (command === 'guard') await guard()
-else if (command === 'daemon') {
-  const { main } = await import('./daemon.js')
-  await main()
-} else {
-  process.stderr.write(
-    'usage: board-cli daemon | event <PostToolUse|SubagentStart|SubagentStop> | guard\n',
-  )
+else {
+  process.stderr.write('usage: board-cli event <PostToolUse|SubagentStart|SubagentStop> | guard\n')
   process.exit(2)
 }
 ```
 
-`./daemon.js` arrives in Task 20; until then `board-cli daemon` fails to import, and nothing
-calls it.
+The `daemon` command arrives with `daemon.ts` in Task 20, so nothing imports a module that does
+not exist yet.
 
 - [ ] **Step 4: Run them to see them pass**
 
@@ -10353,6 +10348,7 @@ git commit -m "feat(runner): prepare worktrees, open pull requests, bound the te
 **Files:**
 
 - Create: `runner/src/delivery.ts`, `runner/src/daemon.ts`
+- Modify: `runner/src/cli.ts` (the `daemon` command)
 - Test: `runner/tests/unit/delivery.test.ts`
 
 **Interfaces:**
@@ -10921,6 +10917,23 @@ export async function main(): Promise<void> {
   for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => stop.abort())
   console.log(`board-cli: runner ${config.runnerId} claiming from ${config.boardUrl}`)
   await new Daemon(config).loop(stop.signal)
+}
+```
+
+In `runner/src/cli.ts`, add the `daemon` command and name it in the usage line:
+
+```ts
+const [command, ...args] = process.argv.slice(2)
+if (command === 'event') await event(args[0] ?? '')
+else if (command === 'guard') await guard()
+else if (command === 'daemon') {
+  const { main } = await import('./daemon.js')
+  await main()
+} else {
+  process.stderr.write(
+    'usage: board-cli daemon | event <PostToolUse|SubagentStart|SubagentStop> | guard\n',
+  )
+  process.exit(2)
 }
 ```
 
