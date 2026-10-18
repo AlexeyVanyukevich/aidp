@@ -28,9 +28,16 @@ reasons.
 - The kit: `"charter": "github:AlexeyVanyukevich/charter#v3.3.0"`. The root `CLAUDE.md` is the
   one `@` import, `core`'s; every other rule loads by path from the mirror `charter sync`
   writes. `charter.json` records each workspace's modules, written by `npx --no charter init`:
-  `server` takes `backend typescript node vitest`, `runner` takes `typescript node vitest`, and
-  `web` takes `typescript react vitest`. No workspace has a `CLAUDE.md` of its own; `init`
+  `server` takes `backend typescript node vitest`, `runner` takes `typescript node vitest`,
+  `web` takes `frontend typescript react vitest playwright`, and the root takes
+  `frontend playwright` for `tests/ui/`. No workspace has a `CLAUDE.md` of its own; `init`
   writes each one's `.claude/settings.json` instead.
+- The web app meets WCAG 2.2 AA (spec §8, Accessibility). Its widgets come from the zellige kit,
+  `"@zellige/core": "github:AlexeyVanyukevich/zellige-core#v0.1.1"` and
+  `"@zellige/react": "github:AlexeyVanyukevich/zellige-react#v0.1.0"`, which the root
+  `CLAUDE.md` names. `web/` lints with oxlint and the kit's `react` and `vitest` configs. Journeys
+  find elements by role and accessible name — never by test id or CSS class — and scan every
+  state they reach with axe-core.
 - Backend workspaces (`server/`, `runner/`) resolve `NodeNext`: every relative import ends in
   `.js`. `web/` resolves as a bundler: no extension.
 - TypeBox comes from `typebox`, never `@sinclair/typebox`. No `any` in hand-written code;
@@ -81,9 +88,20 @@ These are not in the spec and a reviewer should know they were made here:
 - The runner takes `typescript node vitest` and not the `backend` domain: it serves no HTTP and
   has no `src/modules/`, and under the kit's modules it no longer needs `backend` to get the
   `NodeNext` rule.
-- `web` takes the stacks the kit's 2.x `ui` section held, `typescript react vitest`. The kit's
-  `frontend` domain and `playwright` stack (3.1) are not taken in this slice: they would need
-  the spec to state the board's accessibility and Tasks 22–26 to be rewritten for them.
+- The root is a recorded workspace with `frontend playwright` only, so the journey rules load on
+  `tests/ui/`, where the journeys drive the whole product. `frontend`'s `**/*.css` rule then
+  loads twice on the web app's stylesheets, once per mirror; nothing else overlaps.
+- Every drag has a button in the card's dialog: Move up and Move down reorder within the
+  column, Mark done moves a Review card to Done. They patch the same fields a drop does.
+- The open card announces every change of its own state, whoever made it; the board announces
+  nothing the runner does. The page behind a modal dialog is inert, and announcing every card
+  the runner moves would never stop during a run.
+- The web app owns every word it shows for an error, chosen by code and field
+  (`web/src/errors.ts`), because the kit's HTTP rule keeps the server's `message` from users.
+- The board's columns do not scroll inside a box: a scrolling box with nothing focusable in it
+  fails axe's `scrollable-region-focusable` (WCAG 2.1.1), so the page scrolls instead.
+- Web unit tests live in `web/tests/unit/`, as the kit's testing rule places them.
+- `@vitejs/plugin-react` is `^6.1.2`, the major the kit's React binding builds with on Vite 8.
 
 ## Review Focus
 
@@ -142,13 +160,13 @@ ai-task-board/
     tests/fixtures/stream/{plain,subagent}.ndjson   recorded, never hand-written
     tests/fake/{fake-claude, fake-claude.ts, fake-gh, stream-replay.ts}
   web/
-    package.json  tsconfig.json  vite.config.ts  index.html  .claude/settings.json
-    src/main.tsx  App.tsx  api.ts  types.ts  stream.ts  styles.css
+    package.json  tsconfig.json  vite.config.ts  index.html  .oxlintrc.json  .claude/settings.json
+    src/main.tsx  App.tsx  api.ts  types.ts  stream.ts  errors.ts  page.ts  Loaded.tsx  styles.css
     src/routes/{Projects,Board}.tsx
     src/board/{columns.ts,TaskCardView.tsx,board.css}
     src/card/{CardDrawer,SpecTab,PlanTab,TimelineTab,CostTab,PrTab}.tsx  lint.ts  timeline.ts  format.ts  card.css
-    tests/*.test.ts
-  tests/ui/{global-setup.ts,helpers.ts,task-to-pr.spec.ts}
+    tests/unit/*.test.ts
+  tests/ui/{global-setup.ts,helpers.ts,task-to-pr.spec.ts,keyboard.spec.ts}
   docs/architecture.md  docs/backlog.md
 ```
 
@@ -11330,18 +11348,24 @@ git commit -m "test(runner): run deliveries against the real server with a fake 
 ## Phase F — the web app
 
 Logic that can be wrong lives in pure functions with unit tests; components stay thin and are
-exercised by the browser journey in Task 26.
+exercised by the browser journeys in Task 26, which also scan them for accessibility. Every
+widget comes from the zellige kit; spec §8, Accessibility, is the contract each task's markup
+meets. Two rules hold throughout: no hook is called inside a render function passed to
+`Loaded`, and no live region is mounted in the same render as the message written into it.
 
 ### Task 22: The web workspace, its client, the live stream, and the Projects page
 
 **Files:**
 
 - Create: `web/package.json`, `web/tsconfig.json`, `web/vite.config.ts`, `web/index.html`,
-  `web/src/main.tsx`, `web/src/App.tsx`, `web/src/types.ts`, `web/src/api.ts`,
-  `web/src/stream.ts`, `web/src/styles.css`, `web/src/routes/Projects.tsx`
+  `web/.oxlintrc.json`, `web/src/main.tsx`, `web/src/App.tsx`, `web/src/types.ts`,
+  `web/src/api.ts`, `web/src/stream.ts`, `web/src/errors.ts`, `web/src/page.ts`,
+  `web/src/Loaded.tsx`, `web/src/styles.css`, `web/src/routes/Projects.tsx`
 - Create through `charter init`: `web/.claude/settings.json`
-- Modify: `package.json` (workspaces), `run` (dev, test, check), `charter.json`
-- Test: `web/tests/api.test.ts`, `web/tests/stream.test.ts`
+- Modify: `package.json` (workspaces), `run` (dev, test, check), `charter.json`,
+  `.claude/settings.json` (plugins), `CLAUDE.md` (the component kit)
+- Test: `web/tests/unit/api.test.ts`, `web/tests/unit/stream.test.ts`,
+  `web/tests/unit/errors.test.ts`
 
 **Interfaces:**
 
@@ -11350,6 +11374,10 @@ exercised by the browser journey in Task 26.
   `ApiError { status; code; details? }`; `keysFor(message: BoardMessage): QueryKey[]` and
   `useBoardStream(client: QueryClient): void`; query keys `['projects']`, `['board', key]`,
   `['task', id]`, `['specs', taskId]`, `['runs', taskId]`, `['events', runId]`, `['costs', taskId]`.
+- Produces: `invalidField(error: unknown): string | undefined` and
+  `isConflict(error: unknown): boolean` (`errors.ts`); `useDocumentTitle(title)` and
+  `usePage(title, id): RefObject<HTMLHeadingElement | null>` (`page.ts`);
+  `Loaded<T>({ query, failure, children: (data: T) => ReactNode })`.
 
 - [ ] **Step 1: Workspace files**
 
@@ -11370,6 +11398,8 @@ exercised by the browser journey in Task 26.
   },
   "dependencies": {
     "@tanstack/react-query": "^5.90.2",
+    "@zellige/core": "github:AlexeyVanyukevich/zellige-core#v0.1.1",
+    "@zellige/react": "github:AlexeyVanyukevich/zellige-react#v0.1.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router": "^7.9.3"
@@ -11377,12 +11407,16 @@ exercised by the browser journey in Task 26.
   "devDependencies": {
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
-    "@vitejs/plugin-react": "^5.0.4",
+    "@vitejs/plugin-react": "^6.1.2",
+    "oxlint": "^1.88.0",
+    "oxlint-tsgolint": "^7.0.2004",
     "vite": "^8.2.2",
     "vitest": "^4.1.11"
   }
 }
 ```
+
+`oxlint-tsgolint` runs the type-aware rules and follows TypeScript's major version, 7.
 
 `web/tsconfig.json`:
 
@@ -11391,6 +11425,17 @@ exercised by the browser journey in Task 26.
   "extends": "charter/stacks/react/tsconfig",
   "compilerOptions": { "types": ["vite/client"] },
   "include": ["src", "tests", "vite.config.ts"]
+}
+```
+
+`web/.oxlintrc.json` — the paths are filesystem paths, relative to this file:
+
+```json
+{
+  "extends": [
+    "../node_modules/charter/stacks/react/oxlint.json",
+    "../node_modules/charter/stacks/vitest/oxlint.json"
+  ]
 }
 ```
 
@@ -11436,15 +11481,27 @@ origin check compares `Origin: http://127.0.0.1:5174` with that same host, which
 Record the web workspace's modules, once the directory exists:
 
 ```bash
-npx --no charter init typescript react vitest --workspace web
+npx --no charter init frontend typescript react vitest playwright --workspace web
 ```
 
-Expected: `charter.json` gains `"web": ["typescript", "react", "vitest"]`, and
-`web/.claude/settings.json` is written.
+Expected: `charter.json` gains
+`"web": ["frontend", "typescript", "react", "vitest", "playwright"]`; `web/.claude/settings.json`
+is written; both it and the root's `.claude/settings.json` turn on
+`frontend-design@claude-plugins-official` and `playwright@claude-plugins-official`, which
+`need_plugins` installs on each clone.
+
+In the root `CLAUDE.md`, add to the end of "Conventions" — the `frontend` domain reads the
+kit's name from here:
+
+```markdown
+UI components come from the `@zellige/react` package, on `@zellige/core`'s tokens and CSS. A
+widget the kit lacks is added to the kit, in its own repository, never written in `web/`.
+```
 
 Root `package.json`: `"workspaces": ["server", "runner", "web"]`. Add `server/public/` to
 `.gitignore` (the web build lands there). In `run`, replace `scenario_dev`, `scenario_test` and
-the type step of `scenario_check`, and add `stop` and the `RUN_STATE` handling:
+the type step of `scenario_check`, add a lint step after it, and add `stop` and the `RUN_STATE`
+handling:
 
 ```bash
 scenario_dev() {
@@ -11499,19 +11556,26 @@ scenario_test() {
   ( cd server && npx tsc --noEmit )
   ( cd runner && npx tsc --noEmit )
   ( cd web && npx tsc --noEmit )
+  step "Lint"
+  ( cd web && npx oxlint --deny-warnings )
 ```
 
 with `stop)          scenario_stop ;;` in the `case` and `dev` described as
 `[--bg]  PostgreSQL, migrations, the server, the web app and the runner` in `usage`. Then
-`npm install`.
+`npm install`, and format the new `package.json` as Task 1 does.
+
+Expected: `ls node_modules/@zellige/react/dist/index.js` finds the file. npm 11 warns that the
+binding's `prepare` script is not in `allowScripts`; the git dependency is built when npm
+packs it, and the build is there regardless. If it is missing, run
+`npm approve-scripts @zellige/react` and install again.
 
 - [ ] **Step 2: Write the failing tests**
 
-`web/tests/api.test.ts`:
+`web/tests/unit/api.test.ts`:
 
 ```ts
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { api, ApiError } from '../src/api'
+import { api, ApiError } from '../../src/api'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -11556,7 +11620,7 @@ describe('api', () => {
       { events: [{ id: 'b' }], next: null },
     ]
     const fetchMock = vi.fn(
-      async () => new Response(JSON.stringify(pages.shift()), { status: 200 }),
+      async (_url: string) => new Response(JSON.stringify(pages.shift()), { status: 200 }),
     )
     vi.stubGlobal('fetch', fetchMock)
     expect((await api.events('r')).map((e) => e.id)).toEqual(['a', 'b'])
@@ -11565,11 +11629,11 @@ describe('api', () => {
 })
 ```
 
-`web/tests/stream.test.ts`:
+`web/tests/unit/stream.test.ts`:
 
 ```ts
 import { describe, expect, it } from 'vitest'
-import { keysFor } from '../src/stream'
+import { keysFor } from '../../src/stream'
 
 describe('keysFor', () => {
   it.each([
@@ -11587,12 +11651,50 @@ describe('keysFor', () => {
 })
 ```
 
+`web/tests/unit/errors.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { ApiError } from '../../src/api'
+import { invalidField, isConflict } from '../../src/errors'
+
+const refused = (details?: Record<string, unknown>) =>
+  new ApiError(400, 'validation_error', 'm', details)
+
+describe('invalidField', () => {
+  it.each([
+    ['the field a service check names', refused({ field: 'repo_path' }), 'repo_path'],
+    ['the first schema issue’s path', refused({ issues: [{ instancePath: '/key' }] }), 'key'],
+    [
+      'a required field the schema missed',
+      refused({ issues: [{ instancePath: '', params: { missingProperty: 'name' } }] }),
+      'name',
+    ],
+    ['a refusal that names no field', refused(), undefined],
+    ['a conflict', new ApiError(409, 'conflict', 'm'), undefined],
+    ['anything that is not an ApiError', new Error('network'), undefined],
+  ])('finds %s', (_name, error, field) => {
+    expect(invalidField(error)).toBe(field)
+  })
+})
+
+describe('isConflict', () => {
+  it.each([
+    [new ApiError(409, 'conflict', 'm'), true],
+    [refused(), false],
+    [new Error('x'), false],
+  ])('%#', (error, expected) => {
+    expect(isConflict(error)).toBe(expected)
+  })
+})
+```
+
 - [ ] **Step 3: Run them to see them fail**
 
 Run: `npm run --workspace web test`
 Expected: FAIL — modules not found.
 
-- [ ] **Step 4: Implement the client, the types and the stream**
+- [ ] **Step 4: Implement the client, the types, the stream and the error reading**
 
 `web/src/types.ts`:
 
@@ -11889,19 +11991,53 @@ export function useBoardStream(client: QueryClient): void {
 }
 ```
 
+`web/src/errors.ts`:
+
+```ts
+import { ApiError } from './api'
+
+interface SchemaIssue {
+  instancePath?: unknown
+  params?: { missingProperty?: unknown }
+}
+
+/**
+ * The field a refusal is about: a service check's `details.field`, else the first schema issue.
+ * The page words the problem itself; the server's `message` is for the log, never shown.
+ */
+export function invalidField(error: unknown): string | undefined {
+  if (!(error instanceof ApiError) || error.code !== 'validation_error') return undefined
+  const field = error.details?.field
+  if (typeof field === 'string') return field
+  const issues = error.details?.issues
+  const first = Array.isArray(issues) ? (issues[0] as SchemaIssue | undefined) : undefined
+  if (typeof first?.instancePath === 'string' && first.instancePath !== '')
+    return first.instancePath.slice(1).split('/')[0]
+  const missing = first?.params?.missingProperty
+  return typeof missing === 'string' ? missing : undefined
+}
+
+/** The request lost a race: what the page showed was stale, and it has been read again. */
+export function isConflict(error: unknown): boolean {
+  return error instanceof ApiError && error.code === 'conflict'
+}
+```
+
 - [ ] **Step 5: Run them to see them pass**
 
 Run: `npm run --workspace web test`
 Expected: PASS.
 
-- [ ] **Step 6: The shell and the Projects page**
+- [ ] **Step 6: The shell, the page helpers and the Projects page**
 
-`web/src/main.tsx`:
+`web/src/main.tsx` — the kit's tokens and components load before the app's layout:
 
 ```tsx
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import '@zellige/core/tokens.css'
+import '@zellige/core/zl.css'
 import { App } from './App'
 import './styles.css'
 
@@ -11943,40 +12079,170 @@ export function App({ client }: { client: QueryClient }) {
 
 The board's route arrives with the board in Task 23, and the card's with the card in Task 24.
 
+`web/src/page.ts`:
+
+```ts
+import { useEffect, useRef } from 'react'
+
+const APP = 'AI Task Board'
+
+/** Names the document while mounted, and gives back the name it found when unmounted. */
+export function useDocumentTitle(title: string | undefined): void {
+  useEffect(() => {
+    if (title === undefined) return undefined
+    const before = document.title
+    document.title = `${title} · ${APP}`
+    return () => {
+      document.title = before
+    }
+  }, [title])
+}
+
+let current: string | undefined
+
+/**
+ * Names a page and returns the ref for its `h1`, which must render from the first paint with
+ * `tabIndex={-1}`. Arriving from another page moves focus to that heading — a client-side route
+ * change otherwise leaves it on a link that is gone. The first page loaded keeps the browser's
+ * focus, and StrictMode's second run of the effect sees the same id and does nothing.
+ */
+export function usePage(title: string | undefined, id: string) {
+  useDocumentTitle(title)
+  const heading = useRef<HTMLHeadingElement>(null)
+  useEffect(() => {
+    const arrived = current !== undefined && current !== id
+    current = id
+    if (arrived) heading.current?.focus()
+  }, [id])
+  return heading
+}
+```
+
+`web/src/Loaded.tsx`:
+
+```tsx
+import { useRef, type ReactNode } from 'react'
+import type { UseQueryResult } from '@tanstack/react-query'
+import { Loading, Trouble } from '@zellige/react'
+
+/**
+ * A query's three states in the kit's components. Retry removes its own button, so it moves
+ * focus first to this wrapper, which stays. `children` is a render function, not a component:
+ * it must call no hook.
+ */
+export function Loaded<T>({
+  query,
+  failure,
+  children,
+}: {
+  query: UseQueryResult<T>
+  failure: string
+  children: (data: T) => ReactNode
+}) {
+  const box = useRef<HTMLDivElement>(null)
+  const retry = () => {
+    box.current?.focus()
+    void query.refetch()
+  }
+  return (
+    <div ref={box} tabIndex={-1} className="loaded">
+      {query.data !== undefined ? (
+        children(query.data)
+      ) : query.isError ? (
+        <Trouble title={failure} onRetry={retry} />
+      ) : (
+        <Loading />
+      )}
+    </div>
+  )
+}
+```
+
 `web/src/routes/Projects.tsx`:
 
 ```tsx
-import { useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, ApiError } from '../api'
+import { Button, Empty, Field, Input, Notice } from '@zellige/react'
+import { api } from '../api'
+import { invalidField } from '../errors'
+import { Loaded } from '../Loaded'
+import { usePage } from '../page'
+import type { ProjectView } from '../types'
 
-const FIELDS = [
-  ['key', 'Key', 'PAY'],
-  ['name', 'Name', 'Payments'],
-  ['repo_path', 'Repository path', '/Users/you/code/payments'],
-  ['github_repo', 'GitHub repository', 'owner/payments'],
-  ['base_branch', 'Base branch', 'main'],
-  ['test_command', 'Test command', 'npm test'],
-] as const
-type Field = (typeof FIELDS)[number][0]
+type FieldName = Exclude<keyof ProjectView, 'id'>
+
+/** The page's own words for each field, and for what is wrong when the server refuses it. */
+const FIELDS: readonly { name: FieldName; label: string; hint: string; problem: string }[] = [
+  {
+    name: 'key',
+    label: 'Key',
+    hint: 'Starts every task key, as in PAY-1.',
+    problem: 'Use 2–10 capital letters and digits, starting with a letter, that no project uses.',
+  },
+  { name: 'name', label: 'Name', hint: 'Shown beside the key.', problem: 'Enter a name.' },
+  {
+    name: 'repo_path',
+    label: 'Repository path',
+    hint: 'The absolute path of the repository on this machine.',
+    problem: 'There is no git repository at this path, or another project already uses it.',
+  },
+  {
+    name: 'github_repo',
+    label: 'GitHub repository',
+    hint: 'owner/name, as a remote of that repository points at it.',
+    problem: 'No remote of that repository points at this GitHub repository.',
+  },
+  {
+    name: 'base_branch',
+    label: 'Base branch',
+    hint: 'Pull requests go into this branch.',
+    problem: 'Enter the branch pull requests go into.',
+  },
+  {
+    name: 'test_command',
+    label: 'Test command',
+    hint: 'Runs in the repository after every Build.',
+    problem: 'This command does not run in that repository.',
+  },
+]
+
+const BLANK: Record<FieldName, string> = {
+  key: '',
+  name: '',
+  repo_path: '',
+  github_repo: '',
+  base_branch: 'main',
+  test_command: 'npm test',
+}
 
 export function Projects() {
+  const heading = usePage('Projects', 'projects')
   const client = useQueryClient()
   const projects = useQuery({ queryKey: ['projects'], queryFn: api.projects })
-  const [form, setForm] = useState<Record<Field, string>>({
-    key: '',
-    name: '',
-    repo_path: '',
-    github_repo: '',
-    base_branch: 'main',
-    test_command: 'npm test',
-  })
+  const [form, setForm] = useState(BLANK)
   const create = useMutation({
     mutationFn: () => api.createProject(form),
-    onSuccess: () => client.invalidateQueries({ queryKey: ['projects'] }),
+    onSuccess: () => {
+      setForm(BLANK)
+      return client.invalidateQueries({ queryKey: ['projects'] })
+    },
   })
-  const error = create.error instanceof ApiError ? create.error : undefined
+  const field = invalidField(create.error)
+  const named = FIELDS.some((f) => f.name === field)
+  const inputs = useRef(new Map<string, HTMLInputElement>())
+  const summary = useRef<HTMLDivElement>(null)
+
+  // A refusal moves focus to the field it names, which now carries the reason, or else to the
+  // summary. Both are rendered by the time this runs, so the reason is read with the focus.
+  useEffect(() => {
+    if (create.error === null) return
+    const input = field === undefined ? undefined : inputs.current.get(field)
+    if (input) input.focus()
+    else summary.current?.focus()
+  }, [create.error, field])
+
   const submit = (event: FormEvent) => {
     event.preventDefault()
     create.mutate()
@@ -11984,123 +12250,95 @@ export function Projects() {
 
   return (
     <main className="page">
-      <h1>Projects</h1>
-      <ul className="projects">
-        {projects.data?.map((project) => (
-          <li key={project.id}>
-            <Link to={`/p/${project.key}`}>
-              <strong>{project.key}</strong> {project.name}
-            </Link>
-            <span className="muted">{project.github_repo}</span>
-          </li>
-        ))}
-        {projects.data?.length === 0 && (
-          <li className="muted">No projects yet. Register a repository below.</li>
-        )}
-      </ul>
+      <h1 ref={heading} tabIndex={-1}>
+        Projects
+      </h1>
 
-      <h2>Register a repository</h2>
-      <form className="register" onSubmit={submit}>
-        {FIELDS.map(([name, label, placeholder]) => (
-          <label key={name} className={error?.details?.field === name ? 'invalid' : ''}>
-            {label}
-            <input
-              name={name}
-              value={form[name]}
-              placeholder={placeholder}
-              onChange={(e) => setForm({ ...form, [name]: e.target.value })}
-            />
-          </label>
-        ))}
-        {error && (
-          <p className="error" role="alert">
-            {error.message}
-          </p>
-        )}
-        <button type="submit" disabled={create.isPending}>
-          Register
-        </button>
-      </form>
+      <section aria-labelledby="registered">
+        <h2 id="registered">Registered repositories</h2>
+        <Loaded query={projects} failure="The projects could not be loaded.">
+          {(list) =>
+            list.length === 0 ? (
+              <Empty title="No projects yet">Register a repository below.</Empty>
+            ) : (
+              <ul className="projects">
+                {list.map((project) => (
+                  <li key={project.id}>
+                    <Link to={`/p/${project.key}`}>
+                      {project.key} {project.name}
+                    </Link>
+                    <span className="muted">{project.github_repo}</span>
+                  </li>
+                ))}
+              </ul>
+            )
+          }
+        </Loaded>
+      </section>
+
+      <section aria-labelledby="register">
+        <h2 id="register">Register a repository</h2>
+        <form className="register" onSubmit={submit}>
+          {FIELDS.map((f) => (
+            <Field
+              key={f.name}
+              label={f.label}
+              hint={f.hint}
+              error={field === f.name ? f.problem : undefined}
+            >
+              <Input
+                name={f.name}
+                value={form[f.name]}
+                autoComplete="off"
+                ref={(node) => {
+                  if (node) inputs.current.set(f.name, node)
+                  else inputs.current.delete(f.name)
+                }}
+                onChange={(e) => setForm({ ...form, [f.name]: e.target.value })}
+              />
+            </Field>
+          ))}
+          <Notice tone="danger" className="announce" ref={summary} tabIndex={-1}>
+            {create.isError && !named ? 'The repository could not be registered. Try again.' : ''}
+          </Notice>
+          <Notice className="announce">
+            {create.isSuccess ? `${create.data.key} registered.` : ''}
+          </Notice>
+          <Button type="submit" variant="primary" busy={create.isPending}>
+            Register
+          </Button>
+        </form>
+      </section>
     </main>
   )
 }
 ```
 
-`web/src/styles.css`:
+`web/src/styles.css` — layout only; colour, type, controls and the focus indicator are the
+kit's:
 
 ```css
-:root {
-  --bg: #f6f6f4;
-  --panel: #ffffff;
-  --ink: #1d1d1b;
-  --muted: #6b6b66;
-  --line: #e2e2dd;
-  --accent: #3b5bdb;
-  --ok: #2f9e44;
-  --bad: #e03131;
-  --warn: #f08c00;
-  font-family:
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    sans-serif;
-  color: var(--ink);
-  background: var(--bg);
-}
 body {
   margin: 0;
-}
-a {
-  color: var(--accent);
-  text-decoration: none;
-}
-button {
-  font: inherit;
-  padding: 6px 12px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--panel);
-  cursor: pointer;
-}
-button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-}
-input,
-textarea,
-select {
-  font: inherit;
-  padding: 6px 8px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--panel);
 }
 .top {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 10px 20px;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
+  gap: var(--zl-space-4);
+  padding: var(--zl-space-3) var(--zl-space-5);
+  border-block-end: 1px solid var(--zl-line);
+  background: var(--zl-surface);
 }
 .brand {
   font-weight: 700;
-  color: var(--ink);
+  color: var(--zl-ink);
 }
 .page {
-  padding: 20px;
-  max-width: 960px;
+  padding: var(--zl-space-5);
+  max-inline-size: 60rem;
 }
 .muted {
-  color: var(--muted);
-}
-.error {
-  color: var(--bad);
+  color: var(--zl-ink-soft);
 }
 .projects {
   list-style: none;
@@ -12108,39 +12346,40 @@ select {
 }
 .projects li {
   display: flex;
-  gap: 12px;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+  gap: var(--zl-space-3);
+  padding-block: var(--zl-space-2);
+  border-block-end: 1px solid var(--zl-line);
 }
 .register {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: var(--zl-space-3);
 }
-.register label {
-  display: grid;
-  gap: 4px;
-  font-size: 14px;
-}
-.register label.invalid input {
-  border-color: var(--bad);
-}
-.register .error,
-.register button {
+.register > .zl-notice,
+.register > button {
   grid-column: 1 / -1;
   justify-self: start;
 }
+/* A live region is in the page from the start, so what is written into it is announced. Empty,
+   it takes no room. Unlayered, this wins over the kit's layered rules. */
+.announce:empty {
+  padding: 0;
+  border: 0;
+}
 ```
 
-- [ ] **Step 7: Build and check**
+- [ ] **Step 7: Build, lint and check**
 
 Run: `npm run --workspace web build && ./run check`
-Expected: the build writes `server/public/index.html`; check ends `✓ Everything is clean`.
+Expected: the build writes `server/public/index.html`; check ends `✓ Everything is clean`, its
+lint step included. A `jsx-a11y` finding is fixed, not silenced.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add package.json package-lock.json run .gitignore charter.json web
+git add package.json package-lock.json run .gitignore charter.json CLAUDE.md \
+  .claude/settings.json web
 git commit -m "feat(web): register repositories and follow the board's changes live"
 ```
 
@@ -12153,24 +12392,33 @@ git commit -m "feat(web): register repositories and follow the board's changes l
 - Create: `web/src/board/columns.ts`, `web/src/board/TaskCardView.tsx`, `web/src/board/board.css`,
   `web/src/routes/Board.tsx`
 - Modify: `web/src/App.tsx` (the board's route)
-- Test: `web/tests/columns.test.ts`
+- Test: `web/tests/unit/columns.test.ts`
 
 **Interfaces:**
 
 - Produces: `MAIN_COLUMNS`, `SIDE_COLUMNS`, `LABELS: Record<TaskState, string>`;
   `columns(tasks: TaskCard[]): Record<TaskState, TaskCard[]>`;
   `dropPatch(card: TaskCard, target: TaskState, before: TaskCard | undefined, column: TaskCard[]):
-{ position: number } | { state: 'done' } | null`; `positionBetween(prev?: number, next?: number): number`;
-  `shortModel(id: string): string`; `formatUsd(usd: number): string`.
+{ position: number } | { state: 'done' } | null`;
+  `stepPatch(card: TaskCard, column: TaskCard[], direction: 'up' | 'down'): { position: number } | null`;
+  `positionBetween(prev?: number, next?: number): number`; `shortModel(id: string): string`;
+  `formatUsd(usd: number): string`; `cardDomId(taskId: string): string`.
 
 - [ ] **Step 1: Write the failing test**
 
-`web/tests/columns.test.ts`:
+`web/tests/unit/columns.test.ts`:
 
 ```ts
 import { describe, expect, it } from 'vitest'
-import { columns, dropPatch, formatUsd, positionBetween, shortModel } from '../src/board/columns'
-import type { TaskCard } from '../src/types'
+import {
+  columns,
+  dropPatch,
+  formatUsd,
+  positionBetween,
+  shortModel,
+  stepPatch,
+} from '../../src/board/columns'
+import type { TaskCard } from '../../src/types'
 
 const card = (id: string, state: TaskCard['state'], position: number): TaskCard => ({
   id,
@@ -12199,9 +12447,9 @@ describe('columns', () => {
   })
 })
 
-describe('dropPatch', () => {
-  const backlog = [card('a', 'backlog', 1), card('b', 'backlog', 2), card('c', 'backlog', 3)]
+const backlog = [card('a', 'backlog', 1), card('b', 'backlog', 2), card('c', 'backlog', 3)]
 
+describe('dropPatch', () => {
   it.each([
     ['onto the top of its own column', backlog[2]!, 'backlog', backlog[0], { position: 0 }],
     ['between two cards', backlog[2]!, 'backlog', backlog[1], { position: 1.5 }],
@@ -12220,6 +12468,20 @@ describe('dropPatch', () => {
     ['Review to Backlog', 'review', 'backlog'],
   ] as const)('refuses a drag from %s', (_name, from, to) => {
     expect(dropPatch(card('x', from, 1), to, undefined, [])).toBeNull()
+  })
+})
+
+// The buttons that stand in for a drag ask for the same positions a drop would.
+describe('stepPatch', () => {
+  it.each([
+    ['the last card up, between the first two', backlog[2]!, 'up', { position: 1.5 }],
+    ['the middle card up, above the first', backlog[1]!, 'up', { position: 0 }],
+    ['the first card down, between the last two', backlog[0]!, 'down', { position: 2.5 }],
+    ['the middle card down, below the last', backlog[1]!, 'down', { position: 4 }],
+    ['the first card up', backlog[0]!, 'up', null],
+    ['the last card down', backlog[2]!, 'down', null],
+  ] as const)('moves %s', (_name, moved, direction, patch) => {
+    expect(stepPatch(moved, backlog, direction)).toEqual(patch)
   })
 })
 
@@ -12255,7 +12517,7 @@ describe('formatting', () => {
 
 - [ ] **Step 2: Run it to see it fail**
 
-Run: `npm run --workspace web test -- tests/columns.test.ts`
+Run: `npm run --workspace web test -- tests/unit/columns.test.ts`
 Expected: FAIL — module not found.
 
 - [ ] **Step 3: Implement**
@@ -12326,6 +12588,27 @@ export function dropPatch(
   return null
 }
 
+/**
+ * Move up and Move down, the buttons that make a reorder without a drag (WCAG 2.5.7): one place
+ * within the card's column, in position order. `null` at the column's end.
+ */
+export function stepPatch(
+  card: TaskCard,
+  column: TaskCard[],
+  direction: 'up' | 'down',
+): { position: number } | null {
+  const index = column.findIndex((c) => c.id === card.id)
+  if (index === -1) return null
+  if (direction === 'up') {
+    const above = column[index - 1]
+    if (above === undefined) return null
+    return { position: positionBetween(column[index - 2]?.position, above.position) }
+  }
+  const below = column[index + 1]
+  if (below === undefined) return null
+  return { position: positionBetween(below.position, column[index + 2]?.position) }
+}
+
 export function shortModel(id: string): string {
   return /(opus|sonnet|haiku)/.exec(id)?.[1] ?? id
 }
@@ -12339,53 +12622,70 @@ export function formatUsd(usd: number): string {
 `web/src/board/TaskCardView.tsx`:
 
 ```tsx
+import { Fragment, type DragEvent } from 'react'
 import { Link } from 'react-router'
+import { Badge } from '@zellige/react'
 import type { TaskCard } from '../types'
 import { formatUsd, shortModel } from './columns'
 
+/** The id of a card's link, by which focus finds the card again after it changes columns. */
+export const cardDomId = (taskId: string) => `card-${taskId}`
+
+/**
+ * A card is one link, named by its key and title first. The spaces between its parts are text,
+ * so the accessible name reads as words. Dragging is for the mouse; each move a drag makes is
+ * also a button in the card's dialog.
+ */
 export function TaskCardView({
   card,
   projectKey,
   onDragStart,
+  onDragOver,
+  onDrop,
 }: {
   card: TaskCard
   projectKey: string
   onDragStart: () => void
+  onDragOver: (event: DragEvent) => void
+  onDrop: (event: DragEvent) => void
 }) {
   return (
     <Link
+      id={cardDomId(card.id)}
       to={`/p/${projectKey}/${card.id}`}
-      className="card"
+      className="zl-card task-card"
       draggable
       onDragStart={onDragStart}
-      data-testid={`card-${card.key}`}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
     >
-      <div className="card-key">{card.key}</div>
-      <div className="card-title">{card.title}</div>
-      <div className="card-meta">
+      <span className="card-key">{card.key}</span> <span className="card-title">{card.title}</span>{' '}
+      <span className="card-meta">
         {card.state === 'running' && card.phase !== null && (
-          <span className="phase">
-            {card.phase}
-            {card.attempt !== null && card.attempt > 1 ? ` · attempt ${card.attempt}` : ''}
-          </span>
+          <>
+            <Badge tone="accent">
+              {card.phase}
+              {card.attempt !== null && card.attempt > 1 ? ` · attempt ${card.attempt}` : ''}
+            </Badge>{' '}
+          </>
         )}
         {card.models.map((model) => (
-          <span key={model} className="badge">
-            {shortModel(model)}
-          </span>
+          <Fragment key={model}>
+            <Badge>{shortModel(model)}</Badge>{' '}
+          </Fragment>
         ))}
         {(card.cost_usd > 0 || !card.cost_complete) && (
-          <span
-            className="cost"
-            title={
-              card.cost_complete ? undefined : 'A model has no price yet; this is a lower bound'
-            }
-          >
+          <Badge tone="success">
             {formatUsd(card.cost_usd)}
-            {card.cost_complete ? '' : '+'}
-          </span>
+            {!card.cost_complete && (
+              <>
+                <span aria-hidden="true">+</span>
+                <span className="zl-visually-hidden"> or more: a model has no price yet</span>
+              </>
+            )}
+          </Badge>
         )}
-      </div>
+      </span>
     </Link>
   )
 }
@@ -12394,115 +12694,157 @@ export function TaskCardView({
 `web/src/routes/Board.tsx`:
 
 ```tsx
-import { useState, type DragEvent, type FormEvent } from 'react'
-import { Outlet, useParams } from 'react-router'
+import { useEffect, useRef, useState, type DragEvent, type FormEvent } from 'react'
+import { Outlet, useLocation, useParams } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, ApiError } from '../api'
+import { Button, Field, Input, Notice } from '@zellige/react'
+import { api } from '../api'
 import { columns, dropPatch, LABELS, MAIN_COLUMNS, SIDE_COLUMNS } from '../board/columns'
-import { TaskCardView } from '../board/TaskCardView'
+import { cardDomId, TaskCardView } from '../board/TaskCardView'
+import { isConflict } from '../errors'
+import { Loaded } from '../Loaded'
+import { usePage } from '../page'
 import type { TaskCard, TaskState } from '../types'
 import '../board/board.css'
+
+const allowDrop = (event: DragEvent) => event.preventDefault()
 
 export function Board() {
   const { key = '' } = useParams()
   const client = useQueryClient()
+  const location = useLocation()
   const board = useQuery({ queryKey: ['board', key], queryFn: () => api.board(key) })
+  const name = board.data ? `${board.data.project.key} · ${board.data.project.name}` : key
+  const heading = usePage(board.data ? name : undefined, `board:${key}`)
   const [dragged, setDragged] = useState<TaskCard | undefined>()
-  const [notice, setNotice] = useState<string | undefined>()
+  const [message, setMessage] = useState('')
   const [title, setTitle] = useState('')
+  const [titleMissing, setTitleMissing] = useState(false)
+  const titleInput = useRef<HTMLInputElement>(null)
+
+  // Closing a card returns focus to its link. The dialog leaves focus on the page instead when
+  // the link it came from was replaced — the card changed columns while open — or the card was
+  // opened from its address; then the card's current link takes it. This runs after the
+  // dialog's own cleanup, so it sees where that left focus.
+  const openCard = useRef<string | undefined>(undefined)
+  useEffect(() => {
+    const open = /^\/p\/[^/]+\/([^/]+)$/.exec(location.pathname)?.[1]
+    const lost = document.activeElement === null || document.activeElement === document.body
+    if (open === undefined && openCard.current !== undefined && lost)
+      document.getElementById(cardDomId(openCard.current))?.focus()
+    openCard.current = open
+  }, [location.pathname])
 
   const refresh = () => client.invalidateQueries({ queryKey: ['board', key] })
-  const patch = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: { position: number } | { state: 'done' } }) =>
-      api.patchTask(id, body),
+  const move = useMutation({
+    mutationFn: ({
+      card,
+      body,
+    }: {
+      card: TaskCard
+      body: { position: number } | { state: 'done' }
+    }) => api.patchTask(card.id, body),
+    onSuccess: (_task, { card, body }) =>
+      setMessage('state' in body ? `${card.key} moved to Done.` : `${card.key} moved.`),
     onError: (error) =>
-      setNotice(
-        error instanceof ApiError && error.code === 'conflict'
+      setMessage(
+        isConflict(error)
           ? 'That card moved meanwhile; the board is up to date again.'
-          : String(error),
+          : 'The board could not save that move. Try again.',
       ),
     onSettled: refresh,
   })
   const create = useMutation({
-    mutationFn: () => api.createTask(key, { title }),
-    onSuccess: () => {
+    mutationFn: () => api.createTask(key, { title: title.trim() }),
+    onSuccess: (task) => {
       setTitle('')
-      void refresh()
+      setMessage(`${task.key} added to Backlog.`)
+      return refresh()
     },
+    onError: () => setMessage('The task could not be added. Try again.'),
   })
-
-  if (board.isError) return <main className="page error">{String(board.error)}</main>
-  if (!board.data) return <main className="page muted">Loading…</main>
-  const grouped = columns(board.data.tasks)
-
-  const drop = (target: TaskState, before?: TaskCard) => (event: DragEvent) => {
-    event.preventDefault()
-    event.stopPropagation()
-    if (dragged === undefined) return
-    const body = dropPatch(dragged, target, before, grouped[target])
-    setDragged(undefined)
-    if (body === null) {
-      setNotice(
-        'Only a card in Review can be dragged, to Done. Other moves are buttons on the card.',
-      )
-      return
-    }
-    setNotice(undefined)
-    patch.mutate({ id: dragged.id, body })
-  }
-
-  const column = (state: TaskState) => (
-    <section
-      key={state}
-      className={`column column-${state}`}
-      onDragOver={(e) => e.preventDefault()}
-      onDrop={drop(state)}
-      data-testid={`column-${state}`}
-    >
-      <h3>
-        {LABELS[state]} <span className="count">{grouped[state].length}</span>
-      </h3>
-      {grouped[state].map((card) => (
-        <div key={card.id} onDragOver={(e) => e.preventDefault()} onDrop={drop(state, card)}>
-          <TaskCardView card={card} projectKey={key} onDragStart={() => setDragged(card)} />
-        </div>
-      ))}
-    </section>
-  )
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
-    if (title.trim() !== '') create.mutate()
+    const missing = title.trim() === ''
+    setTitleMissing(missing)
+    if (missing) titleInput.current?.focus()
+    else create.mutate()
   }
 
   return (
     <main className="board-page">
       <div className="board-head">
-        <h1>
-          {board.data.project.key} · {board.data.project.name}
+        <h1 ref={heading} tabIndex={-1}>
+          {name}
         </h1>
         <form onSubmit={submit} className="new-task">
-          <input
-            aria-label="New task title"
-            placeholder="New task title"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-          />
-          <button type="submit" disabled={create.isPending}>
+          <Field label="New task title" error={titleMissing ? 'Enter a title.' : undefined}>
+            <Input ref={titleInput} value={title} onChange={(e) => setTitle(e.target.value)} />
+          </Field>
+          <Button type="submit" busy={create.isPending}>
             Add task
-          </button>
+          </Button>
         </form>
       </div>
-      {notice && (
-        <p className="notice" role="status">
-          {notice}
-        </p>
-      )}
-      <div className="columns">{MAIN_COLUMNS.map(column)}</div>
-      <details className="side" open={SIDE_COLUMNS.some((s) => grouped[s].length > 0)}>
-        <summary>Blocked and failed</summary>
-        <div className="columns">{SIDE_COLUMNS.map(column)}</div>
-      </details>
+      <Notice className="announce">{message}</Notice>
+      <Loaded query={board} failure="This board could not be loaded.">
+        {(data) => {
+          const grouped = columns(data.tasks)
+          const drop = (target: TaskState, before?: TaskCard) => (event: DragEvent) => {
+            event.preventDefault()
+            event.stopPropagation()
+            if (dragged === undefined) return
+            const body = dropPatch(dragged, target, before, grouped[target])
+            setDragged(undefined)
+            if (body === null)
+              setMessage(
+                'Only a card in Review can be dragged, to Done. Other moves are buttons on the card.',
+              )
+            else move.mutate({ card: dragged, body })
+          }
+          const column = (state: TaskState) => (
+            <section key={state} aria-label={LABELS[state]} className="column">
+              <h2>
+                {LABELS[state]}{' '}
+                <span className="count">
+                  {grouped[state].length}
+                  <span className="zl-visually-hidden">
+                    {grouped[state].length === 1 ? ' card' : ' cards'}
+                  </span>
+                </span>
+              </h2>
+              {/* A container with no role takes the column's drops: dropping is for the mouse,
+                  and Move up, Move down and Mark done make the same moves. A drop on a card
+                  lands before it, through the card's own link. */}
+              <div className="drop-zone" onDragOver={allowDrop} onDrop={drop(state)}>
+                <ol className="cards">
+                  {grouped[state].map((card) => (
+                    <li key={card.id}>
+                      <TaskCardView
+                        card={card}
+                        projectKey={key}
+                        onDragStart={() => setDragged(card)}
+                        onDragOver={allowDrop}
+                        onDrop={drop(state, card)}
+                      />
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            </section>
+          )
+          return (
+            <>
+              <div className="columns">{MAIN_COLUMNS.map(column)}</div>
+              <details className="side" open={SIDE_COLUMNS.some((s) => grouped[s].length > 0)}>
+                <summary>Blocked and failed</summary>
+                <div className="columns">{SIDE_COLUMNS.map(column)}</div>
+              </details>
+            </>
+          )
+        }}
+      </Loaded>
       <Outlet />
     </main>
   )
@@ -12519,70 +12861,69 @@ In `web/src/App.tsx`, import `Board` from `./routes/Board` and add, after the pr
 
 ```css
 .board-page {
-  padding: 16px 20px;
+  padding: var(--zl-space-4) var(--zl-space-5);
 }
 .board-head {
   display: flex;
-  align-items: center;
+  flex-wrap: wrap;
+  align-items: end;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--zl-space-4);
 }
 .board-head h1 {
-  font-size: 20px;
   margin: 0;
+  font-size: 1.25rem;
 }
 .new-task {
   display: flex;
-  gap: 8px;
+  align-items: end;
+  gap: var(--zl-space-2);
 }
-.notice {
-  background: #fff4e6;
-  border: 1px solid var(--warn);
-  padding: 8px 12px;
-  border-radius: 6px;
-}
+/* No scrolling box: one with nothing focusable inside fails the keyboard (axe's
+   scrollable-region-focusable), so a board wider than the window scrolls the page. */
 .columns {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: minmax(200px, 1fr);
-  gap: 12px;
-  overflow-x: auto;
-  padding: 12px 0;
+  grid-auto-columns: minmax(150px, 1fr);
+  gap: var(--zl-space-3);
+  padding-block: var(--zl-space-3);
 }
 .column {
-  background: #ececea;
-  border-radius: 8px;
-  padding: 8px;
-  min-height: 160px;
   display: grid;
   align-content: start;
-  gap: 8px;
+  gap: var(--zl-space-2);
+  min-block-size: 160px;
+  padding: var(--zl-space-2);
+  border-radius: var(--zl-radius);
+  background: var(--zl-surface-sunk);
 }
-.column h3 {
-  font-size: 13px;
-  margin: 4px 4px 8px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted);
+.column h2 {
+  margin: var(--zl-space-1);
+  font-size: var(--zl-text-sm);
+  color: var(--zl-ink-soft);
 }
 .count {
   font-weight: 400;
 }
-.card {
-  display: grid;
-  gap: 4px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 8px;
-  color: var(--ink);
+.drop-zone {
+  min-block-size: 120px;
 }
-.card:hover {
-  border-color: var(--accent);
+.cards {
+  display: grid;
+  gap: var(--zl-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.task-card {
+  display: grid;
+  gap: var(--zl-space-1);
+  color: var(--zl-ink);
+  text-decoration: none;
 }
 .card-key {
-  font-size: 12px;
-  color: var(--muted);
+  font-size: var(--zl-text-sm);
+  color: var(--zl-ink-soft);
 }
 .card-title {
   font-weight: 600;
@@ -12590,32 +12931,18 @@ In `web/src/App.tsx`, import `Board` from `./routes/Board` and add, after the pr
 .card-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  font-size: 12px;
-}
-.badge,
-.phase,
-.cost {
-  border-radius: 4px;
-  padding: 1px 6px;
-  background: #edf2ff;
-}
-.phase {
-  background: #fff9db;
-}
-.cost {
-  background: #ebfbee;
+  gap: var(--zl-space-1);
 }
 .side summary {
   cursor: pointer;
-  color: var(--muted);
+  color: var(--zl-ink-soft);
 }
 ```
 
-- [ ] **Step 4: Run the test and the build**
+- [ ] **Step 4: Run the test, the lint and the build**
 
-Run: `npm run --workspace web test && npm run --workspace web build`
-Expected: PASS; the build succeeds.
+Run: `npm run --workspace web test && (cd web && npx oxlint --deny-warnings) && npm run --workspace web build`
+Expected: PASS; no lint finding; the build succeeds.
 
 - [ ] **Step 5: Commit**
 
@@ -12626,28 +12953,36 @@ git commit -m "feat(web): show the board and allow only the drags the table allo
 
 ---
 
-### Task 24: The card — Spec and Plan tabs, Cancel and Re-run
+### Task 24: The card — Spec and Plan tabs, the moves, Cancel and Re-run
 
 **Files:**
 
 - Create: `web/src/card/lint.ts`, `web/src/card/SpecTab.tsx`, `web/src/card/PlanTab.tsx`,
   `web/src/card/CardDrawer.tsx`, `web/src/card/card.css`
 - Modify: `web/src/App.tsx` (the card's route)
-- Test: `web/tests/lint.test.ts`
+- Test: `web/tests/unit/lint.test.ts`
 
 **Interfaces:**
 
 - Produces: `lintMessage(finding: LintFinding): string`; `SPEC_TEMPLATE: string`;
-  `editable(state: TaskState): boolean`; the drawer at `/p/:key/:taskId` with the tabs `spec`
-  and `plan` (Task 25 adds `timeline`, `cost` and `pr`).
+  `editable(state: TaskState): boolean`; `plural(n, one, many?): string`;
+  `lintSummary(lint): string`; `savedMessage(spec): string`; the dialog at `/p/:key/:taskId`
+  with the tabs `spec` and `plan` (Task 25 adds `timeline`, `cost` and `pr`).
 
 - [ ] **Step 1: Write the failing test**
 
-`web/tests/lint.test.ts`:
+`web/tests/unit/lint.test.ts`:
 
 ```ts
 import { describe, expect, it } from 'vitest'
-import { editable, lintMessage, SPEC_TEMPLATE } from '../src/card/lint'
+import {
+  editable,
+  lintMessage,
+  lintSummary,
+  plural,
+  savedMessage,
+  SPEC_TEMPLATE,
+} from '../../src/card/lint'
 
 describe('lintMessage', () => {
   it.each([
@@ -12685,6 +13020,37 @@ describe('editable', () => {
   })
 })
 
+describe('the words for counts and outcomes', () => {
+  it.each([
+    [1, 'requirement', undefined, '1 requirement'],
+    [2, 'requirement', undefined, '2 requirements'],
+    [1, 'criterion', 'criteria', '1 criterion'],
+    [3, 'criterion', 'criteria', '3 criteria'],
+  ] as const)('plural(%s, %s)', (n, one, many, text) => {
+    expect(plural(n, one, many)).toBe(text)
+  })
+
+  const lint = (approvable: boolean, findings: number, questions: number) => ({
+    requirements: ['R1'],
+    criteria: [{ id: 'AC1', requirements: ['R1'], text: 't' }],
+    findings: Array.from({ length: findings }, () => ({ code: 'duplicate_id', id: 'R1' })),
+    open_questions: Array.from({ length: questions }, (_, i) => `q${i}`),
+    approvable,
+  })
+
+  it('sums up a clean spec', () => {
+    expect(lintSummary(lint(true, 0, 0))).toBe('The spec lints clean: 1 requirement, 1 criterion.')
+  })
+
+  it.each([
+    [lint(true, 0, 0), 'Saved v2. It lints clean and can be approved.'],
+    [lint(false, 2, 1), 'Saved v2. It cannot be approved yet: 3 things to fix, listed under Lint.'],
+    [lint(false, 0, 1), 'Saved v2. It cannot be approved yet: 1 thing to fix, listed under Lint.'],
+  ])('announces a save: %#', (result, message) => {
+    expect(savedMessage({ version: 2, lint: result })).toBe(message)
+  })
+})
+
 it('offers the platform design’s template, which lints clean once filled', () => {
   expect(SPEC_TEMPLATE).toContain('## Requirements')
   expect(SPEC_TEMPLATE).toContain('## Acceptance criteria')
@@ -12694,7 +13060,7 @@ it('offers the platform design’s template, which lints clean once filled', () 
 
 - [ ] **Step 2: Run it to see it fail**
 
-Run: `npm run --workspace web test -- tests/lint.test.ts`
+Run: `npm run --workspace web test -- tests/unit/lint.test.ts`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement**
@@ -12702,7 +13068,7 @@ Expected: FAIL.
 `web/src/card/lint.ts`:
 
 ```ts
-import type { LintFinding, TaskState } from '../types'
+import type { LintFinding, SpecView, TaskState } from '../types'
 
 export function lintMessage(finding: LintFinding): string {
   switch (finding.code) {
@@ -12730,6 +13096,25 @@ export function editable(state: TaskState): boolean {
   return state === 'backlog' || state === 'spec_review'
 }
 
+export function plural(n: number, one: string, many = `${one}s`): string {
+  return `${n} ${n === 1 ? one : many}`
+}
+
+export function lintSummary(lint: SpecView['lint']): string {
+  return `The spec lints clean: ${plural(lint.requirements.length, 'requirement')}, ${plural(
+    lint.criteria.length,
+    'criterion',
+    'criteria',
+  )}.`
+}
+
+/** What the card's status region says once a version is saved. */
+export function savedMessage(spec: Pick<SpecView, 'version' | 'lint'>): string {
+  if (spec.lint.approvable) return `Saved v${spec.version}. It lints clean and can be approved.`
+  const issues = spec.lint.findings.length + spec.lint.open_questions.length
+  return `Saved v${spec.version}. It cannot be approved yet: ${plural(issues, 'thing')} to fix, listed under Lint.`
+}
+
 export const SPEC_TEMPLATE = `## Goal
 One sentence: what changes for whom.
 
@@ -12754,22 +13139,52 @@ Tech stack, performance, security, compatibility.
 `web/src/card/SpecTab.tsx`:
 
 ```tsx
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Button, Field, Notice, Select, Textarea } from '@zellige/react'
 import { api, ApiError } from '../api'
-import type { TaskView } from '../types'
-import { editable, lintMessage, SPEC_TEMPLATE } from './lint'
+import { isConflict } from '../errors'
+import { Loaded } from '../Loaded'
+import type { SpecView, TaskView } from '../types'
+import { editable, lintMessage, lintSummary, savedMessage, SPEC_TEMPLATE } from './lint'
 
-export function SpecTab({ task }: { task: TaskView }) {
-  const client = useQueryClient()
+export function SpecTab({ task, onFrozen }: { task: TaskView; onFrozen: () => void }) {
   const specs = useQuery({ queryKey: ['specs', task.id], queryFn: () => api.specs(task.id) })
+  return (
+    <Loaded query={specs} failure="The spec could not be loaded.">
+      {(list) => <SpecEditor task={task} specs={list} onFrozen={onFrozen} />}
+    </Loaded>
+  )
+}
+
+function SpecEditor({
+  task,
+  specs,
+  onFrozen,
+}: {
+  task: TaskView
+  specs: SpecView[]
+  /** Approving freezes the spec and both buttons go; the card moves focus before they do. */
+  onFrozen: () => void
+}) {
+  const client = useQueryClient()
+  const lintId = useId()
   const [selected, setSelected] = useState<string | undefined>()
   const [draft, setDraft] = useState<string | undefined>()
-  const [problem, setProblem] = useState<string | undefined>()
+  const [message, setMessage] = useState('')
+  const [problem, setProblem] = useState<{ text: string } | undefined>()
+  const problemBox = useRef<HTMLDivElement>(null)
+  // A new object each time, so the same failure twice still moves focus to the notice.
+  useEffect(() => {
+    if (problem) problemBox.current?.focus()
+  }, [problem])
 
-  const latest = specs.data?.[0]
-  const shown = specs.data?.find((s) => s.id === selected) ?? latest
-  useEffect(() => setDraft(undefined), [shown?.id])
+  const latest = specs[0]
+  const shown = specs.find((s) => s.id === selected) ?? latest
+  const show = (id: string) => {
+    setSelected(id)
+    setDraft(undefined)
+  }
 
   const refresh = () =>
     Promise.all([
@@ -12777,27 +13192,31 @@ export function SpecTab({ task }: { task: TaskView }) {
       client.invalidateQueries({ queryKey: ['task', task.id] }),
       client.invalidateQueries({ queryKey: ['board'] }),
     ])
-  const explain = (error: unknown) =>
-    setProblem(
-      error instanceof ApiError && error.code === 'conflict'
-        ? 'This spec changed elsewhere; showing the latest.'
-        : error instanceof Error
-          ? error.message
-          : String(error),
-    )
+  const fail = (action: 'save' | 'approve') => (error: unknown) =>
+    setProblem({
+      text: isConflict(error)
+        ? 'This spec changed elsewhere; the latest version is shown.'
+        : error instanceof ApiError && error.code === 'validation_error'
+          ? action === 'approve'
+            ? 'The spec cannot be approved until it lints clean and has no open questions.'
+            : 'The spec could not be saved. Check it and try again.'
+          : 'That did not work. Try again.',
+    })
   const save = useMutation({
     mutationFn: () => api.saveSpec(task.id, draft ?? shown?.body_md ?? SPEC_TEMPLATE),
+    onMutate: () => setProblem(undefined),
     onSuccess: (spec) => {
-      setSelected(spec.id)
-      setProblem(undefined)
+      show(spec.id)
+      setMessage(savedMessage(spec))
     },
-    onError: explain,
+    onError: fail('save'),
     onSettled: refresh,
   })
   const approve = useMutation({
     mutationFn: (id: string) => api.approve(id),
-    onSuccess: () => setProblem(undefined),
-    onError: explain,
+    onMutate: () => setProblem(undefined),
+    onSuccess: onFrozen,
+    onError: fail('approve'),
     onSettled: refresh,
   })
 
@@ -12812,69 +13231,74 @@ export function SpecTab({ task }: { task: TaskView }) {
 
   return (
     <div className="spec-tab">
-      {specs.data && specs.data.length > 0 && (
-        <label className="versions">
-          Version
-          <select value={shown?.id} onChange={(e) => setSelected(e.target.value)}>
-            {specs.data.map((s) => (
+      {specs.length > 0 && (
+        <Field label="Version">
+          <Select value={shown?.id} onChange={(e) => show(e.target.value)}>
+            {specs.map((s) => (
               <option key={s.id} value={s.id}>
                 v{s.version} · {s.status}
               </option>
             ))}
-          </select>
-        </label>
+          </Select>
+        </Field>
       )}
-      <textarea
-        aria-label="Spec"
-        value={text}
-        readOnly={!canEdit}
-        onChange={(e) => setDraft(e.target.value)}
-        rows={22}
-      />
+      <Field
+        label="Spec"
+        hint="Markdown. Give each requirement an id such as R1, and each criterion its own id and the requirements it checks: AC1 (R1)."
+      >
+        <Textarea
+          className="spec-text"
+          value={text}
+          readOnly={!canEdit}
+          rows={22}
+          onChange={(e) => setDraft(e.target.value)}
+        />
+      </Field>
       {shown && draft === undefined && (
-        <div className="lint">
-          {shown.lint.findings.map((f, i) => (
-            <p key={i} className="finding">
-              {lintMessage(f)}
-            </p>
-          ))}
-          {shown.lint.open_questions.map((q) => (
-            <p key={q} className="question">
-              Open question: {q}
-            </p>
-          ))}
-          {shown.lint.approvable && (
-            <p className="clean">
-              The spec lints clean: {shown.lint.requirements.length} requirements,{' '}
-              {shown.lint.criteria.length} criteria.
-            </p>
+        <section aria-labelledby={lintId} className="lint">
+          <h3 id={lintId}>Lint</h3>
+          {shown.lint.approvable ? (
+            <p>{lintSummary(shown.lint)}</p>
+          ) : (
+            <ul>
+              {shown.lint.findings.map((f, i) => (
+                <li key={i}>{lintMessage(f)}</li>
+              ))}
+              {shown.lint.open_questions.map((q) => (
+                <li key={q}>Open question: {q}</li>
+              ))}
+            </ul>
           )}
-        </div>
+        </section>
       )}
-      {problem && (
-        <p className="error" role="alert">
-          {problem}
-        </p>
-      )}
-      <div className="actions">
-        {canEdit && (
-          <button onClick={() => save.mutate()} disabled={save.isPending}>
+      <Notice className="announce">{message}</Notice>
+      <Notice tone="danger" className="announce" ref={problemBox} tabIndex={-1}>
+        {problem?.text}
+      </Notice>
+      {canEdit ? (
+        <div className="actions">
+          <Button busy={save.isPending} onClick={() => save.mutate()}>
             Save as v{(latest?.version ?? 0) + 1}
-          </button>
-        )}
-        {canEdit && (
-          <button
-            className="primary"
+          </Button>
+          <Button
+            variant="primary"
+            busy={approve.isPending}
+            disabled={!canApprove}
             onClick={() => shown && approve.mutate(shown.id)}
-            disabled={!canApprove || approve.isPending}
           >
             Approve
-          </button>
-        )}
-        {!canEdit && shown?.status === 'approved' && (
-          <span className="muted">Approved v{shown.version}; frozen for its runs.</span>
-        )}
-      </div>
+          </Button>
+          {!canApprove && (
+            <span className="muted">
+              Approve needs the latest version saved, linting clean, with no open questions.
+            </span>
+          )}
+        </div>
+      ) : (
+        shown?.status === 'approved' && (
+          <p className="muted">Approved v{shown.version}; frozen for its runs.</p>
+        )
+      )}
     </div>
   )
 }
@@ -12883,136 +13307,214 @@ export function SpecTab({ task }: { task: TaskView }) {
 `web/src/card/PlanTab.tsx`:
 
 ```tsx
+import { useId } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { Badge, Empty } from '@zellige/react'
 import { api } from '../api'
-import type { PlanData, TaskView } from '../types'
 import { formatUsd } from '../board/columns'
+import { Loaded } from '../Loaded'
+import type { PlanData, TaskView } from '../types'
 
 export function PlanTab({ task }: { task: TaskView }) {
   const runs = useQuery({ queryKey: ['runs', task.id], queryFn: () => api.runs(task.id) })
-  const run = runs.data?.[0]
-  const artifact = run?.artifacts.filter((a) => a.kind === 'plan').at(-1)
-  if (artifact === undefined)
-    return (
-      <p className="muted">No plan yet. The plan appears here once a run’s Plan phase saves one.</p>
-    )
-  const plan = artifact.data as PlanData
+  const stepsId = useId()
   return (
-    <div className="plan-tab">
-      <p>{plan.summary}</p>
-      <p className="muted">Confidence: {plan.confidence}</p>
-      <ol>
-        {plan.steps.map((step, i) => (
-          <li key={i}>
-            <strong>{step.title}</strong>{' '}
-            <span className="badge">{step.requirements.join(', ')}</span>
-            <div className="files">
-              {step.files.map((f) => (
-                <code key={f}>{f}</code>
-              ))}
-            </div>
-            {step.estimate_usd !== undefined && (
-              <span className="muted">est. {formatUsd(step.estimate_usd)}</span>
-            )}
-          </li>
-        ))}
-      </ol>
-      <table>
-        <thead>
-          <tr>
-            <th>Criterion</th>
-            <th>Check</th>
-          </tr>
-        </thead>
-        <tbody>
-          {plan.checks.map((c) => (
-            <tr key={c.criterion}>
-              <td>{c.criterion}</td>
-              <td>{c.how}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <Loaded query={runs} failure="The runs could not be loaded.">
+      {(list) => {
+        const artifact = list[0]?.artifacts.filter((a) => a.kind === 'plan').at(-1)
+        if (artifact === undefined)
+          return (
+            <Empty title="No plan yet">
+              The plan appears here once a run’s Plan phase saves one.
+            </Empty>
+          )
+        const plan = artifact.data as PlanData
+        return (
+          <div className="plan-tab">
+            <p>{plan.summary}</p>
+            <p className="muted">Confidence: {plan.confidence}</p>
+            <section aria-labelledby={stepsId}>
+              <h3 id={stepsId}>Steps</h3>
+              <ol>
+                {plan.steps.map((step, i) => (
+                  <li key={i}>
+                    <strong>{step.title}</strong> <Badge>{step.requirements.join(', ')}</Badge>
+                    <div className="files">
+                      {step.files.map((f) => (
+                        <code key={f}>{f}</code>
+                      ))}
+                    </div>
+                    {step.estimate_usd !== undefined && (
+                      <span className="muted">est. {formatUsd(step.estimate_usd)}</span>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            </section>
+            <table>
+              <caption>Checks</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Criterion</th>
+                  <th scope="col">Check</th>
+                </tr>
+              </thead>
+              <tbody>
+                {plan.checks.map((c) => (
+                  <tr key={c.criterion}>
+                    <th scope="row">{c.criterion}</th>
+                    <td>{c.how}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      }}
+    </Loaded>
   )
 }
 ```
 
-`web/src/card/CardDrawer.tsx`:
+`web/src/card/CardDrawer.tsx` — the kit's side Dialog, its Tabs, and the moves a drag would make:
 
 ```tsx
-import { useState } from 'react'
-import { Link, useParams } from 'react-router'
+import { useEffect, useRef, useState } from 'react'
+import { useNavigate, useParams } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Button, Dialog, Notice, Tabs } from '@zellige/react'
 import { api } from '../api'
-import { LABELS } from '../board/columns'
-import { SpecTab } from './SpecTab'
+import { columns, LABELS, stepPatch } from '../board/columns'
+import { isConflict } from '../errors'
+import { Loaded } from '../Loaded'
+import { useDocumentTitle } from '../page'
+import type { TaskState, TaskView } from '../types'
 import { PlanTab } from './PlanTab'
+import { SpecTab } from './SpecTab'
 import './card.css'
 
-const TABS = [
-  ['spec', 'Spec'],
-  ['plan', 'Plan'],
-] as const
-type Tab = (typeof TABS)[number][0]
+type Patch = { position: number } | { state: 'done' }
 
 export function CardDrawer() {
   const { key = '', taskId = '' } = useParams()
+  const navigate = useNavigate()
   const client = useQueryClient()
   const task = useQuery({ queryKey: ['task', taskId], queryFn: () => api.task(taskId) })
-  const [tab, setTab] = useState<Tab>('spec')
+  const board = useQuery({ queryKey: ['board', key], queryFn: () => api.board(key) })
+  const [tab, setTab] = useState('spec')
+  const [message, setMessage] = useState('')
+  const [problem, setProblem] = useState<{ text: string } | undefined>()
+  const stateLine = useRef<HTMLParagraphElement>(null)
+  const problemBox = useRef<HTMLDivElement>(null)
+  useDocumentTitle(task.data ? `${task.data.key} ${task.data.title}` : undefined)
+
+  // The page behind a modal dialog is inert, its live region with it, so the card announces its
+  // own changes of state — those its buttons made and those the runner made.
+  const seen = useRef<TaskState | undefined>(undefined)
+  useEffect(() => {
+    if (task.data === undefined) return
+    if (seen.current !== undefined && seen.current !== task.data.state)
+      setMessage(`${task.data.key} is now in ${LABELS[task.data.state]}.`)
+    seen.current = task.data.state
+  }, [task.data])
+  useEffect(() => {
+    if (problem) problemBox.current?.focus()
+  }, [problem])
+
+  const refresh = () =>
+    Promise.all([
+      client.invalidateQueries({ queryKey: ['task', taskId] }),
+      client.invalidateQueries({ queryKey: ['board'] }),
+    ])
+  const fail = (error: unknown) =>
+    setProblem({
+      text: isConflict(error)
+        ? 'This card changed meanwhile; its latest state is shown.'
+        : 'That did not work. Try again.',
+    })
+  // A button that changes the state removes itself; focus moves first to the state line, which
+  // names the new state once it arrives.
+  const leave = () => stateLine.current?.focus()
+  const move = useMutation({
+    mutationFn: (body: Patch) => api.patchTask(taskId, body),
+    onMutate: () => setProblem(undefined),
+    onError: fail,
+    onSettled: refresh,
+  })
   const act = useMutation({
     mutationFn: (action: 'cancel' | 'rerun') => api.action(taskId, action),
-    onSettled: () =>
-      Promise.all([
-        client.invalidateQueries({ queryKey: ['task', taskId] }),
-        client.invalidateQueries({ queryKey: ['board'] }),
-      ]),
+    onMutate: () => setProblem(undefined),
+    onSuccess: leave,
+    onError: fail,
+    onSettled: refresh,
   })
 
-  if (!task.data) return <aside className="drawer muted">Loading…</aside>
-  const t = task.data
+  const step = (direction: 'up' | 'down') => {
+    const card = board.data?.tasks.find((c) => c.id === taskId)
+    if (board.data === undefined || card === undefined) return
+    const where = LABELS[card.state]
+    const body = stepPatch(card, columns(board.data.tasks)[card.state], direction)
+    if (body === null)
+      setMessage(
+        `${card.key} is already at the ${direction === 'up' ? 'top' : 'bottom'} of ${where}.`,
+      )
+    else
+      move.mutate(body, {
+        onSuccess: () => setMessage(`${card.key} moved ${direction} in ${where}.`),
+      })
+  }
+
+  const items = (t: TaskView) => [
+    { id: 'spec', label: 'Spec', panel: <SpecTab task={t} onFrozen={leave} /> },
+    { id: 'plan', label: 'Plan', panel: <PlanTab task={t} /> },
+  ]
+
   return (
-    <aside className="drawer" aria-label={`${t.key} ${t.title}`}>
-      <header>
-        <div>
-          <div className="muted">
-            {t.key} · {LABELS[t.state]}
+    <Dialog
+      open
+      onClose={() => navigate(`/p/${key}`)}
+      title={task.data?.title ?? 'Card'}
+      placement="side"
+      className="card-dialog"
+    >
+      <Loaded query={task} failure="This card could not be loaded.">
+        {(t) => (
+          <div className="card-body">
+            <p className="state-line" ref={stateLine} tabIndex={-1}>
+              {t.key} · {LABELS[t.state]}
+            </p>
+            <div className="card-actions">
+              <Button busy={move.isPending} onClick={() => step('up')}>
+                Move up
+              </Button>
+              <Button busy={move.isPending} onClick={() => step('down')}>
+                Move down
+              </Button>
+              {t.state === 'review' && (
+                <Button onClick={() => move.mutate({ state: 'done' }, { onSuccess: leave })}>
+                  Mark done
+                </Button>
+              )}
+              {(t.state === 'ready' || t.state === 'running') && (
+                <Button variant="danger" onClick={() => act.mutate('cancel')}>
+                  Cancel run
+                </Button>
+              )}
+              {t.state === 'failed' && (
+                <Button variant="primary" onClick={() => act.mutate('rerun')}>
+                  Re-run
+                </Button>
+              )}
+            </div>
+            <Notice className="announce">{message}</Notice>
+            <Notice tone="danger" className="announce" ref={problemBox} tabIndex={-1}>
+              {problem?.text}
+            </Notice>
+            <Tabs label={`${t.key} sections`} items={items(t)} value={tab} onChange={setTab} />
           </div>
-          <h2>{t.title}</h2>
-        </div>
-        <div className="drawer-actions">
-          {(t.state === 'ready' || t.state === 'running') && (
-            <button onClick={() => act.mutate('cancel')}>Cancel</button>
-          )}
-          {t.state === 'failed' && (
-            <button className="primary" onClick={() => act.mutate('rerun')}>
-              Re-run
-            </button>
-          )}
-          <Link to={`/p/${key}`} aria-label="Close">
-            ✕
-          </Link>
-        </div>
-      </header>
-      <nav className="tabs" role="tablist">
-        {TABS.map(([id, label]) => (
-          <button
-            key={id}
-            role="tab"
-            aria-selected={tab === id}
-            className={tab === id ? 'active' : ''}
-            onClick={() => setTab(id)}
-          >
-            {label}
-          </button>
-        ))}
-      </nav>
-      <div className="tab-body">
-        {tab === 'spec' && <SpecTab task={t} />}
-        {tab === 'plan' && <PlanTab task={t} />}
-      </div>
-    </aside>
+        )}
+      </Loaded>
+    </Dialog>
   )
 }
 ```
@@ -13029,103 +13531,69 @@ inside the board's:
 `web/src/card/card.css`:
 
 ```css
-.drawer {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: min(760px, 100vw);
-  background: var(--panel);
-  border-left: 1px solid var(--line);
-  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.08);
+/* Wider than the kit's side dialog: the Cost tab's tables need the room. */
+.card-dialog.zl-dialog--side {
+  inline-size: min(48rem, 100vw);
+}
+.card-body,
+.spec-tab,
+.plan-tab {
   display: grid;
-  grid-template-rows: auto auto 1fr;
+  gap: var(--zl-space-3);
 }
-.drawer header {
-  display: flex;
-  justify-content: space-between;
-  align-items: start;
-  padding: 16px 20px 8px;
+.state-line {
+  margin: 0;
+  color: var(--zl-ink-soft);
 }
-.drawer h2 {
-  margin: 4px 0 0;
-  font-size: 18px;
-}
-.drawer-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-.tabs {
-  display: flex;
-  gap: 4px;
-  padding: 0 20px;
-  border-bottom: 1px solid var(--line);
-}
-.tabs button {
-  border: none;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
-  background: none;
-}
-.tabs button.active {
-  border-bottom-color: var(--accent);
-  font-weight: 600;
-}
-.tab-body {
-  overflow: auto;
-  padding: 16px 20px;
-}
-.spec-tab {
-  display: grid;
-  gap: 10px;
-}
-.spec-tab textarea {
-  font-family: ui-monospace, monospace;
-  font-size: 13px;
-  width: 100%;
-  box-sizing: border-box;
-}
-.lint .finding {
-  color: var(--bad);
-  margin: 2px 0;
-}
-.lint .question {
-  color: var(--warn);
-  margin: 2px 0;
-}
-.lint .clean {
-  color: var(--ok);
-  margin: 2px 0;
-}
+.card-actions,
 .actions {
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
   align-items: center;
+  gap: var(--zl-space-2);
+}
+.spec-text {
+  box-sizing: border-box;
+  inline-size: 100%;
+  font-family: var(--zl-font-mono);
+  font-size: var(--zl-text-sm);
+}
+.lint h3 {
+  margin: 0;
+  font-size: var(--zl-text);
+}
+.lint ul {
+  margin: var(--zl-space-1) 0 0;
+  padding-inline-start: var(--zl-space-5);
 }
 .files {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin: 4px 0;
+  gap: var(--zl-space-2);
+  margin-block: var(--zl-space-1);
 }
 table {
+  inline-size: 100%;
   border-collapse: collapse;
-  width: 100%;
-  font-size: 14px;
+  font-size: var(--zl-text-sm);
+}
+caption {
+  padding-block: var(--zl-space-2);
+  font-weight: 600;
+  text-align: start;
 }
 th,
 td {
-  text-align: left;
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--line);
+  padding: var(--zl-space-1) var(--zl-space-2);
+  border-block-end: 1px solid var(--zl-line);
+  text-align: start;
 }
 ```
 
-- [ ] **Step 4: Run the tests and the build**
+- [ ] **Step 4: Run the tests, the lint and the build**
 
-Run: `npm run --workspace web test && npm run --workspace web build`
-Expected: PASS; the build succeeds.
+Run: `npm run --workspace web test && (cd web && npx oxlint --deny-warnings) && npm run --workspace web build`
+Expected: PASS; no lint finding; the build succeeds.
 
 - [ ] **Step 5: Commit**
 
@@ -13142,8 +13610,10 @@ git commit -m "feat(web): write, lint and approve a spec on the card"
 
 - Create: `web/src/card/timeline.ts`, `web/src/card/format.ts`, `web/src/card/TimelineTab.tsx`,
   `web/src/card/CostTab.tsx`, `web/src/card/PrTab.tsx`, `server/src/modules/runs/pr-files.ts`
-- Modify: `web/src/card/CardDrawer.tsx` (three tabs), `server/src/app.ts` (`gh` dependency)
-- Test: `web/tests/timeline.test.ts`, `web/tests/format.test.ts`, `server/tests/integration/pr-files.test.ts`
+- Modify: `web/src/card/CardDrawer.tsx` (three tabs), `web/src/card/card.css`,
+  `server/src/app.ts` (`gh` dependency)
+- Test: `web/tests/unit/timeline.test.ts`, `web/tests/unit/format.test.ts`,
+  `server/tests/integration/pr-files.test.ts`
 
 **Interfaces:**
 
@@ -13155,12 +13625,12 @@ git commit -m "feat(web): write, lint and approve a spec on the card"
 
 - [ ] **Step 1: Write the failing tests**
 
-`web/tests/timeline.test.ts`:
+`web/tests/unit/timeline.test.ts`:
 
 ```ts
 import { describe, expect, it } from 'vitest'
-import { timelineModel } from '../src/card/timeline'
-import type { EventView, PhaseView } from '../src/types'
+import { timelineModel } from '../../src/card/timeline'
+import type { EventView, PhaseView } from '../../src/types'
 
 const phase = (id: string, name: string, attempt: number, started: string): PhaseView => ({
   id,
@@ -13210,11 +13680,11 @@ describe('timelineModel', () => {
 })
 ```
 
-`web/tests/format.test.ts`:
+`web/tests/unit/format.test.ts`:
 
 ```ts
 import { describe, expect, it } from 'vitest'
-import { formatDuration, formatPercent, formatTokens } from '../src/card/format'
+import { formatDuration, formatPercent, formatTokens } from '../../src/card/format'
 
 describe('format', () => {
   it.each([
@@ -13294,7 +13764,7 @@ describe('GET /api/runs/:id/files', () => {
 
 - [ ] **Step 2: Run them to see them fail**
 
-Run: `npm run --workspace web test -- tests/timeline.test.ts tests/format.test.ts && npm run --workspace server test -- tests/integration/pr-files.test.ts`
+Run: `npm run --workspace web test -- tests/unit/timeline.test.ts tests/unit/format.test.ts && npm run --workspace server test -- tests/integration/pr-files.test.ts`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement the server route**
@@ -13403,36 +13873,46 @@ export function formatPercent(ratio: number | null): string {
 }
 ```
 
-`web/src/card/TimelineTab.tsx`:
+`web/src/card/TimelineTab.tsx` — each phase a region named by its heading, each step the
+platform's `<details>`:
 
 ```tsx
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { Empty, Field, Select } from '@zellige/react'
 import { api } from '../api'
-import type { EventView, TaskView } from '../types'
+import { Loaded } from '../Loaded'
+import type { EventView, RunView, TaskView } from '../types'
 import { formatDuration, formatTokens } from './format'
-import { timelineModel } from './timeline'
+import { timelineModel, type Band } from './timeline'
+
+const tokensOf = (event: EventView) =>
+  event.usage.input + event.usage.output + event.usage.cache_read + event.usage.cache_write
+
+/** A step's line, in words: a failure says so rather than only turning red. */
+function stepLabel(event: EventView): string {
+  const base =
+    event.type === 'tool_call'
+      ? `${event.tool ?? 'tool'} ${event.target ?? ''}`.trim()
+      : event.type === 'message'
+        ? `${event.agent ?? ''} message${event.payload.declared ? `: ${String(event.payload.summary)}` : ''}`.trim()
+        : `${event.type.replaceAll('_', ' ')}${event.agent ? ` · ${event.agent}` : ''}`
+  return event.status === 'error' ? `${base} · failed` : base
+}
 
 function Step({ event }: { event: EventView }) {
-  const [open, setOpen] = useState(false)
-  const tokens =
-    event.usage.input + event.usage.output + event.usage.cache_read + event.usage.cache_write
-  const label =
-    event.type === 'tool_call'
-      ? `${event.tool ?? 'tool'} ${event.target ?? ''}`
-      : event.type === 'message'
-        ? `${event.agent ?? ''} message${event.payload.declared ? `: ${String(event.payload.summary)}` : ''}`
-        : `${event.type.replace('_', ' ')}${event.agent ? ` · ${event.agent}` : ''}`
+  const tokens = tokensOf(event)
+  const nested = event.type === 'subagent_start' || event.type === 'subagent_stop'
   return (
-    <li className={`step step-${event.type} ${event.status === 'error' ? 'step-error' : ''}`}>
-      <button className="step-line" onClick={() => setOpen(!open)}>
-        <span>{label}</span>
-        {tokens > 0 && <span className="muted">{formatTokens(tokens)} tokens</span>}
-        {event.duration_ms !== null && (
-          <span className="muted">{formatDuration(event.duration_ms)}</span>
-        )}
-      </button>
-      {open && (
+    <li className={nested ? 'step step-nested' : 'step'}>
+      <details>
+        <summary>
+          <span>{stepLabel(event)}</span>
+          {tokens > 0 && <span className="muted"> · {formatTokens(tokens)} tokens</span>}
+          {event.duration_ms !== null && (
+            <span className="muted"> · {formatDuration(event.duration_ms)}</span>
+          )}
+        </summary>
         <div className="step-detail">
           <p className="muted">
             in {event.usage.input} · out {event.usage.output} · cache read {event.usage.cache_read}{' '}
@@ -13440,74 +13920,102 @@ function Step({ event }: { event: EventView }) {
           </p>
           <pre>{JSON.stringify(event.payload, null, 2)}</pre>
         </div>
-      )}
+      </details>
     </li>
+  )
+}
+
+function BandView({ band }: { band: Band }) {
+  const id = useId()
+  return (
+    <section aria-labelledby={id} className="band">
+      <h3 id={id}>
+        {band.phase.name} · attempt {band.phase.attempt} · {band.phase.agent} · {band.phase.status}{' '}
+        · {formatTokens(band.tokens)} tokens
+      </h3>
+      {band.phase.summary_md && <p className="summary">{band.phase.summary_md}</p>}
+      <ol>
+        {band.steps.map((e) => (
+          <Step key={e.id} event={e} />
+        ))}
+      </ol>
+    </section>
+  )
+}
+
+function RunTimeline({ runs }: { runs: RunView[] }) {
+  const [chosen, setChosen] = useState<string | undefined>()
+  const looseId = useId()
+  const run = runs.find((r) => r.id === chosen) ?? runs[0]!
+  const events = useQuery({ queryKey: ['events', run.id], queryFn: () => api.events(run.id) })
+  return (
+    <div className="timeline">
+      {runs.length > 1 && (
+        <Field label="Run">
+          <Select value={run.id} onChange={(e) => setChosen(e.target.value)}>
+            {runs.map((r) => (
+              <option key={r.id} value={r.id}>
+                Run {r.number} · {r.status}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      )}
+      {run.failure_reason && (
+        <p className="failure">
+          <strong>Failed:</strong> {run.failure_reason}
+        </p>
+      )}
+      <Loaded query={events} failure="The run’s steps could not be loaded.">
+        {(list) => {
+          const model = timelineModel(run.phases, list)
+          return (
+            <>
+              {model.bands.map((band) => (
+                <BandView key={band.phase.id} band={band} />
+              ))}
+              {model.loose.length > 0 && (
+                <section aria-labelledby={looseId} className="band">
+                  <h3 id={looseId}>Runner</h3>
+                  <ol>
+                    {model.loose.map((e) => (
+                      <Step key={e.id} event={e} />
+                    ))}
+                  </ol>
+                </section>
+              )}
+            </>
+          )
+        }}
+      </Loaded>
+    </div>
   )
 }
 
 export function TimelineTab({ task }: { task: TaskView }) {
   const runs = useQuery({ queryKey: ['runs', task.id], queryFn: () => api.runs(task.id) })
-  const [chosen, setChosen] = useState<string | undefined>()
-  const run = runs.data?.find((r) => r.id === chosen) ?? runs.data?.[0]
-  const events = useQuery({
-    queryKey: ['events', run?.id],
-    queryFn: () => api.events(run!.id),
-    enabled: run !== undefined,
-  })
-  if (run === undefined) return <p className="muted">No run yet.</p>
-  const model = timelineModel(run.phases, events.data ?? [])
   return (
-    <div className="timeline">
-      {runs.data && runs.data.length > 1 && (
-        <select value={run.id} onChange={(e) => setChosen(e.target.value)} aria-label="Run">
-          {runs.data.map((r) => (
-            <option key={r.id} value={r.id}>
-              Run {r.number} · {r.status}
-            </option>
-          ))}
-        </select>
-      )}
-      {run.failure_reason && <p className="error">{run.failure_reason}</p>}
-      {model.bands.map((band) => (
-        <section
-          key={band.phase.id}
-          className={`band band-${band.phase.status}`}
-          data-testid={`band-${band.phase.name}-${band.phase.attempt}`}
-        >
-          <h4>
-            {band.phase.name} · attempt {band.phase.attempt} · {band.phase.agent} ·{' '}
-            {band.phase.status}
-            <span className="muted"> · {formatTokens(band.tokens)} tokens</span>
-          </h4>
-          {band.phase.summary_md && <p className="summary">{band.phase.summary_md}</p>}
-          <ol>
-            {band.steps.map((e) => (
-              <Step key={e.id} event={e} />
-            ))}
-          </ol>
-        </section>
-      ))}
-      {model.loose.length > 0 && (
-        <section className="band">
-          <h4>Runner</h4>
-          <ol>
-            {model.loose.map((e) => (
-              <Step key={e.id} event={e} />
-            ))}
-          </ol>
-        </section>
-      )}
-    </div>
+    <Loaded query={runs} failure="The runs could not be loaded.">
+      {(list) =>
+        list.length === 0 ? (
+          <Empty title="No run yet">A run starts when the spec is approved.</Empty>
+        ) : (
+          <RunTimeline runs={list} />
+        )
+      }
+    </Loaded>
   )
 }
 ```
 
-`web/src/card/CostTab.tsx`:
+`web/src/card/CostTab.tsx` — every table captioned, with column and row headers:
 
 ```tsx
 import { useQuery } from '@tanstack/react-query'
+import { Badge } from '@zellige/react'
 import { api } from '../api'
 import { formatUsd } from '../board/columns'
+import { Loaded } from '../Loaded'
 import type { CostLine, PlanData, TaskView } from '../types'
 import { formatPercent, formatTokens } from './format'
 
@@ -13524,94 +14032,105 @@ function Cells({ line }: { line: CostLine }) {
 }
 const HEAD = (
   <>
-    <th>In</th>
-    <th>Out</th>
-    <th>Cache read</th>
-    <th>Cache write</th>
-    <th>USD</th>
+    <th scope="col">In</th>
+    <th scope="col">Out</th>
+    <th scope="col">Cache read</th>
+    <th scope="col">Cache write</th>
+    <th scope="col">USD</th>
   </>
 )
 
 export function CostTab({ task }: { task: TaskView }) {
   const costs = useQuery({ queryKey: ['costs', task.id], queryFn: () => api.costs(task.id) })
   const runs = useQuery({ queryKey: ['runs', task.id], queryFn: () => api.runs(task.id) })
-  if (!costs.data) return <p className="muted">Loading…</p>
-  const c = costs.data
-  const plan = runs.data?.[0]?.artifacts.filter((a) => a.kind === 'plan').at(-1)?.data as
-    PlanData | undefined
-  const estimate = plan?.steps.reduce((sum, s) => sum + (s.estimate_usd ?? 0), 0)
   return (
-    <div className="cost-tab">
-      <p className="total" data-testid="cost-total">
-        <strong>{formatUsd(c.totals.usd)}</strong> · cache hit ratio{' '}
-        {formatPercent(c.cacheHitRatio)}
-        {estimate !== undefined && estimate > 0 && <> · plan estimate {formatUsd(estimate)}</>}
-      </p>
-      {c.missingPrices.length > 0 && (
-        <p className="error">
-          No price for {c.missingPrices.join(', ')}; their tokens count as $0. Add one with{' '}
-          <code>./run price:set &lt;model&gt; …</code>
-        </p>
-      )}
-      <h4>By phase</h4>
-      <table>
-        <thead>
-          <tr>
-            <th>Phase</th>
-            {HEAD}
-            <th>Claude Code says</th>
-          </tr>
-        </thead>
-        <tbody>
-          {c.byPhase.map((p) => (
-            <tr key={p.phaseId} className={p.flagged ? 'flagged' : ''}>
-              <td>
-                {p.name} {p.attempt}
-              </td>
-              <Cells line={p} />
-              <td>
-                {p.reportedUsd === null ? '—' : formatUsd(p.reportedUsd)}
-                {p.flagged && <> ⚠ off by {formatPercent(p.drift)}</>}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <h4>By agent</h4>
-      <table>
-        <thead>
-          <tr>
-            <th>Agent</th>
-            {HEAD}
-          </tr>
-        </thead>
-        <tbody>
-          {c.byAgent.map((a) => (
-            <tr key={a.agent}>
-              <td>{a.agent}</td>
-              <Cells line={a} />
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <h4>By model</h4>
-      <table>
-        <thead>
-          <tr>
-            <th>Model</th>
-            {HEAD}
-          </tr>
-        </thead>
-        <tbody>
-          {c.byModel.map((m) => (
-            <tr key={m.model}>
-              <td>{m.model}</td>
-              <Cells line={m} />
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <Loaded query={costs} failure="The costs could not be loaded.">
+      {(c) => {
+        const plan = runs.data?.[0]?.artifacts.filter((a) => a.kind === 'plan').at(-1)?.data as
+          PlanData | undefined
+        const estimate = plan?.steps.reduce((sum, s) => sum + (s.estimate_usd ?? 0), 0)
+        return (
+          <div className="cost-tab">
+            <p className="total">
+              <strong>Total {formatUsd(c.totals.usd)}</strong> · cache hit ratio{' '}
+              {formatPercent(c.cacheHitRatio)}
+              {estimate !== undefined && estimate > 0 && (
+                <> · plan estimate {formatUsd(estimate)}</>
+              )}
+            </p>
+            {c.missingPrices.length > 0 && (
+              <p>
+                No price for {c.missingPrices.join(', ')}; their tokens count as $0. Add one with{' '}
+                <code>./run price:set &lt;model&gt; …</code>
+              </p>
+            )}
+            <table>
+              <caption>By phase</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Phase</th>
+                  {HEAD}
+                  <th scope="col">Claude Code says</th>
+                </tr>
+              </thead>
+              <tbody>
+                {c.byPhase.map((p) => (
+                  <tr key={p.phaseId}>
+                    <th scope="row">
+                      {p.name} {p.attempt}
+                    </th>
+                    <Cells line={p} />
+                    <td>
+                      {p.reportedUsd === null ? '—' : formatUsd(p.reportedUsd)}
+                      {p.flagged && (
+                        <>
+                          {' '}
+                          <Badge tone="warning">off by {formatPercent(p.drift)}</Badge>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <table>
+              <caption>By agent</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Agent</th>
+                  {HEAD}
+                </tr>
+              </thead>
+              <tbody>
+                {c.byAgent.map((a) => (
+                  <tr key={a.agent}>
+                    <th scope="row">{a.agent}</th>
+                    <Cells line={a} />
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <table>
+              <caption>By model</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Model</th>
+                  {HEAD}
+                </tr>
+              </thead>
+              <tbody>
+                {c.byModel.map((m) => (
+                  <tr key={m.model}>
+                    <th scope="row">{m.model}</th>
+                    <Cells line={m} />
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      }}
+    </Loaded>
   )
 }
 ```
@@ -13619,8 +14138,11 @@ export function CostTab({ task }: { task: TaskView }) {
 `web/src/card/PrTab.tsx`:
 
 ```tsx
+import { useId } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { Badge, Empty, Loading } from '@zellige/react'
 import { api } from '../api'
+import { Loaded } from '../Loaded'
 import type { ReportData, TaskView } from '../types'
 
 export function PrTab({ task }: { task: TaskView }) {
@@ -13631,160 +14153,144 @@ export function PrTab({ task }: { task: TaskView }) {
     queryFn: () => api.prFiles(run!.id),
     enabled: run?.pr_number != null,
   })
-  if (run === undefined || run.pr_url === null)
-    return <p className="muted">No pull request yet. One opens when every criterion passes.</p>
-  const report = run.artifacts.filter((a) => a.kind === 'verify_report').at(-1)?.data as
-    ReportData | undefined
+  const filesId = useId()
   return (
-    <div className="pr-tab">
-      <p>
-        <a href={run.pr_url} target="_blank" rel="noreferrer" data-testid="pr-link">
-          #{run.pr_number}
-        </a>{' '}
-        on <code>{run.branch}</code> ·{' '}
-        {task.state === 'done' ? 'merged' : task.state === 'failed' ? 'closed' : 'open'}
-      </p>
-      <h4>Files changed</h4>
-      {files.isError && (
-        <p className="error">Could not ask GitHub for the files: {String(files.error)}</p>
-      )}
-      <ul>
-        {files.data?.map((f) => (
-          <li key={f.path}>
-            <code>{f.path}</code> <span className="ok">+{f.additions}</span>{' '}
-            <span className="error">−{f.deletions}</span>
-          </li>
-        ))}
-      </ul>
-      {report && (
-        <>
-          <h4>Verify report</h4>
-          <table data-testid="verify-report">
-            <thead>
-              <tr>
-                <th>Criterion</th>
-                <th>Verdict</th>
-                <th>Evidence</th>
-              </tr>
-            </thead>
-            <tbody>
-              {report.criteria.map((c) => (
-                <tr key={c.id}>
-                  <td>{c.id}</td>
-                  <td className={c.status === 'pass' ? 'ok' : 'error'}>
-                    {c.status === 'pass' ? '✔ pass' : '✘ fail'}
-                  </td>
-                  <td>{c.evidence}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </>
-      )}
-    </div>
+    <Loaded query={runs} failure="The runs could not be loaded.">
+      {(list) => {
+        const latest = list[0]
+        if (latest === undefined || latest.pr_url === null)
+          return <Empty title="No pull request yet">One opens when every criterion passes.</Empty>
+        const report = latest.artifacts.filter((a) => a.kind === 'verify_report').at(-1)?.data as
+          ReportData | undefined
+        return (
+          <div className="pr-tab">
+            <p>
+              <a href={latest.pr_url} target="_blank" rel="noreferrer">
+                Pull request #{latest.pr_number}
+                <span className="zl-visually-hidden"> (opens in a new tab)</span>
+              </a>{' '}
+              on <code>{latest.branch}</code> ·{' '}
+              {task.state === 'done' ? 'merged' : task.state === 'failed' ? 'closed' : 'open'}
+            </p>
+            <section aria-labelledby={filesId}>
+              <h3 id={filesId}>Files changed</h3>
+              {files.isError ? (
+                <p>GitHub did not list the files; they are on the pull request.</p>
+              ) : files.data === undefined ? (
+                <Loading />
+              ) : (
+                <ul>
+                  {files.data.map((f) => (
+                    <li key={f.path}>
+                      <code>{f.path}</code> <Badge tone="success">+{f.additions}</Badge>{' '}
+                      <Badge tone="danger">−{f.deletions}</Badge>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+            {report && (
+              <table>
+                <caption>Verify report</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Criterion</th>
+                    <th scope="col">Verdict</th>
+                    <th scope="col">Evidence</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {report.criteria.map((c) => (
+                    <tr key={c.id}>
+                      <th scope="row">{c.id}</th>
+                      <td>
+                        <Badge tone={c.status === 'pass' ? 'success' : 'danger'}>{c.status}</Badge>
+                      </td>
+                      <td>{c.evidence}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )
+      }}
+    </Loaded>
   )
 }
 ```
 
-In `web/src/card/CardDrawer.tsx`, import the three tabs and extend the list and the body:
+In `web/src/card/CardDrawer.tsx`, import the three tabs and extend `items`:
 
 ```tsx
 import { TimelineTab } from './TimelineTab'
 import { CostTab } from './CostTab'
 import { PrTab } from './PrTab'
-
-const TABS = [
-  ['spec', 'Spec'],
-  ['plan', 'Plan'],
-  ['timeline', 'Timeline'],
-  ['cost', 'Cost'],
-  ['pr', 'PR'],
-] as const
 ```
 
 ```tsx
-{
-  tab === 'spec' && <SpecTab task={t} />
-}
-{
-  tab === 'plan' && <PlanTab task={t} />
-}
-{
-  tab === 'timeline' && <TimelineTab task={t} />
-}
-{
-  tab === 'cost' && <CostTab task={t} />
-}
-{
-  tab === 'pr' && <PrTab task={t} />
-}
+const items = (t: TaskView) => [
+  { id: 'spec', label: 'Spec', panel: <SpecTab task={t} onFrozen={leave} /> },
+  { id: 'plan', label: 'Plan', panel: <PlanTab task={t} /> },
+  { id: 'timeline', label: 'Timeline', panel: <TimelineTab task={t} /> },
+  { id: 'cost', label: 'Cost', panel: <CostTab task={t} /> },
+  { id: 'pr', label: 'PR', panel: <PrTab task={t} /> },
+]
 ```
 
 Add to `web/src/card/card.css`:
 
 ```css
-.timeline {
+.timeline,
+.cost-tab,
+.pr-tab {
   display: grid;
-  gap: 12px;
+  gap: var(--zl-space-3);
 }
 .band {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 8px 12px;
+  padding: var(--zl-space-2) var(--zl-space-3);
+  border: 1px solid var(--zl-line);
+  border-radius: var(--zl-radius);
 }
-.band h4 {
-  margin: 0 0 6px;
-  font-size: 14px;
-}
-.band-failed {
-  border-color: var(--bad);
+.band h3 {
+  margin: 0 0 var(--zl-space-2);
+  font-size: var(--zl-text);
 }
 .band ol {
-  list-style: none;
-  padding: 0;
-  margin: 0;
   display: grid;
   gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
-.step-line {
-  display: flex;
-  gap: 12px;
-  width: 100%;
-  border: none;
-  background: none;
-  text-align: left;
-  padding: 2px 4px;
+/* The summary keeps its own display, and with it the disclosure triangle. */
+.step summary {
+  padding: 2px var(--zl-space-1);
+  cursor: pointer;
 }
-.step-error .step-line {
-  color: var(--bad);
+.step-nested summary {
+  padding-inline-start: var(--zl-space-5);
 }
-.step-subagent_start .step-line,
-.step-subagent_stop .step-line {
-  padding-left: 20px;
-  color: var(--muted);
-}
+/* Wrapped, not scrolled: a scrolling box with nothing focusable inside fails the keyboard. */
 .step-detail pre {
-  background: #f8f9fa;
-  padding: 8px;
-  overflow: auto;
-  font-size: 12px;
+  padding: var(--zl-space-2);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-size: var(--zl-text-sm);
+  background: var(--zl-surface-sunk);
 }
 .summary {
-  color: var(--muted);
-  font-size: 14px;
+  color: var(--zl-ink-soft);
 }
-.flagged td {
-  background: #fff4e6;
-}
-.ok {
-  color: var(--ok);
+.failure {
+  margin: 0;
 }
 ```
 
 - [ ] **Step 5: Run everything to see it pass**
 
-Run: `npm run --workspace web test && npm run --workspace web build && npm run --workspace server test`
-Expected: PASS; the build succeeds.
+Run: `npm run --workspace web test && (cd web && npx oxlint --deny-warnings) && npm run --workspace web build && npm run --workspace server test`
+Expected: PASS; no lint finding; the build succeeds.
 
 - [ ] **Step 6: Commit**
 
@@ -13797,47 +14303,56 @@ git commit -m "feat(web): show a run's timeline, costs and pull request on the c
 
 ## Phase G — the whole product, and closing the slice
 
-### Task 26: The browser journey — from a registered repository to a pull request
+### Task 26: The browser journeys — from a registered repository to a pull request, and by keyboard
 
 **Files:**
 
 - Create: `playwright.config.ts`, `tests/ui/global-setup.ts`, `tests/ui/helpers.ts`,
-  `tests/ui/task-to-pr.spec.ts`
-- Modify: `package.json` (dev dependencies), `run` (`test:ui`)
+  `tests/ui/task-to-pr.spec.ts`, `tests/ui/keyboard.spec.ts`
+- Modify: `package.json` (dev dependencies), `run` (`test:ui`), `charter.json` (the root's
+  modules), `.gitignore`
 
 **Interfaces:**
 
 - Consumes: the built web app, the server started as in production, the runner daemon started
   as `./run dev` starts it, with `fake-claude` and `fake-gh` from Tasks 19 and 21.
 - Produces: `./run test:ui`; `tests/ui/.runtime.json` (written by the global setup:
-  `{ baseURL, repoPath }`).
+  `{ baseURL, repoPath, opsPath }`); `WCAG_TAGS`, `expectAccessible(page)` and
+  `tabTo(page, target)` in `tests/ui/helpers.ts`.
 
-The target repository has two remotes: `origin`, a local bare repository the runner fetches
-from and pushes to, and `github`, `git@github.com:owner/pay.git`, which is never contacted and
-exists so the registration check — a remote pointing at the GitHub repository — passes exactly
-as it does for a real one.
+Each target repository has two remotes: `origin`, a local bare repository the runner fetches
+from and pushes to, and `github`, `git@github.com:owner/<name>.git`, which is never contacted
+and exists so the registration check — a remote pointing at the GitHub repository — passes
+exactly as it does for a real one. The delivery journey registers `pay`; the keyboard journey
+registers `ops` and never approves a spec, so the fake `claude`'s one scripted run stays the
+delivery journey's.
 
-- [ ] **Step 1: Dependencies and the scenario**
+- [ ] **Step 1: Dependencies, the root's modules and the scenario**
 
 ```bash
-npm install --save-dev @playwright/test@^1.62.1 @testcontainers/postgresql@^12.0.4 pg@^8.22.0 @types/pg@^8.20.0
+npm install --save-dev @playwright/test@^1.62.1 @axe-core/playwright@^4.14.0 \
+  @testcontainers/postgresql@^12.0.4 pg@^8.22.0 @types/pg@^8.20.0
 npx playwright install chromium
+npx --no charter init frontend playwright
 ```
+
+Expected: `charter.json` gains `".": ["frontend", "playwright"]`, so the journey rules load on
+`tests/ui/`.
 
 Add `.runtime.json` under `tests/ui/` to `.gitignore`. In `run`:
 
 ```bash
 scenario_test_ui() {
   need_node; need_deps; need_plugins; need_hooks; need_docker
-  step "The browser journey against the whole product"
+  step "The browser journeys against the whole product"
   npx playwright test
 }
 ```
 
 with `test:ui)      scenario_test_ui ;;` in the `case` and
-`${BOLD}test:ui${OFF}    the browser journey, with a fake claude` in `usage`.
+`${BOLD}test:ui${OFF}    the browser journeys, with a fake claude` in `usage`.
 
-- [ ] **Step 2: Configuration and global setup**
+- [ ] **Step 2: Configuration, global setup and helpers**
 
 `playwright.config.ts`:
 
@@ -13915,9 +14430,9 @@ const git = (args: string[], cwd?: string) =>
   execFileSync('git', args, { cwd, env: { ...process.env, ...GIT_IDENTITY } })
 
 /** A target repository: `origin` is a local bare remote, `github` only satisfies registration. */
-function targetRepository(root: string): string {
-  const remote = join(root, 'remote.git')
-  const repo = join(root, 'repo')
+function targetRepository(root: string, name: string): string {
+  const remote = join(root, `${name}.git`)
+  const repo = join(root, name)
   git(['init', '-q', '--bare', '-b', 'main', remote])
   git(['clone', '-q', remote, repo])
   mkdirSync(join(repo, 'src'))
@@ -13925,7 +14440,7 @@ function targetRepository(root: string): string {
   git(['add', '-A'], repo)
   git(['commit', '-q', '-m', 'initial'], repo)
   git(['push', '-q', 'origin', 'HEAD:main'], repo)
-  git(['remote', 'add', 'github', 'git@github.com:owner/pay.git'], repo)
+  git(['remote', 'add', 'github', `git@github.com:owner/${name}.git`], repo)
   return repo
 }
 
@@ -13964,7 +14479,8 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   const db = await new PostgreSqlContainer('postgres:16-alpine').start()
   const databaseUrl = db.getConnectionUri()
   const root = mkdtempSync(join(tmpdir(), 'board-ui-'))
-  const repoPath = targetRepository(root)
+  const repoPath = targetRepository(root, 'pay')
+  const opsPath = targetRepository(root, 'ops')
   const scriptPath = join(root, 'script.json')
   writeFileSync(scriptPath, JSON.stringify(SCRIPT))
 
@@ -14027,7 +14543,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
 
   writeFileSync(
     resolve(REPO, 'tests/ui/.runtime.json'),
-    JSON.stringify({ baseURL: `http://127.0.0.1:${PORT}`, repoPath }),
+    JSON.stringify({ baseURL: `http://127.0.0.1:${PORT}`, repoPath, opsPath }),
   )
 
   return async () => {
@@ -14043,10 +14559,13 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
 ```ts
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import AxeBuilder from '@axe-core/playwright'
+import { expect, type Locator, type Page } from '@playwright/test'
 
 interface Runtime {
   baseURL: string
   repoPath: string
+  opsPath: string
 }
 
 let cached: Runtime | undefined
@@ -14059,6 +14578,32 @@ export function runtime(): Runtime {
 }
 
 export const appUrl = (path: string) => `${runtime().baseURL}${path}`
+
+/** WCAG 2.2 AA, as the kit's journey rule names it: one list for every scan. */
+export const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']
+
+/** Scans the page as it stands; any violation fails the journey. */
+export async function expectAccessible(page: Page): Promise<void> {
+  const { violations } = await new AxeBuilder({ page }).withTags(WCAG_TAGS).analyze()
+  expect(violations).toEqual([])
+}
+
+/** Presses Tab until `target` has focus, as a keyboard user would; fails after `limit` presses. */
+export async function tabTo(page: Page, target: Locator, limit = 40): Promise<void> {
+  for (let press = 0; press < limit; press++) {
+    if (await target.evaluate((element) => element === document.activeElement)) return
+    await page.keyboard.press('Tab')
+  }
+  await expect(target).toBeFocused()
+}
+
+/** True when focus is inside the open dialog. */
+export const focusInDialog = (page: Page) =>
+  page.evaluate(() => document.activeElement?.closest('dialog[open]') != null)
+
+/** The text of whatever has focus — for an element with no role, as the card's state line. */
+export const focusedText = (page: Page) =>
+  page.evaluate(() => document.activeElement?.textContent?.trim())
 
 export const SPEC = `## Goal
 Failed deliveries back off.
@@ -14073,84 +14618,223 @@ Failed deliveries back off.
 `
 ```
 
-- [ ] **Step 3: Write the journey**
+- [ ] **Step 3: Write the journeys**
 
 `tests/ui/task-to-pr.spec.ts`:
 
 ```ts
 import { expect, test } from '@playwright/test'
-import { appUrl, runtime, SPEC } from './helpers'
+import { appUrl, expectAccessible, focusedText, runtime, SPEC } from './helpers'
 
 test('a task goes from the board to a pull request, with its steps and costs on the card', async ({
   page,
 }) => {
   await page.goto(appUrl('/'))
+  await expect(page).toHaveTitle('Projects · AI Task Board')
+  await expectAccessible(page)
+
   const fields: [string, string][] = [
-    ['key', 'PAY'],
-    ['name', 'Payments'],
-    ['repo_path', runtime().repoPath],
-    ['github_repo', 'owner/pay'],
-    ['base_branch', 'main'],
-    ['test_command', 'test -f src/retry.ts'],
+    ['Key', 'PAY'],
+    ['Name', 'Payments'],
+    ['Repository path', runtime().repoPath],
+    ['GitHub repository', 'owner/pay'],
+    ['Base branch', 'main'],
+    ['Test command', 'test -f src/retry.ts'],
   ]
-  for (const [name, value] of fields) await page.locator(`input[name="${name}"]`).fill(value)
+  for (const [name, value] of fields)
+    await page.getByRole('textbox', { name, exact: true }).fill(value)
   await page.getByRole('button', { name: 'Register' }).click()
-  await page.getByRole('link', { name: /PAY Payments/ }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'PAY registered.' })).toBeVisible()
+  await expectAccessible(page)
 
-  await page.getByLabel('New task title').fill('Back off retries')
+  await page.getByRole('link', { name: 'PAY Payments' }).click()
+  await expect(page.getByRole('heading', { level: 1, name: 'PAY · Payments' })).toBeFocused()
+  await page.getByRole('textbox', { name: 'New task title' }).fill('Back off retries')
   await page.getByRole('button', { name: 'Add task' }).click()
-  await expect(page.getByTestId('column-backlog').getByTestId('card-PAY-1')).toBeVisible()
+  const backlog = page.getByRole('region', { name: 'Backlog' })
+  await expect(backlog.getByRole('link', { name: /^PAY-1 Back off retries/ })).toBeVisible()
+  await expectAccessible(page)
 
-  await page.getByTestId('card-PAY-1').click()
-  await page.getByLabel('Spec').fill(SPEC)
-  await page.getByRole('button', { name: 'Save as v1' }).click()
-  await expect(page.getByText('The spec lints clean: 1 requirements, 1 criteria.')).toBeVisible()
-  await page.getByRole('button', { name: 'Approve' }).click()
+  await backlog.getByRole('link', { name: /^PAY-1 / }).click()
+  const card = page.getByRole('dialog', { name: 'Back off retries' })
+  await expect(card).toBeVisible()
+  await expect(page).toHaveTitle('PAY-1 Back off retries · AI Task Board')
+  await expectAccessible(page)
 
-  // The runner claims it, runs three phases with the fake claude, pushes and opens the PR;
-  // the board learns of each move over the event stream, with no reload.
-  await expect(page.getByTestId('column-review').getByTestId('card-PAY-1')).toBeVisible({
-    timeout: 90_000,
-  })
+  await card.getByRole('textbox', { name: 'Spec' }).fill(SPEC)
+  await card.getByRole('button', { name: 'Save as v1' }).click()
+  await expect(
+    card.getByRole('status').filter({ hasText: 'Saved v1. It lints clean and can be approved.' }),
+  ).toBeVisible()
+  await expect(card.getByRole('region', { name: 'Lint' })).toContainText(
+    'The spec lints clean: 1 requirement, 1 criterion.',
+  )
+  await card.getByRole('button', { name: 'Approve' }).click()
 
-  await page.getByRole('tab', { name: 'Timeline' }).click()
-  for (const band of ['band-plan-1', 'band-build-1', 'band-verify-1'])
-    await expect(page.getByTestId(band)).toBeVisible()
-  await expect(page.getByText('Edit src/retry.ts')).toBeVisible()
+  // The runner claims it, runs three phases with the fake claude, pushes and opens the PR; the
+  // open card hears of each move over the event stream, with no reload, and says so.
+  await expect(card.getByRole('status').filter({ hasText: 'PAY-1 is now in Review.' })).toBeVisible(
+    { timeout: 90_000 },
+  )
 
-  await page.getByRole('tab', { name: 'Cost' }).click()
-  await expect(page.getByTestId('cost-total')).toContainText('$')
+  await card.getByRole('tab', { name: 'Timeline' }).click()
+  const timeline = card.getByRole('tabpanel', { name: 'Timeline' })
+  for (const phase of ['plan', 'build', 'verify'])
+    await expect(
+      timeline.getByRole('region', { name: new RegExp(`^${phase} · attempt 1`) }),
+    ).toBeVisible()
+  await expect(timeline).toContainText('Edit src/retry.ts')
+  await expectAccessible(page)
 
-  await page.getByRole('tab', { name: 'PR' }).click()
-  await expect(page.getByTestId('pr-link')).toHaveText('#7')
-  await expect(page.getByTestId('verify-report')).toContainText('✔ pass')
+  await card.getByRole('tab', { name: 'Cost' }).click()
+  await expect(card.getByRole('tabpanel', { name: 'Cost' })).toContainText('Total $')
+  await expectAccessible(page)
+
+  await card.getByRole('tab', { name: 'PR' }).click()
+  const pr = card.getByRole('tabpanel', { name: 'PR' })
+  await expect(pr.getByRole('link', { name: /^Pull request #7/ })).toBeVisible()
+  await expect(pr.getByRole('table', { name: 'Verify report' })).toContainText('pass')
+  await expectAccessible(page)
+
+  // Mark done stands in for the drag to Done, and hands focus to the state line as it goes.
+  await card.getByRole('button', { name: 'Mark done' }).click()
+  await expect.poll(() => focusedText(page)).toBe('PAY-1 · Done')
+  await expect(card.getByRole('status').filter({ hasText: 'PAY-1 is now in Done.' })).toBeVisible()
+
+  // The card left Backlog while it was open; closing hands focus to its link in Done.
+  await card.getByRole('button', { name: 'Close' }).click()
+  await expect(
+    page.getByRole('region', { name: 'Done' }).getByRole('link', { name: /^PAY-1 / }),
+  ).toBeFocused()
+  await expectAccessible(page)
 })
 
-test('a drag the table does not allow is refused with a reason', async ({ page }) => {
+test('a drag the table does not allow is refused with a reason, and nothing moves', async ({
+  page,
+}) => {
   await page.goto(appUrl('/p/PAY'))
-  await page.getByLabel('New task title').fill('Something else')
+  await page.getByRole('textbox', { name: 'New task title' }).fill('Something else')
   await page.getByRole('button', { name: 'Add task' }).click()
-  const card = page.getByTestId('column-backlog').getByTestId('card-PAY-2')
-  await card.dragTo(page.getByTestId('column-ready'))
-  await expect(page.getByRole('status')).toContainText('Only a card in Review can be dragged')
-  await expect(page.getByTestId('column-backlog').getByTestId('card-PAY-2')).toBeVisible()
+  const card = page.getByRole('region', { name: 'Backlog' }).getByRole('link', { name: /^PAY-2 / })
+  await card.dragTo(page.getByRole('region', { name: 'Ready' }))
+  await expect(
+    page.getByRole('status').filter({ hasText: 'Only a card in Review can be dragged' }),
+  ).toBeVisible()
+  await expect(card).toBeVisible()
+  await expectAccessible(page)
 })
 ```
 
-The PR tab's file list asks the real `gh` for `owner/pay#7`, which does not exist; the tab shows
-"Could not ask GitHub for the files" and the journey does not depend on it. The server test in
-Task 25 covers the list itself.
+`tests/ui/keyboard.spec.ts` — one journey, the keyboard alone, asserting where focus lands
+after each step that moves it:
 
-- [ ] **Step 4: Run it**
+```ts
+import { expect, test } from '@playwright/test'
+import { appUrl, expectAccessible, focusInDialog, runtime, SPEC, tabTo } from './helpers'
+
+test('a repository, the board and a card work from the keyboard alone', async ({ page }) => {
+  await page.goto(appUrl('/'))
+  const key = page.getByRole('textbox', { name: 'Key', exact: true })
+  await tabTo(page, key)
+
+  // Fill the form field by field; the key is lower case, which the schema refuses.
+  await page.keyboard.type('ops')
+  for (const value of ['Ops', runtime().opsPath, 'owner/ops', 'main', 'test -f src/retry.ts']) {
+    await page.keyboard.press('Tab')
+    await page.keyboard.press('ControlOrMeta+A')
+    await page.keyboard.type(value)
+  }
+  await page.keyboard.press('Enter')
+
+  // The refusal hands focus back to the field it names, which now says why.
+  await expect(key).toBeFocused()
+  await expect(key).toHaveAttribute('aria-invalid', 'true')
+  await expect(key).toHaveAccessibleDescription(/capital letters/)
+  await expectAccessible(page)
+
+  await page.keyboard.press('ControlOrMeta+A')
+  await page.keyboard.type('OPS')
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('status').filter({ hasText: 'OPS registered.' })).toBeVisible()
+
+  await tabTo(page, page.getByRole('link', { name: 'OPS Ops' }))
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('heading', { level: 1, name: 'OPS · Ops' })).toBeFocused()
+
+  const title = page.getByRole('textbox', { name: 'New task title' })
+  await tabTo(page, title)
+  for (const [name, n] of [
+    ['First', 1],
+    ['Second', 2],
+  ] as const) {
+    await page.keyboard.type(name)
+    await page.keyboard.press('Enter')
+    await expect(
+      page.getByRole('status').filter({ hasText: `OPS-${n} added to Backlog.` }),
+    ).toBeVisible()
+    await expect(title).toBeFocused()
+    await expect(title).toHaveValue('')
+  }
+
+  const backlog = page.getByRole('region', { name: 'Backlog' })
+  await tabTo(page, backlog.getByRole('link', { name: /^OPS-2 / }))
+  await page.keyboard.press('Enter')
+  const card = page.getByRole('dialog', { name: 'Second' })
+  await expect(card).toBeVisible()
+  expect(await focusInDialog(page)).toBe(true)
+  await expectAccessible(page)
+
+  // Move up stands in for the drag that reorders a column.
+  await tabTo(page, card.getByRole('button', { name: 'Move up' }))
+  await page.keyboard.press('Enter')
+  await expect(
+    card.getByRole('status').filter({ hasText: 'OPS-2 moved up in Backlog.' }),
+  ).toBeVisible()
+
+  // Arrow keys move between tabs; Tab moves on into the panel.
+  const specTab = card.getByRole('tab', { name: 'Spec' })
+  await tabTo(page, specTab)
+  await page.keyboard.press('ArrowRight')
+  await expect(card.getByRole('tab', { name: 'Plan' })).toBeFocused()
+  await expect(card.getByRole('tab', { name: 'Plan' })).toHaveAttribute('aria-selected', 'true')
+  await page.keyboard.press('ArrowLeft')
+  await expect(specTab).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(card.getByRole('textbox', { name: 'Spec' })).toBeFocused()
+  await page.keyboard.press('ControlOrMeta+A')
+  await page.keyboard.type(SPEC)
+  await tabTo(page, card.getByRole('button', { name: 'Save as v1' }))
+  await page.keyboard.press('Enter')
+  await expect(
+    card.getByRole('status').filter({ hasText: 'Saved v1. It lints clean and can be approved.' }),
+  ).toBeVisible()
+  await expectAccessible(page)
+
+  // Escape closes the card and hands focus back to the link that opened it, now first in Backlog.
+  await page.keyboard.press('Escape')
+  await expect(card).toBeHidden()
+  await expect(backlog.getByRole('link', { name: /^OPS-2 / })).toBeFocused()
+  await expect(backlog.getByRole('link')).toHaveText([/^OPS-2 /, /^OPS-1 /])
+})
+```
+
+The PR tab's file list asks the real `gh` for `owner/pay#7`, which does not exist; the tab says
+GitHub did not list the files, and no journey depends on it. The server test in Task 25 covers
+the list itself.
+
+- [ ] **Step 4: Run them**
 
 Run: `./run test:ui`
-Expected: 2 passed. A failure at "column-review" with the server and runner logs above it:
-read the `[runner]` lines first — a refused event names the field that drifted.
+Expected: 3 passed. A failure at "is now in Review" with the server and runner logs above it:
+read the `[runner]` lines first — a refused event names the field that drifted. An axe failure
+prints each violation's rule, nodes and help URL; fix the markup, and exclude one selector with
+a backlog entry only for a failure that cannot be fixed here.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add playwright.config.ts tests/ui package.json package-lock.json run .gitignore
+git add playwright.config.ts tests/ui package.json package-lock.json run .gitignore \
+  charter.json .claude/settings.json
 git commit -m "test(ui): carry a task from the board to a pull request in a browser"
 ```
 
@@ -14314,7 +14998,7 @@ What the board does today. This document is authoritative; the specs in
 | -------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Server   | `server/`     | One Fastify process on 127.0.0.1: the REST API under `/api`, the board MCP server at `/mcp`, server-sent events at `/api/stream`, the PR poller, and the built web app |
 | Runner   | `runner/`     | `board-cli daemon` claims queued runs and drives each phase as one `claude -p`; `board-cli event` and `board-cli guard` are the hooks those calls run                  |
-| Web      | `web/`        | The board, the card and its tabs; built into `server/public/`                                                                                                          |
+| Web      | `web/`        | The board, the card and its tabs, on the zellige component kit; built into `server/public/`                                                                            |
 | Database | PostgreSQL 16 | Every record; `LISTEN/NOTIFY` on channel `board` carries change notices                                                                                                |
 
 ## A task's life
@@ -14360,7 +15044,17 @@ migrations, and in Build any file the plan does not list.
 
 The kit's error shape and codes. A move the table refuses, or a stale one, is `409 conflict`;
 a spec that does not lint, or a field that fails a check, is `400 validation_error` with
-`details`.
+`details`. The web app never shows `message`: `web/src/errors.ts` reads the code and the field,
+and each page words the problem itself.
+
+## Accessibility
+
+The web app targets WCAG 2.2 AA. Its widgets are the zellige kit's: the card is a modal side
+`Dialog`, its sections are `Tabs`. Every drag has a button in the card's dialog — Move up, Move
+down, Mark done. Each page and the open card keep a status region mounted and write outcomes into
+it; the card announces its own changes of state, the board nothing the runner does. Route changes
+focus the new page's `h1`; closing a card returns focus to its link. `tests/ui/` scans every
+state it reaches with axe-core and drives one journey by keyboard alone.
 ```
 
 - [ ] **Step 4: README, backlog, spec status**
@@ -14433,7 +15127,7 @@ git mv docs/superpowers/plans/2026-10-11-slice-1-task-to-pr.md docs/superpowers/
 ./run check && ./run test:ui
 ```
 
-Expected: `✓ Everything is clean`, then 2 passed.
+Expected: `✓ Everything is clean`, then 3 passed.
 
 - [ ] **Step 6: Commit**
 
@@ -14447,4 +15141,5 @@ git commit -m "docs: describe the board as slice 1 built it"
 End the slice with the kit's review: everything the branch changed, shown rather than listed;
 the output of `./run check`, `./run test:ui` and the smoke run; every decision this plan or its
 execution took that the spec did not; and what is still unproven — at least the exit gate,
-which needs ten real tasks and is not part of this slice.
+which needs ten real tasks and is not part of this slice, and, for the web app, which of a
+screen reader, 200% zoom and a 320 px viewport were not tried.

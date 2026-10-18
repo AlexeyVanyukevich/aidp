@@ -97,17 +97,23 @@ kit's documented fallback, which needs no registry configuration; the private re
 prefers has not been set up. `core` loads always, through the root `CLAUDE.md`; each workspace's
 other modules are recorded in `charter.json` by `charter init` and load by path:
 
-| Workspace | Modules                                   | tsconfig                        |
-| --------- | ----------------------------------------- | ------------------------------- |
-| `server/` | `backend`, `typescript`, `node`, `vitest` | `charter/stacks/node/tsconfig`  |
-| `runner/` | `typescript`, `node`, `vitest`            | `charter/stacks/node/tsconfig`  |
-| `web/`    | `typescript`, `react`, `vitest`           | `charter/stacks/react/tsconfig` |
+| Workspace | Modules                                                   | tsconfig                        |
+| --------- | --------------------------------------------------------- | ------------------------------- |
+| `server/` | `backend`, `typescript`, `node`, `vitest`                 | `charter/stacks/node/tsconfig`  |
+| `runner/` | `typescript`, `node`, `vitest`                            | `charter/stacks/node/tsconfig`  |
+| `web/`    | `frontend`, `typescript`, `react`, `vitest`, `playwright` | `charter/stacks/react/tsconfig` |
+| root      | `frontend`, `playwright`                                  | —                               |
 
 The runner serves no HTTP and owns no database, so it takes the stacks without the `backend`
-domain. The web app does not take the `frontend` domain or the `playwright` stack in slice 1:
-they ask this spec to state the board's accessibility, which it does not yet. Prettier is
-`charter/stacks/typescript/prettier`, `./run` sources the kit's `lib.sh` and installs its
-`commit-msg` hook, and `.gitignore` starts as the kit's copy.
+domain. The root takes `frontend` and `playwright` for the browser journeys in `tests/ui/`, which
+drive the whole product rather than one workspace. The `frontend` domain holds only beside a
+linter that checks elements one at a time, so `web/` runs oxlint with the kit's `react` config,
+which turns on `jsx-a11y`. Prettier is `charter/stacks/typescript/prettier`, `./run` sources the
+kit's `lib.sh` and installs its `commit-msg` hook, and `.gitignore` starts as the kit's copy.
+
+**The component kit.** The web app's widgets come from the zellige kit — `@zellige/react` at
+`v0.1.0` on `@zellige/core` at `v0.1.1`, installed over git — and the root `CLAUDE.md` names it,
+as the `frontend` domain asks. A widget the kit lacks is added to the kit, not written here.
 
 **Server.** One Node process: the REST API, the board MCP server at `/mcp` (streamable HTTP),
 server-sent events for the web app, the cost service, the PR poller, and two sweepers (the
@@ -220,7 +226,8 @@ directly.
 | Review → Failed                        | PR poller                                                   | PR closed without merging                                   |
 
 Cards can be reordered by drag inside any column. The only move between columns by drag is
-Review → Done; every other move is a button whose action the table names.
+Review → Done; every other move is a button whose action the table names. Every drag also has a
+button that makes the same move (§8), so no move needs a mouse.
 
 **Two kinds of refusal**, in the kit's error shape:
 
@@ -369,8 +376,8 @@ which closes DNS rebinding.
 
 ## 8. Web app
 
-React, React Router, TanStack Query, CSS modules, desktop first. Server-sent events patch or
-invalidate query caches.
+React, React Router, TanStack Query and the zellige component kit, desktop first. Server-sent
+events patch or invalidate query caches.
 
 - **Projects** (`/`): the list, and a form to register a target repository.
 - **Board** (`/p/:key`): a column per main state; Blocked and Failed in a collapsible strip. A
@@ -386,6 +393,77 @@ invalidate query caches.
 | Approvals | The open request first, options as buttons with the recommendation marked, a free-text answer; answered ones below                        |
 | Cost      | By phase, agent and model; cache hit ratio; plan estimate against actual; the reconciliation flag                                         |
 | PR        | Link and state, files changed (`gh pr view --json files`), the verify report as a table per criterion                                     |
+
+### Accessibility
+
+The web app meets WCAG 2.2 at level AA; a failure against it is a bug. Composite widgets — the
+card's dialog and its tabs — are the kit's, which takes their behaviour from the platform's
+`<dialog>` and React Aria. A step's detail in the Timeline is the platform's `<details>`.
+
+**Structure.** Every page has a banner holding a link home named "AI Task Board", one `main` and
+one `h1`: "Projects" on Projects; "<KEY> · <name>" on a board. Projects has two `h2`: Registered
+repositories, and Register a repository. On a board each column is a region named after its
+state, with an `h2` and the column's cards as a list. Blocked and Failed sit in a `<details>`
+named "Blocked and failed". The card is a modal side dialog named by the task's title, which
+is its `h2`; the dialog's sections are tabs, and headings inside a tab are `h3`. Tables carry a
+caption and header cells. The document title follows the page: "Projects · AI Task Board",
+"<KEY> · <name> · AI Task Board", and "<KEY>-<n> <title> · AI Task Board" while a card is open.
+
+**Focus order** follows reading order: the banner, the `h1`, the page's form, then the columns
+left to right, each top to bottom. In the dialog: Close, the state line's actions, the tab list,
+then the selected panel.
+
+- Arriving on Projects or a board from another page moves focus to its `h1`. The first page
+  loaded keeps the browser's focus.
+- Opening a card moves focus into its dialog. Escape, Close or a press on the backdrop closes it
+  and returns focus to that card's link — its new link if the card changed columns while open.
+- A button that removes itself by changing the card's state (Mark done, Cancel run, Re-run,
+  Approve) moves focus to the dialog's state line, "<KEY>-<n> · <state>", before it goes.
+- Arrow keys move between tabs; Tab moves on into the selected panel.
+- Retry on a failed load moves focus to the area it reloads, since it removes its own button.
+
+**Names.** Every control's accessible name is its visible text. Form fields are labelled through
+the kit's Field, with their hint as their description. Buttons: Register, Add task, Save as
+v<n>, Approve, Move up, Move down, Mark done, Cancel run, Re-run, Close. A card's link starts with
+its key and title, then its phase, models and cost; a cost that lacks a price says "or more: a
+model has no price yet" in text, not only with a "+". The pull request's link reads "Pull
+request #<n>" and says it opens in a new tab.
+
+**Moving cards.** Nothing needs a drag (WCAG 2.5.7). Move up and Move down in the card's dialog
+reorder it within its column, and Mark done moves a Review card to Done. Dragging stays, for
+the mouse.
+
+**States and announcements.** A selected tab, an invalid field and a busy button are the
+element's own `aria-selected`, `aria-invalid` and `aria-busy`, set from the value that draws
+them. Each page and the open card hold a status region from the moment they render, and write
+outcomes into it:
+
+- Projects: "<KEY> registered."
+- The board: "<KEY>-<n> added to Backlog."; a drag's result, or why it was refused.
+- The card: "<KEY>-<n> moved up in <column>.", or that it is already at the top or bottom; a
+  spec saved, with whether it can be approved; and "<KEY>-<n> is now in <state>." whenever the
+  open card's state changes, whoever changed it. The page behind a modal dialog is inert, so the
+  card cannot rely on the board's region.
+
+The runner moving cards that are not open is not announced: while a run is live it would be a
+steady stream of interruptions. Loading shows the kit's Loading, a status; a failed load shows
+its Trouble, an alert, with Retry.
+
+**Errors.** The server's `message` is never shown (§9 and the kit's HTTP rule): the web app owns
+its words, chosen by the `error` code and, for a field, by `details.field` or the first schema
+issue's path.
+
+- A registration refused on a field marks that field invalid, describes it with the reason, and
+  moves focus to it. A refusal tied to no field, and every failed action in the card, is written
+  into a danger notice that was already in the page, and focus moves to that notice.
+- A stale move or approval (`409`) says the view was out of date and refreshes it.
+- Colour never carries meaning alone: lint findings are a list under a Lint heading; pass and
+  fail, additions and deletions and the cost drift flag are words or signs in a badge.
+
+**Not covered by the automated checks.** A screen reader, 200% zoom and a 320 px viewport are
+tried by hand or named as untried in each UI change's review. A board's columns are a
+two-dimensional layout and may scroll sideways at 320 px; the Projects page and the card's
+dialog reflow.
 
 ## 9. Errors
 
@@ -418,7 +496,10 @@ against a real PostgreSQL started by Testcontainers.
   is captured from a real `claude -p` run, not written by hand, so the normalizer is tested
   against what the CLI actually emits.
 - **UI** (`tests/ui/`, Playwright, against the fake runner): register a project, write and
-  approve a spec, watch the timeline fill, answer an approval, see the PR tab.
+  approve a spec, watch the timeline fill, answer an approval, see the PR tab. Journeys find
+  elements by role and accessible name, scan every state they reach with axe-core under the
+  WCAG 2.2 AA tags, and one journey drives the board and the card by keyboard alone, asserting
+  where focus lands.
 - **Smoke** (`./run smoke`, by hand, spends tokens): one small task against a scratch repository
   with the real `claude` and `gh`.
 
