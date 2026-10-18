@@ -1,0 +1,5 @@
+#!/bin/sh
+# Stands in for `gh pr create`: swallows the body from stdin, records the call, prints a URL.
+cat > /dev/null
+[ -n "$FAKE_GH_LOG" ] && echo "$@" >> "$FAKE_GH_LOG"
+echo "https://github.com/owner/pay/pull/${FAKE_GH_PR_NUMBER:-7}"
