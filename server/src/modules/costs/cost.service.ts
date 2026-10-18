@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely'
+import { sql, type Kysely } from 'kysely'
 import type { Database } from '../../db/schema.js'
 import { costOf, priceAt, type PriceRow } from './pricing.js'
 import { summarizeCosts, type CostSummary } from './summarize.js'
@@ -85,6 +85,8 @@ export class CostService {
       ])
       .where('runs.task_id', 'in', taskIds)
       .where('events.model', 'is not', null)
+      // As in summarizeCosts: a phase_start names its configured alias and used no tokens.
+      .where(sql`events.input + events.output + events.cache_read + events.cache_write`, '>', 0)
       .groupBy(['runs.task_id', 'events.model', 'day'])
       .execute()
     const prices = await loadPrices(this.db)

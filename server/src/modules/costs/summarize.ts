@@ -61,7 +61,9 @@ export function summarizeCosts(input: {
   let totals: Line = { usage: ZERO_USAGE, usd: 0 }
 
   for (const event of input.events) {
-    if (event.model === null) continue
+    // An event that used no tokens is no model's cost: a phase_start names the configured alias.
+    const { input: i, output, cacheRead, cacheWrite } = event.usage
+    if (event.model === null || i + output + cacheRead + cacheWrite === 0) continue
     const price = priceAt(input.prices, event.model, event.ts)
     if (price === undefined) {
       missing.add(event.model)

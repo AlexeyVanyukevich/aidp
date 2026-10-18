@@ -153,6 +153,32 @@ describe('reading a run', () => {
     expect(board.tasks[0].cost_usd).toBeCloseTo(1.5, 10)
   })
 
+  it('names on the card only the models that used tokens', async () => {
+    await getTestDb()
+      .insertInto('events')
+      .values({
+        id: crypto.randomUUID(),
+        run_id: ids.runId,
+        phase_id: PLAN_PHASE,
+        ts: TS,
+        type: 'phase_start',
+        agent: 'planner',
+        model: 'sonnet',
+        tool: null,
+        target: null,
+        status: null,
+        duration_ms: null,
+        input: 0,
+        output: 0,
+        cache_read: 0,
+        cache_write: 0,
+        payload: '{}',
+      })
+      .execute()
+    const board = (await app.inject({ method: 'GET', url: '/api/projects/PAY/tasks' })).json()
+    expect(board.tasks[0]).toMatchObject({ models: ['m'], cost_complete: true })
+  })
+
   it('says a card’s cost is incomplete while a model has no price', async () => {
     await getTestDb().deleteFrom('prices').execute()
     const board = (await app.inject({ method: 'GET', url: '/api/projects/PAY/tasks' })).json()

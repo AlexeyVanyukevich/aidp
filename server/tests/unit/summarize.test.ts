@@ -105,6 +105,22 @@ describe('summarizeCosts', () => {
     expect(result.byPhase[0]).toMatchObject({ usd: 0, drift: null, flagged: false })
   })
 
+  // A phase_start carries the configured alias (`sonnet`) and no usage; found by the first
+  // smoke run, 2026-10-18.
+  it('takes no model from an event that used no tokens', () => {
+    const result = summarizeCosts({
+      events: [
+        EVENTS[0]!,
+        { phaseId: 'p1', agent: 'planner', model: 'sonnet', ts: TS, usage: usage(0) },
+      ],
+      phases: [PHASES[0]!],
+      prices: PRICES,
+    })
+    expect(result.missingPrices).toEqual([])
+    expect(result.byModel.map((line) => line.model)).toEqual(['big'])
+    expect(result.byPhase[0]?.flagged).toBe(false)
+  })
+
   it('has no ratio and no phases for an empty run', () => {
     const result = summarizeCosts({ events: [], phases: [], prices: PRICES })
     expect(result.cacheHitRatio).toBeNull()
