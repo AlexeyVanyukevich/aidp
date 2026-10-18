@@ -1,0 +1,5 @@
+{
+  "extends": "charter/stacks/node/tsconfig",
+  "compilerOptions": { "noEmit": true },
+  "include": ["src", "tests"]
+}
