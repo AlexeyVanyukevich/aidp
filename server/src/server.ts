@@ -1,10 +1,14 @@
 import { buildApp } from './app.js'
 import { loadConfig } from './config.js'
 import { createDb } from './db/client.js'
+import { PrPoller, realGh } from './modules/runs/pr-poller.js'
 
 const config = loadConfig(process.env)
 const db = createDb(config.databaseUrl)
 const app = await buildApp({ config, db })
+const poller = new PrPoller(db, realGh, app.log)
+poller.start(config.prPollMs)
+app.addHook('onClose', async () => poller.stop())
 
 app.addHook('onClose', async () => {
   await db.destroy()
