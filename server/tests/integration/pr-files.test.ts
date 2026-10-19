@@ -1,18 +1,16 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { buildTestApp, closeTestDb, getTestDb, resetDb } from './helpers.js'
 import { seedQueuedRun } from './fixtures.js'
 import type { Gh } from '../../src/modules/runs/pr-poller.js'
 
 const calls: string[][] = []
+let answer: Awaited<ReturnType<Gh>>
 const gh: Gh = async (args) => {
   calls.push(args)
-  return {
-    code: 0,
-    stdout: JSON.stringify({ files: [{ path: 'src/retry.ts', additions: 3, deletions: 1 }] }),
-    stderr: '',
-  }
+  return answer
 }
+const FILES = [{ path: 'src/retry.ts', additions: 3, deletions: 1 }]
 
 let app: FastifyInstance
 beforeAll(async () => {
@@ -21,6 +19,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   await resetDb()
   calls.length = 0
+  vi.restoreAllMocks()
 })
 afterAll(async () => {
   await app.close()
@@ -28,19 +27,48 @@ afterAll(async () => {
 })
 
 describe('GET /api/runs/:id/files', () => {
-  it('lists the pull request’s files from GitHub', async () => {
+  it.each([
+    {
+      name: 'answers an empty list before there is a pull request, without asking GitHub',
+      prNumber: null,
+      gh: { code: 0, stdout: '', stderr: '' },
+      body: { files: [] },
+      asked: [],
+      warnings: 0,
+    },
+    {
+      name: 'lists the pull request’s files from GitHub',
+      prNumber: 7,
+      gh: { code: 0, stdout: JSON.stringify({ files: FILES }), stderr: '' },
+      body: { files: FILES },
+      asked: [['pr', 'view', '7', '--repo', 'owner/pay', '--json', 'files']],
+      warnings: 0,
+    },
+    {
+      name: 'answers null, with one warning, when GitHub does not list them',
+      prNumber: 7,
+      gh: { code: 1, stdout: '', stderr: 'Could not resolve to a Repository' },
+      body: { files: null },
+      asked: [['pr', 'view', '7', '--repo', 'owner/pay', '--json', 'files']],
+      warnings: 1,
+    },
+  ])('$name', async ({ prNumber, gh: reply, body, asked, warnings }) => {
+    answer = reply
+    const warn = vi.spyOn(app.log, 'warn')
     const { runId } = await seedQueuedRun(getTestDb())
-    await getTestDb().updateTable('runs').set({ pr_number: 7 }).where('id', '=', runId).execute()
-    const response = await app.inject({ method: 'GET', url: `/api/runs/${runId}/files` })
-    expect(response.json()).toEqual([{ path: 'src/retry.ts', additions: 3, deletions: 1 }])
-    expect(calls).toEqual([['pr', 'view', '7', '--repo', 'owner/pay', '--json', 'files']])
-  })
+    await getTestDb()
+      .updateTable('runs')
+      .set({ pr_number: prNumber })
+      .where('id', '=', runId)
+      .execute()
 
-  it('answers an empty list before there is a pull request, without asking GitHub', async () => {
-    const { runId } = await seedQueuedRun(getTestDb())
-    expect((await app.inject({ method: 'GET', url: `/api/runs/${runId}/files` })).json()).toEqual(
-      [],
-    )
-    expect(calls).toEqual([])
+    const response = await app.inject({ method: 'GET', url: `/api/runs/${runId}/files` })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual(body)
+    expect(calls).toEqual(asked)
+    expect(warn).toHaveBeenCalledTimes(warnings)
+    // An outside failure the board expects is not logged as though something broke.
+    for (const [fields] of warn.mock.calls) expect(fields).not.toHaveProperty('err')
   })
 })

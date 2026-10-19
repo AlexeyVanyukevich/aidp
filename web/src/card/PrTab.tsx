@@ -34,13 +34,13 @@ export function PrTab({ task }: { task: TaskView }) {
             </p>
             <section aria-labelledby={filesId}>
               <h3 id={filesId}>Files changed</h3>
-              {files.isError ? (
+              {files.isError || files.data?.files === null ? (
                 <p>GitHub did not list the files; they are on the pull request.</p>
               ) : files.data === undefined ? (
                 <Loading />
               ) : (
                 <ul>
-                  {files.data.map((f) => (
+                  {files.data.files.map((f) => (
                     <li key={f.path}>
                       <code>{f.path}</code> <Badge tone="success">+{f.additions}</Badge>{' '}
                       <Badge tone="danger">−{f.deletions}</Badge>

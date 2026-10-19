@@ -18,7 +18,7 @@ export function registerPrFiles(instance: FastifyInstance): void {
         .where('runs.id', '=', request.params.id)
         .executeTakeFirst()
       if (run === undefined) throw new NotFoundError('No such run')
-      if (run.pr_number === null) return []
+      if (run.pr_number === null) return { files: [] }
       const result = await app.gh([
         'pr',
         'view',
@@ -28,12 +28,22 @@ export function registerPrFiles(instance: FastifyInstance): void {
         '--json',
         'files',
       ])
-      if (result.code !== 0) throw new Error(`gh pr view failed: ${result.stderr}`)
-      return (
-        JSON.parse(result.stdout) as {
-          files: { path: string; additions: number; deletions: number }[]
-        }
-      ).files
+      // An unknown repository, no network, `gh` signed out: expected outside failures, which the
+      // PR tab words itself. Not an internal error, and no stack in the log.
+      if (result.code !== 0) {
+        app.log.warn(
+          { runId: request.params.id, stderr: result.stderr.trim() },
+          "GitHub did not list the pull request's files",
+        )
+        return { files: null }
+      }
+      return {
+        files: (
+          JSON.parse(result.stdout) as {
+            files: { path: string; additions: number; deletions: number }[]
+          }
+        ).files,
+      }
     },
   )
 }
