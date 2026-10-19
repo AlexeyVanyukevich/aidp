@@ -3,6 +3,21 @@
 What is known to be wrong and not yet fixed, newest first. The rule for this file is the kit's
 `core/rules/backlog.md`: one entry per finding, deleted by the commit that fixes it.
 
+## A second task added quickly by keyboard is silently dropped
+
+- Where: `web/src/routes/Board.tsx`, the `create` mutation, whose `onSuccess` returns the
+  board's refetch
+- Found: 2026-10-20, running the browser journeys for slice 2 — the keyboard journey failed
+  once in six runs on unchanged web code, at "OPS-2 added to Backlog."
+- Problem: the mutation stays pending, so Add task stays busy, until the board has refetched;
+  but the status message and the emptied field appear before that. A busy kit Button cancels
+  its click, and Enter in the title field submits through that click. Typing a second title and
+  pressing Enter during the refetch does nothing: no task, no message, the text left in the
+  field.
+- Impact: a fast keyboard user's Enter is ignored without a word, and the keyboard journey
+  fails intermittently on it. Not returning the refetch from `onSuccess`, or announcing only
+  once the button is free, closes it.
+
 ## A run that reaches the subscription's usage limit fails instead of waiting
 
 - Where: `runner/src/phases/phase.ts`, which treats every failed `claude` process alike; slice
