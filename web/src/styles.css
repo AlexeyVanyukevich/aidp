@@ -34,6 +34,9 @@ body {
 .register {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  /* A stretched field grows its own label and input rows; a hint that wraps would then push
+     the inputs beside it out of line. Each field keeps its height, so inputs align by row. */
+  align-items: start;
   gap: var(--zl-space-3);
 }
 .register > .zl-notice,
