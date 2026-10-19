@@ -52,16 +52,6 @@ What is known to be wrong and not yet fixed, newest first. The rule for this fil
 - Impact: the tab handles it and says GitHub did not list the files, but the server log reads
   as if something broke, and a real outage looks like every other 500.
 
-## A PostgreSQL restart stops the server
-
-- Where: `server/src/shared/bus.ts`, the `Bus`'s `LISTEN` connection
-- Found: 2026-10-18, writing the browser journeys' teardown
-- Problem: the connection has no `error` listener. When PostgreSQL closes it — a restart, the
-  compose database stopped first — `pg` emits `error`, nothing handles it, and Node exits.
-  Stop `./run dev`'s database while the server runs to see it.
-- Impact: any database restart takes the board down with it; the runner then retries until
-  the server is started again by hand. Reconnecting and re-issuing `LISTEN` closes it.
-
 ## A runner that dies leaves its card in Running
 
 - Where: `server/src/modules/runner/`, which records heartbeats and has no sweeper
