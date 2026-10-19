@@ -3,6 +3,18 @@
 What is known to be wrong and not yet fixed, newest first. The rule for this file is the kit's
 `core/rules/backlog.md`: one entry per finding, deleted by the commit that fixes it.
 
+## The kit's Field grows its label and input when its grid row is taller
+
+- Where: `@zellige/core` 0.1.1, `css/field.css`: `.zl-field` is a grid with no
+  `align-content`
+- Found: 2026-10-19, the registration form's inputs out of line
+- Problem: placed in a grid that stretches its items, a Field shorter than its row spreads the
+  spare height over its own label, input and hint rows. Beside a field whose hint wraps to two
+  lines, the input sits lower and taller than its neighbours. `web/src/styles.css` works round
+  it with `align-items: start` on the registration form.
+- Impact: every form laid out in a grid has to repeat the workaround until the kit sets
+  `align-content: start` on `.zl-field`; the fix belongs in the kit's repository.
+
 ## An unauthenticated runner request with a bad body answers 400, not 401
 
 - Where: `server/src/modules/runner/runner.routes.ts`, where the key and token checks are
