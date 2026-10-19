@@ -31,7 +31,7 @@ export function registerRunner(instance: FastifyInstance): void {
 
   app.post(
     '/api/runner/claim',
-    { preHandler: runnerKey, schema: { body: ClaimBody } },
+    { preValidation: runnerKey, schema: { body: ClaimBody } },
     async (request) => ({
       work: await service.claim(
         request.body.runner_id,
@@ -42,23 +42,23 @@ export function registerRunner(instance: FastifyInstance): void {
 
   app.post(
     '/api/runner/heartbeat',
-    { preHandler: runnerKey, schema: { body: HeartbeatBody } },
+    { preValidation: runnerKey, schema: { body: HeartbeatBody } },
     async (request) => service.heartbeat(request.body.runner_id, request.body.run_ids),
   )
 
   app.post(
     '/api/runner/runs/:id/tokens',
-    { preHandler: runnerKey, schema: { params: RunParams } },
+    { preValidation: runnerKey, schema: { params: RunParams } },
     async (request) => service.issueToken(request.params.id),
   )
 
   app.post(
     '/api/runner/events',
-    { preHandler: runToken, schema: { body: EventsBody } },
+    { preValidation: runToken, schema: { body: EventsBody } },
     async (request) => service.ingest(context(request), request.body.events),
   )
 
-  app.post('/api/runner/tokens/retire', { preHandler: runToken }, async (request, reply) => {
+  app.post('/api/runner/tokens/retire', { preValidation: runToken }, async (request, reply) => {
     await service.retire(bearer(request.headers.authorization) ?? '')
     reply.status(204)
   })
