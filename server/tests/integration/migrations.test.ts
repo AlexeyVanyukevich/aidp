@@ -1,7 +1,16 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { sql } from 'kysely'
+import { Migrator } from 'kysely/migration'
 import { closeTestDb, getTestDb, resetDb } from './helpers.js'
-import { EVENT_TYPES, TASK_STATES } from '../../src/shared/vocabulary.js'
+import { migrations } from '../../src/db/migrations/index.js'
+import {
+  APPROVAL_STATUSES,
+  EVENT_TYPES,
+  PHASE_STATUSES,
+  RUN_STATUSES,
+  TASK_STATES,
+  type RunStatus,
+} from '../../src/shared/vocabulary.js'
 
 beforeEach(resetDb)
 afterAll(closeTestDb)
@@ -147,5 +156,121 @@ describe('the initial migration', () => {
       sql`insert into tasks (project_id, number, title, state, position)
           values (${id}, 1, 'T', 'archived', 1)`.execute(getTestDb()),
     ).rejects.toThrow(/tasks_state_known/)
+  })
+})
+
+/** A task and a run on it, the run in `status`. */
+async function run(status: RunStatus = 'running') {
+  const { id } = await project()
+  const task = await getTestDb()
+    .insertInto('tasks')
+    .values({
+      project_id: id,
+      number: 1,
+      title: 'T',
+      state: 'running',
+      position: 1,
+      updated_at: new Date(),
+    })
+    .returning('id')
+    .executeTakeFirstOrThrow()
+  return getTestDb()
+    .insertInto('runs')
+    .values({
+      task_id: task.id,
+      kind: 'delivery',
+      spec_version: 1,
+      status,
+      current_phase: null,
+      branch: null,
+      worktree_path: null,
+      pr_number: null,
+      pr_url: null,
+      failure_reason: null,
+      runner_id: null,
+      started_at: null,
+      ended_at: null,
+      last_heartbeat_at: null,
+    })
+    .returning('id')
+    .executeTakeFirstOrThrow()
+}
+
+describe('the pause-and-resume migration', () => {
+  it.each(RUN_STATUSES)('accepts the run status %s', async (status) => {
+    await expect(run(status)).resolves.toBeDefined()
+  })
+
+  it.each(PHASE_STATUSES)('accepts the phase status %s', async (status) => {
+    const { id } = await run()
+    await expect(
+      getTestDb()
+        .insertInto('phases')
+        .values({
+          id: crypto.randomUUID(),
+          run_id: id,
+          name: 'build',
+          attempt: 1,
+          agent: 'builder',
+          model: 'sonnet',
+          status,
+          session_id: null,
+          summary_md: null,
+          reported_cost: null,
+          started_at: new Date(),
+          ended_at: null,
+        })
+        .execute(),
+    ).resolves.toBeDefined()
+  })
+
+  it.each(APPROVAL_STATUSES)('accepts the approval status %s', async (status) => {
+    const { id } = await run()
+    await expect(
+      getTestDb()
+        .insertInto('approval_requests')
+        .values({
+          run_id: id,
+          phase_id: null,
+          kind: 'question',
+          question: 'Which colour?',
+          options: '[]',
+          recommendation: null,
+          context_md: null,
+          status,
+          answer: null,
+          checkpoint: null,
+          files: null,
+          answered_at: null,
+        })
+        .execute(),
+    ).resolves.toBeDefined()
+  })
+
+  it.each([
+    ['pending work it does not know', sql`update runs set pending = 'other'`, /runs_pending_known/],
+    ['a run status it does not know', sql`update runs set status = 'parked'`, /runs_status_known/],
+  ])('refuses %s', async (_name, statement, constraint) => {
+    await run()
+    await expect(statement.execute(getTestDb())).rejects.toThrow(constraint)
+  })
+
+  it('goes down and up again to the same columns', async () => {
+    const columns = async () =>
+      (
+        await sql<{ c: string }>`select table_name || '.' || column_name as c
+          from information_schema.columns where table_schema = 'public' order by 1`.execute(
+          getTestDb(),
+        )
+      ).rows.map((row) => row.c)
+    const before = await columns()
+    const migrator = new Migrator({
+      db: getTestDb(),
+      provider: { getMigrations: async () => migrations },
+    })
+    expect((await migrator.migrateDown()).error).toBeUndefined()
+    expect(await columns()).not.toContain('runs.checkpoint')
+    expect((await migrator.migrateToLatest()).error).toBeUndefined()
+    expect(await columns()).toEqual(before)
   })
 })

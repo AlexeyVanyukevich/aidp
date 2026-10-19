@@ -1,8 +1,14 @@
 import type { ColumnType, Generated, JSONColumnType } from 'kysely'
 import type {
+  ApprovalKind,
+  ApprovalStatus,
   ArtifactKind,
+  Block,
+  Checkpoint,
   EventType,
+  PendingWork,
   PhaseName,
+  PhaseStatus,
   RunStatus,
   SpecCriterion,
   TaskState,
@@ -72,6 +78,13 @@ export interface RunsTable {
   started_at: NullableTimestamp
   ended_at: NullableTimestamp
   last_heartbeat_at: NullableTimestamp
+  /** The latest the runner reported; what a resume starts from. */
+  checkpoint: JSONColumnType<Checkpoint | null, string | null | undefined, string | null>
+  block: JSONColumnType<Block | null, string | null | undefined, string | null>
+  pending: ColumnType<PendingWork | null, PendingWork | null | undefined, PendingWork | null>
+  resume_message: ColumnType<string | null, string | null | undefined, string | null>
+  /** Set while work for this run waits to be claimed; the oldest is claimed first. */
+  queued_at: NullableTimestamp
 }
 
 export interface RunTokensTable {
@@ -90,13 +103,15 @@ export interface PhasesTable {
   attempt: number
   agent: string
   model: string
-  status: 'running' | 'succeeded' | 'failed'
+  status: PhaseStatus
   session_id: string | null
   summary_md: string | null
   /** Claude Code's own cost per model for this phase: `{ "<model>": <usd> }`. */
   reported_cost: JSONColumnType<Record<string, number> | null, string | null, string | null>
   started_at: Timestamp
   ended_at: NullableTimestamp
+  /** A process of this phase was stopped by a signal or lost: its cost is not compared. */
+  interrupted: Generated<boolean>
 }
 
 export interface EventsTable {
@@ -124,14 +139,16 @@ export interface ApprovalRequestsTable {
   id: Generated<string>
   run_id: string
   phase_id: string | null
-  kind: string
+  kind: ApprovalKind
   question: string
   options: JSONColumnType<unknown[], string, string>
   recommendation: string | null
   context_md: string | null
-  status: 'open' | 'answered' | 'expired'
+  status: ApprovalStatus
   answer: ColumnType<unknown, string | null, string | null>
   checkpoint: ColumnType<unknown, string | null, string | null>
+  /** The files an `out_of_plan` request asks to change. */
+  files: JSONColumnType<string[] | null, string | null | undefined, string | null>
   created_at: Generated<Date>
   answered_at: NullableTimestamp
 }

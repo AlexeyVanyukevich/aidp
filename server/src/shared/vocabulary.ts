@@ -12,12 +12,77 @@ export const TASK_STATES = [
 ] as const
 export type TaskState = (typeof TASK_STATES)[number]
 
-/** Slice 1's run statuses. Slice 2 adds `paused` and `blocked` with its own migration. */
-export const RUN_STATUSES = ['queued', 'running', 'succeeded', 'failed', 'cancelled'] as const
+export const RUN_STATUSES = [
+  'queued',
+  'running',
+  'paused',
+  'blocked',
+  'succeeded',
+  'failed',
+  'cancelled',
+] as const
 export type RunStatus = (typeof RUN_STATUSES)[number]
 
 export const PHASE_NAMES = ['spec', 'plan', 'build', 'verify'] as const
 export type PhaseName = (typeof PHASE_NAMES)[number]
+
+/** A paused phase waits for an answer or a Resume; the same session carries on after it. */
+export const PHASE_STATUSES = ['running', 'paused', 'succeeded', 'failed'] as const
+export type PhaseStatus = (typeof PHASE_STATUSES)[number]
+
+export const APPROVAL_STATUSES = ['open', 'answered', 'expired', 'withdrawn'] as const
+export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number]
+
+export const APPROVAL_KINDS = ['question', 'out_of_plan', 'plan'] as const
+export type ApprovalKind = (typeof APPROVAL_KINDS)[number]
+
+/** Why a run is Blocked. The first and last are the server's sweeper's; the others the runner's. */
+export const BLOCK_CAUSES = [
+  'runner_lost',
+  'step_failed',
+  'runner_stopped',
+  'approval_expired',
+] as const
+export type BlockCause = (typeof BLOCK_CAUSES)[number]
+
+/** A delivery run's stages, in order; a checkpoint names the one it resumes from. */
+export const STAGES = ['prepare', 'plan', 'build', 'tests', 'verify', 'push', 'pr'] as const
+export type Stage = (typeof STAGES)[number]
+
+export const PENDING_WORK = ['resume', 'cleanup'] as const
+export type PendingWork = (typeof PENDING_WORK)[number]
+
+/** One model's usage in a session as Claude Code reported it, with its own cost. */
+export interface SessionTotals {
+  input: number
+  output: number
+  cache_read: number
+  cache_write: number
+  usd: number
+}
+
+/** Where a run stands, as the runner last reported it: what a resume starts from. */
+export interface Checkpoint {
+  stage: Stage
+  attempt: number
+  phase_id: string | null
+  /** The phase's Claude Code session, its last reported totals, and the cost credited so far. */
+  session: {
+    id: string
+    baseline: Record<string, SessionTotals>
+    reported: Record<string, number>
+  } | null
+  head: string | null
+  plan_artifact_id: string | null
+  failing_report_id: string | null
+}
+
+export interface Block {
+  cause: BlockCause
+  stage: Stage | null
+  command?: string
+  output?: string
+}
 
 export const EVENT_TYPES = [
   'phase_start',
