@@ -3,6 +3,22 @@
 What is known to be wrong and not yet fixed, newest first. The rule for this file is the kit's
 `core/rules/backlog.md`: one entry per finding, deleted by the commit that fixes it.
 
+## A run that reaches the subscription's usage limit fails instead of waiting
+
+- Where: `runner/src/phases/phase.ts`, which treats every failed `claude` process alike; slice
+  2's blocks in `docs/superpowers/specs/2026-10-19-pause-and-resume-design.md`, §8
+- Found: 2026-10-19, recording streams for slice 2
+- Problem: the runner signs in with the owner's claude.ai plan, whose every process reports a
+  `rate_limit_event` — a five-hour and a seven-day window, overage disabled for the
+  organisation. Once a window is used up, requests are refused rather than billed. A phase
+  refused that way ends like any failed phase: the card moves to Failed, and Re-run starts again
+  from Plan, throwing away the session and every phase already paid for. How a refused request
+  appears in the stream — the event's `status`, the result's subtype — is not recorded; seeing
+  it means reaching the limit.
+- Impact: a long run near the end of a window loses its work, and the window's reset is not on
+  the card. Blocking the run with the reset time, and continuing the session on Resume, would
+  reuse slice 2's checkpoints; it needs one recording of a refused request first.
+
 ## The kit's Field grows its label and input when its grid row is taller
 
 - Where: `@zellige/core` 0.1.1, `css/field.css`: `.zl-field` is a grid with no
