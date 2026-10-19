@@ -100,6 +100,31 @@ describe('the runner key', () => {
       message: 'Missing or invalid credential',
     })
   })
+
+  // The credential is checked before the body is read: a caller without one learns nothing of
+  // the body's shape, whatever it sends.
+  const RUN = '00000000-0000-4000-8000-000000000001'
+  const routes = [
+    '/api/runner/claim',
+    '/api/runner/heartbeat',
+    `/api/runner/runs/${RUN}/tokens`,
+    '/api/runner/events',
+    '/api/runner/tokens/retire',
+  ]
+  const credentials: [string, Record<string, string>][] = [
+    ['no header', {}],
+    ['a wrong secret', { authorization: `Bearer ${'x'.repeat(40)}` }],
+  ]
+  it.each(
+    routes.flatMap((url) => credentials.map(([name, headers]) => [url, name, headers] as const)),
+  )('answers %s with %s and an empty body with the same 401', async (url, _name, headers) => {
+    const response = await app.inject({ method: 'POST', url, headers, payload: {} })
+    expect(response.statusCode).toBe(401)
+    expect(response.json()).toEqual({
+      error: 'unauthorized',
+      message: 'Missing or invalid credential',
+    })
+  })
 })
 
 describe('POST /api/runner/claim', () => {

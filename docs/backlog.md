@@ -31,17 +31,6 @@ What is known to be wrong and not yet fixed, newest first. The rule for this fil
 - Impact: every form laid out in a grid has to repeat the workaround until the kit sets
   `align-content: start` on `.zl-field`; the fix belongs in the kit's repository.
 
-## An unauthenticated runner request with a bad body answers 400, not 401
-
-- Where: `server/src/modules/runner/runner.routes.ts`, where the key and token checks are
-  `preHandler` hooks
-- Found: 2026-10-19, closing slice 1
-- Problem: Fastify validates the body before `preHandler` runs. `POST /api/runner/claim` with
-  no `Authorization` header and `{}` as its body answers `400 validation_error` with the schema
-  issues, instead of the one identical `401` the kit's HTTP rule asks for.
-- Impact: small, on a loopback-only server: an unauthenticated caller learns the shape of the
-  runner endpoints. Moving the checks to `preValidation` closes it.
-
 ## The PR tab's file list answers 500 when GitHub does not know the repository
 
 - Where: `server/src/modules/runs/pr-files.ts`
