@@ -71,7 +71,9 @@ export const api = {
     request<{ spec: SpecView; run_id: string }>('POST', `/api/specs/${specId}/approve`),
   runs: (taskId: string) => request<RunView[]>('GET', `/api/tasks/${taskId}/runs`),
   costs: (taskId: string) => request<CostSummary>('GET', `/api/tasks/${taskId}/costs`),
-  prFiles: (runId: string) => request<PrFile[]>('GET', `/api/runs/${runId}/files`),
+  /** `files` is null when GitHub did not list them. */
+  prFiles: (runId: string) =>
+    request<{ files: PrFile[] | null }>('GET', `/api/runs/${runId}/files`),
   async events(runId: string): Promise<EventView[]> {
     const all: EventView[] = []
     let after: string | null = null

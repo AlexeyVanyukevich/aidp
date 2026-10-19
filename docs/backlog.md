@@ -31,16 +31,6 @@ What is known to be wrong and not yet fixed, newest first. The rule for this fil
 - Impact: every form laid out in a grid has to repeat the workaround until the kit sets
   `align-content: start` on `.zl-field`; the fix belongs in the kit's repository.
 
-## The PR tab's file list answers 500 when GitHub does not know the repository
-
-- Where: `server/src/modules/runs/pr-files.ts`
-- Found: 2026-10-18, running the browser journeys
-- Problem: a failing `gh pr view` — an unknown repository, no network, `gh` signed out — throws
-  a plain `Error`, which the error handler logs with its stack as unexpected and answers
-  `500 internal_error`. The journeys hit it on every run, since `owner/pay` does not exist.
-- Impact: the tab handles it and says GitHub did not list the files, but the server log reads
-  as if something broke, and a real outage looks like every other 500.
-
 ## A runner that dies leaves its card in Running
 
 - Where: `server/src/modules/runner/`, which records heartbeats and has no sweeper

@@ -68,6 +68,8 @@ test('a task goes from the board to a pull request, with its steps and costs on 
   await card.getByRole('tab', { name: 'PR' }).click()
   const pr = card.getByRole('tabpanel', { name: 'PR' })
   await expect(pr.getByRole('link', { name: /^Pull request #7/ })).toBeVisible()
+  // owner/pay is not on GitHub, so `gh` cannot list the files: the tab says so in words.
+  await expect(pr).toContainText('GitHub did not list the files; they are on the pull request.')
   await expect(pr.getByRole('table', { name: 'Verify report' })).toContainText('pass')
   await expectAccessible(page)
 
