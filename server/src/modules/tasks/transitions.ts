@@ -15,6 +15,11 @@ export const MOVES = [
   'merge',
   'drag_done',
   'close_pr',
+  'request_approval',
+  'answer',
+  'expire',
+  'block',
+  'resume',
 ] as const
 export type Move = (typeof MOVES)[number]
 
@@ -24,7 +29,14 @@ const TABLE: Record<Move, { from: readonly TaskState[]; to: TaskState }> = {
   claim: { from: ['ready'], to: 'running' },
   finish_review: { from: ['running'], to: 'review' },
   fail: { from: ['running'], to: 'failed' },
-  cancel: { from: ['ready', 'running'], to: 'failed' },
+  cancel: { from: ['ready', 'running', 'needs_approval', 'blocked'], to: 'failed' },
+  // An answer is accepted from Blocked only when the block is the question expiring; the
+  // approvals service checks that, since the table cannot see why a card is blocked.
+  request_approval: { from: ['running'], to: 'needs_approval' },
+  answer: { from: ['needs_approval', 'blocked'], to: 'running' },
+  expire: { from: ['needs_approval'], to: 'blocked' },
+  block: { from: ['running'], to: 'blocked' },
+  resume: { from: ['blocked'], to: 'running' },
   rerun: { from: ['failed'], to: 'ready' },
   merge: { from: ['review'], to: 'done' },
   drag_done: { from: ['review'], to: 'done' },

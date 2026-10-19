@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { MOVES, nextState, type Move } from '../../src/modules/tasks/transitions.js'
 import { TASK_STATES, type TaskState } from '../../src/shared/vocabulary.js'
 
-/** Slice 1's rows of the spec's §5 table, written out independently of the implementation. */
+/**
+ * The rows of the MVP spec's §5 table that slices 1 and 2 build — slice 2's from its own spec's
+ * §4 — written out independently of the implementation.
+ */
 const ALLOWED: [TaskState, Move, TaskState][] = [
   ['backlog', 'save_spec', 'spec_review'],
   ['spec_review', 'save_spec', 'spec_review'],
@@ -16,6 +19,15 @@ const ALLOWED: [TaskState, Move, TaskState][] = [
   ['review', 'merge', 'done'],
   ['review', 'drag_done', 'done'],
   ['review', 'close_pr', 'failed'],
+  // Slice 2: pause, block, resume, and Cancel from the two new waiting states.
+  ['running', 'request_approval', 'needs_approval'],
+  ['needs_approval', 'answer', 'running'],
+  ['blocked', 'answer', 'running'],
+  ['needs_approval', 'expire', 'blocked'],
+  ['running', 'block', 'blocked'],
+  ['blocked', 'resume', 'running'],
+  ['needs_approval', 'cancel', 'failed'],
+  ['blocked', 'cancel', 'failed'],
 ]
 
 describe('nextState', () => {
