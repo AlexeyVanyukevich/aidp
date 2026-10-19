@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 
-const FORWARDED = new Set(['task.updated', 'run.event'])
+const FORWARDED = new Set(['task.updated', 'run.event', 'resync'])
 
 export function registerStream(app: FastifyInstance): void {
   app.get('/api/stream', (request, reply) => {

@@ -57,7 +57,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.decorate('db', deps.db)
   app.decorate('config', deps.config)
   app.decorate('clock', deps.clock ?? (() => new Date()))
-  const bus = deps.bus ?? new Bus(deps.config.databaseUrl)
+  const bus =
+    deps.bus ??
+    new Bus(deps.config.databaseUrl, {
+      log: (message, error) => app.log.warn({ err: error }, message),
+    })
   app.decorate('bus', bus)
   app.addHook('onReady', async () => {
     if (deps.bus === undefined) await bus.start()

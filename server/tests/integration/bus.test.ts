@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
+import { sql } from 'kysely'
 import { buildTestApp, closeTestDb, getTestDb } from './helpers.js'
 import { publish } from '../../src/shared/bus.js'
 
@@ -35,6 +36,17 @@ describe('the bus', () => {
       })
       .catch(() => undefined)
     expect(await received).toBeUndefined()
+  })
+
+  it('reconnects after its connection is ended, says so, and delivers again', async () => {
+    const resynced = app.bus.next('resync', 10_000)
+    await sql`select pg_terminate_backend(pid) from pg_stat_activity
+      where query ilike 'listen%'`.execute(getTestDb())
+    expect(await resynced).toEqual({ topic: 'resync' })
+
+    const received = app.bus.next('run.queued', 5_000)
+    await publish(getTestDb(), { topic: 'run.queued', runId: 'after' })
+    expect(await received).toEqual({ topic: 'run.queued', runId: 'after' })
   })
 })
 
