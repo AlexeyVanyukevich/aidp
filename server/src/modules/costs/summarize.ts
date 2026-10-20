@@ -9,6 +9,8 @@ export interface CostEvent {
   model: string | null
   ts: Date
   usage: Usage
+  /** Recorded from its `message_start`, its process stopped before the message ended. */
+  cut?: boolean
 }
 
 export interface CostPhase {
@@ -16,6 +18,8 @@ export interface CostPhase {
   name: string
   attempt: number
   reportedCost: Record<string, number> | null
+  /** A process of the phase was stopped: Claude Code's own figure misses part of it. */
+  interrupted?: boolean
 }
 
 export interface Line {
@@ -30,6 +34,9 @@ export type PhaseLine = Line & {
   reportedUsd: number | null
   drift: number | null
   flagged: boolean
+  interrupted: boolean
+  /** Its counters are a floor: a message was cut off before its usage was final. */
+  cut: boolean
 }
 
 export interface CostSummary {
@@ -55,6 +62,9 @@ export function summarizeCosts(input: {
 }): CostSummary {
   const missing = new Set<string>()
   const unpricedPhases = new Set<string>()
+  const cutPhases = new Set(
+    input.events.filter((event) => event.cut === true).map((event) => event.phaseId),
+  )
   const phases = new Map<string, Line>()
   const agents = new Map<string, Line>()
   const models = new Map<string, Line>()
@@ -82,7 +92,9 @@ export function summarizeCosts(input: {
       phase.reportedCost === null
         ? null
         : Object.values(phase.reportedCost).reduce((sum, usd) => sum + usd, 0)
-    const comparable = reportedUsd !== null && reportedUsd > 0 && !unpricedPhases.has(phase.id)
+    const interrupted = phase.interrupted === true
+    const comparable =
+      reportedUsd !== null && reportedUsd > 0 && !unpricedPhases.has(phase.id) && !interrupted
     const drift = comparable ? Math.abs(line.usd - reportedUsd) / reportedUsd : null
     return {
       phaseId: phase.id,
@@ -92,6 +104,8 @@ export function summarizeCosts(input: {
       reportedUsd,
       drift,
       flagged: drift !== null && drift > DRIFT_LIMIT,
+      interrupted,
+      cut: cutPhases.has(phase.id),
     }
   })
 

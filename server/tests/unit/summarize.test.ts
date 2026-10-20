@@ -127,3 +127,44 @@ describe('summarizeCosts', () => {
     expect(result.totals.usd).toBe(0)
   })
 })
+
+describe('phases a stopped process interrupted', () => {
+  // Built 50% off what Claude Code reported: enough to flag a phase that was not interrupted.
+  const phase = (interrupted: boolean): CostPhase => ({
+    id: 'p',
+    name: 'build',
+    attempt: 1,
+    reportedCost: { big: 20 },
+    interrupted,
+  })
+  const events: CostEvent[] = [
+    { phaseId: 'p', agent: 'builder', model: 'big', ts: TS, usage: usage(1e6) },
+  ]
+
+  it.each([
+    { interrupted: false, drift: 0.5, flagged: true },
+    { interrupted: true, drift: null, flagged: false },
+  ])(
+    'compares the phase only when not interrupted: $interrupted',
+    ({ interrupted, drift, flagged }) => {
+      const [line] = summarizeCosts({
+        events,
+        phases: [phase(interrupted)],
+        prices: PRICES,
+      }).byPhase
+      expect(line).toMatchObject({ drift, flagged, interrupted })
+    },
+  )
+
+  it.each([
+    { cut: true, expected: true },
+    { cut: undefined, expected: false },
+  ])('says when a phase holds a message cut off mid-reply: $cut', ({ cut, expected }) => {
+    const [line] = summarizeCosts({
+      events: [{ ...events[0]!, ...(cut === undefined ? {} : { cut }) }],
+      phases: [phase(true)],
+      prices: PRICES,
+    }).byPhase
+    expect(line?.cut).toBe(expected)
+  })
+})
