@@ -22,6 +22,11 @@ export function PlanTab({ task }: { task: TaskView }) {
         const plan = artifact.data as PlanData
         return (
           <div className="plan-tab">
+            {task.approval?.kind === 'plan' && task.approval.status === 'open' && (
+              <p>
+                <strong>Waiting for your approval in Approvals.</strong>
+              </p>
+            )}
             <p>{plan.summary}</p>
             <p className="muted">Confidence: {plan.confidence}</p>
             <section aria-labelledby={stepsId}>

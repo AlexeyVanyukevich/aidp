@@ -65,10 +65,19 @@ export function CostTab({ task }: { task: TaskView }) {
                   <tr key={p.phaseId}>
                     <th scope="row">
                       {p.name} {p.attempt}
+                      {/* A message cut off when its process stopped counts as at least what
+                          its start said: the counters are a floor. */}
+                      {p.cut && <span className="muted"> · at least</span>}
                     </th>
                     <Cells line={p} />
                     <td>
                       {p.reportedUsd === null ? '—' : formatUsd(p.reportedUsd)}
+                      {p.interrupted && (
+                        <p className="muted">
+                          Not compared: a process of this phase was stopped, and Claude Code’s own
+                          figure misses part of it.
+                        </p>
+                      )}
                       {p.flagged && (
                         <>
                           {' '}
