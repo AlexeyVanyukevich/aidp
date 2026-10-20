@@ -17,7 +17,12 @@ describe('loadConfig', () => {
       logLevel: 'info',
       prPollMs: 180_000,
       claimWaitMs: 30_000,
+      sweepMs: 60_000,
     })
+  })
+
+  it('reads how often the sweeper runs', () => {
+    expect(loadConfig({ ...BASE, SWEEP_MS: '5000' }).sweepMs).toBe(5_000)
   })
 
   it('reads a comma-separated host list, trimmed and lower-cased', () => {
@@ -31,6 +36,7 @@ describe('loadConfig', () => {
     ['a short runner key', { ...BASE, RUNNER_KEY: 'short' }, /RUNNER_KEY must be/],
     ['a port that is not a number', { ...BASE, PORT: 'abc' }, /PORT must be/],
     ['a port of zero', { ...BASE, PORT: '0' }, /PORT must be/],
+    ['a sweep interval of zero', { ...BASE, SWEEP_MS: '0' }, /SWEEP_MS must be/],
     ['an empty host list', { ...BASE, ALLOWED_HOSTS: ' , ' }, /ALLOWED_HOSTS/],
   ])('refuses %s', (_name, env, message) => {
     expect(() => loadConfig(env)).toThrow(message)

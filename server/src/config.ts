@@ -11,6 +11,8 @@ export interface Config {
   prPollMs: number
   /** How long a claim waits for work before answering empty. */
   claimWaitMs: number
+  /** How often the sweeper looks for lost runners and unanswered questions. */
+  sweepMs: number
 }
 
 function required(env: NodeJS.ProcessEnv, key: string): string {
@@ -54,5 +56,6 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     logLevel: env.LOG_LEVEL?.trim() || 'info',
     prPollMs: positiveInt(env, 'PR_POLL_MS', 180_000),
     claimWaitMs: positiveInt(env, 'CLAIM_WAIT_MS', 30_000),
+    sweepMs: positiveInt(env, 'SWEEP_MS', 60_000),
   }
 }

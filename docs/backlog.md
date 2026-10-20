@@ -46,15 +46,6 @@ What is known to be wrong and not yet fixed, newest first. The rule for this fil
 - Impact: every form laid out in a grid has to repeat the workaround until the kit sets
   `align-content: start` on `.zl-field`; the fix belongs in the kit's repository.
 
-## A runner that dies leaves its card in Running
-
-- Where: `server/src/modules/runner/`, which records heartbeats and has no sweeper
-- Found: 2026-10-11, planning slice 1
-- Problem: heartbeats are stored but nothing reads them. Kill the daemon mid-run: the card
-  stays in Running and its run in `running`. Cancel moves the card; the run row stays
-  `running` with `cancel_requested`.
-- Impact: until slice 2's lost-runner sweeper, a crash needs a Cancel and a Re-run by hand.
-
 ## Cache writes are priced at one rate
 
 - Where: `prices.cache_write`, `server/scripts/set-price.ts`
