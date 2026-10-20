@@ -71,6 +71,8 @@ export interface Checkpoint {
     id: string
     baseline: Record<string, SessionTotals>
     reported: Record<string, number>
+    /** A process of the phase was stopped: kept so the next runner reports it (spec §7). */
+    interrupted?: boolean
   } | null
   head: string | null
   plan_artifact_id: string | null

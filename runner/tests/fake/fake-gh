@@ -1,5 +1,10 @@
 #!/bin/sh
-# Stands in for `gh pr create`: swallows the body from stdin, records the call, prints a URL.
-cat > /dev/null
+# Stands in for `gh`. `pr create` swallows the body from stdin, records the call and prints a
+# URL; `pr list` answers the open pull requests FAKE_GH_OPEN names, as JSON — none by default.
 [ -n "$FAKE_GH_LOG" ] && echo "$@" >> "$FAKE_GH_LOG"
+if [ "$1" = pr ] && [ "$2" = list ]; then
+  echo "${FAKE_GH_OPEN:-[]}"
+  exit 0
+fi
+cat > /dev/null
 echo "https://github.com/owner/pay/pull/${FAKE_GH_PR_NUMBER:-7}"

@@ -134,6 +134,9 @@ export async function runProcess(input: ProcessInput, deps: ProcessDeps): Promis
       BOARD_RUN_DIR: input.runDir,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
+    // Its own process group: Ctrl-C at the daemon's terminal reaches the daemon, which stops
+    // the process itself and blocks the run, rather than the process dying under it.
+    detached: true,
   })
   if (child.pid !== undefined) writeFileSync(pidFile(input), String(child.pid))
 

@@ -82,7 +82,12 @@ function sessionOf(event: RunnerEvent, value: unknown): Checkpoint['session'] {
       usd: totals.usd as number,
     }
   }
-  return { id: value.id, baseline, reported: costMap(event, value.reported) ?? {} }
+  return {
+    id: value.id,
+    baseline,
+    reported: costMap(event, value.reported) ?? {},
+    ...(value.interrupted === true ? { interrupted: true } : {}),
+  }
 }
 
 function checkpointOf(event: RunnerEvent): Checkpoint {

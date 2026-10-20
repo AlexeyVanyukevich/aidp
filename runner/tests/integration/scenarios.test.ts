@@ -169,7 +169,7 @@ describe('a delivery run end to end', () => {
       verifier: [[report('pass')]],
     }).runOnce()
 
-    expect(ran).toBe(true)
+    expect(ran).toBe('review')
     expect(await state(taskId)).toBe('review')
     const [run] = await runs(taskId)
     expect(run).toMatchObject({ status: 'succeeded', pr_number: 7, branch: 'board/PAY-1-r1' })
