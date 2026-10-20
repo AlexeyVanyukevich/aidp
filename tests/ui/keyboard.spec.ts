@@ -32,6 +32,15 @@ test('a repository, the board and a card work from the keyboard alone', async ({
 
   const title = page.getByRole('textbox', { name: 'New task title' })
   await tabTo(page, title)
+  // A slow board: the refetch after each add takes a second. The next title is typed and sent
+  // as soon as the first is announced, as a quick keyboard user would, and must not be dropped.
+  // The handler stays; the flag ends the delay, so no request in flight is cut off.
+  let slow = true
+  await page.route('**/api/projects/OPS/tasks', async (route) => {
+    if (slow && route.request().method() === 'GET')
+      await new Promise((done) => setTimeout(done, 1_000))
+    await route.continue()
+  })
   for (const [name, n] of [
     ['First', 1],
     ['Second', 2],
@@ -44,6 +53,7 @@ test('a repository, the board and a card work from the keyboard alone', async ({
     await expect(title).toBeFocused()
     await expect(title).toHaveValue('')
   }
+  slow = false
 
   const backlog = page.getByRole('region', { name: 'Backlog' })
   await tabTo(page, backlog.getByRole('link', { name: /^OPS-2 / }))
