@@ -11,6 +11,8 @@ export interface PhaseView {
   summary_md: string | null
   started_at: Date
   ended_at: Date | null
+  /** A process of the phase was stopped: its cost is not compared (spec §7). */
+  interrupted: boolean
 }
 export interface ArtifactView {
   id: string
@@ -93,6 +95,7 @@ export class RunRepository {
         'summary_md',
         'started_at',
         'ended_at',
+        'interrupted',
       ])
       .where('run_id', 'in', runIds)
       .orderBy('started_at')
