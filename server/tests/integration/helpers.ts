@@ -35,6 +35,7 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
     logLevel: 'silent',
     prPollMs: 180_000,
     claimWaitMs: 0,
+    sweepMs: 60_000,
     ...overrides,
   }
 }

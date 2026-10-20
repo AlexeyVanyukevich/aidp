@@ -2,6 +2,7 @@ import { buildApp } from './app.js'
 import { loadConfig } from './config.js'
 import { createDb } from './db/client.js'
 import { PrPoller, realGh } from './modules/runs/pr-poller.js'
+import { Sweeper } from './modules/runs/sweeper.js'
 
 const config = loadConfig(process.env)
 // The pool exists before the app and its logger do; until then a dropped connection is quiet.
@@ -12,6 +13,9 @@ onPoolError = (error) => app.log.warn({ err: error }, 'the database ended a pool
 const poller = new PrPoller(db, realGh, app.log)
 poller.start(config.prPollMs)
 app.addHook('onClose', async () => poller.stop())
+const sweeper = new Sweeper(db, () => new Date(), config.sweepMs, app.log)
+sweeper.start()
+app.addHook('onClose', async () => sweeper.stop())
 
 app.addHook('onClose', async () => {
   await db.destroy()

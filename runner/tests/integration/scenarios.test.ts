@@ -56,6 +56,7 @@ beforeAll(async () => {
       logLevel: 'silent',
       prPollMs: 180_000,
       claimWaitMs: 0,
+      sweepMs: 60_000,
     },
   })
   await app.listen({ port: 0, host: '127.0.0.1' })
