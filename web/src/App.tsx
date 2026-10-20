@@ -1,5 +1,6 @@
 import { BrowserRouter, Link, Route, Routes } from 'react-router'
 import type { QueryClient } from '@tanstack/react-query'
+import { QuestionsWaiting } from './board/QuestionsWaiting'
 import { CardDrawer } from './card/CardDrawer'
 import { useBoardStream } from './stream'
 import { Board } from './routes/Board'
@@ -13,6 +14,7 @@ export function App({ client }: { client: QueryClient }) {
         <Link to="/" className="brand">
           AI Task Board
         </Link>
+        <QuestionsWaiting />
       </header>
       <Routes>
         <Route path="/" element={<Projects />} />

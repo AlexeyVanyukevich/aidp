@@ -16,6 +16,9 @@ export function keysFor(message: BoardMessage): QueryKey[] {
       ['task', message.taskId],
       ['specs', message.taskId],
       ['runs', message.taskId],
+      // A cancel withdraws a question and the sweeper expires one; both send only this.
+      ['approvals', message.taskId],
+      ['approvals', 'open'],
     ]
   // The server's connection to the database came back; whatever it missed meanwhile is unknown.
   if (message.topic === 'resync') return [[]]
