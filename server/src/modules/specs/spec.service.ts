@@ -44,10 +44,17 @@ export async function queueDeliveryRun(
   trx: Transaction<Database>,
   taskId: string,
   specVersion: number,
+  now: Date,
 ): Promise<string> {
   const run = await trx
     .insertInto('runs')
-    .values({ task_id: taskId, kind: 'delivery', spec_version: specVersion, status: 'queued' })
+    .values({
+      task_id: taskId,
+      kind: 'delivery',
+      spec_version: specVersion,
+      status: 'queued',
+      queued_at: now,
+    })
     .returning('id')
     .executeTakeFirstOrThrow()
   await publish(trx, { topic: 'run.queued', runId: run.id })
@@ -92,7 +99,7 @@ export class SpecService {
       await moveTask(trx, spec.task_id, 'approve')
       const at = this.clock()
       await this.specs.approve(trx, spec.id, parsed.criteria, at)
-      const runId = await queueDeliveryRun(trx, spec.task_id, spec.version)
+      const runId = await queueDeliveryRun(trx, spec.task_id, spec.version, at)
       return { spec: toSpecView({ ...spec, status: 'approved', approved_at: at }), run_id: runId }
     })
   }

@@ -6,6 +6,7 @@ import type { TypeBoxTypeProvider } from '@fastify/type-provider-typebox'
 import type { Kysely } from 'kysely'
 import type { Config } from './config.js'
 import type { Database } from './db/schema.js'
+import { registerApprovals } from './modules/approvals/approval.routes.js'
 import { registerCosts } from './modules/costs/cost.routes.js'
 import { registerMcp } from './modules/mcp/mcp.routes.js'
 import { registerProjects } from './modules/projects/project.routes.js'
@@ -94,6 +95,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerRuns(app)
   registerPrFiles(app)
   registerCosts(app)
+  registerApprovals(app)
   registerStream(app)
 
   await registerSpa(app)
