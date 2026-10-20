@@ -101,7 +101,8 @@ export async function openApproval(
     .where('status', '=', 'open')
     .forUpdate()
     .executeTakeFirst()
-  if (waiting !== undefined) throw new ConflictError('This run is already waiting for an answer')
+  if (waiting !== undefined)
+    throw new ConflictError('This run is already waiting for an answer', { reason: 'waiting' })
   const phase = await trx
     .selectFrom('phases')
     .select(['name', 'attempt', 'session_id', 'status'])
@@ -109,7 +110,8 @@ export async function openApproval(
     .where('run_id', '=', request.runId)
     .forUpdate()
     .executeTakeFirst()
-  if (phase?.status !== 'running') throw new ConflictError('No phase of this run is running')
+  if (phase?.status !== 'running')
+    throw new ConflictError('No phase of this run is running', { reason: 'no_phase' })
 
   const { id } = await trx
     .insertInto('approval_requests')

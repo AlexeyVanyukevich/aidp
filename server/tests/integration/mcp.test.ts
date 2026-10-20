@@ -86,13 +86,14 @@ describe('the board MCP server', () => {
     expect(response.status).toBe(401)
   })
 
-  it('offers the five tools', async () => {
+  it('offers the six tools', async () => {
     const { client } = await session()
     const { tools } = await client.listTools()
     expect(tools.map((t) => t.name).sort()).toEqual([
       'get_spec',
       'get_task',
       'log_step',
+      'request_approval',
       'save_plan',
       'save_report',
     ])
@@ -162,5 +163,101 @@ describe('the board MCP server', () => {
       agent: 'planner',
       payload: { declared: true, summary: 'Read the retry module', confidence: 'medium' },
     })
+  })
+})
+
+describe('request_approval', () => {
+  const ask = {
+    question: 'Which colour should the button be?',
+    options: [
+      { id: 'a', label: 'Red' },
+      { id: 'b', label: 'Blue', impact: 'Matches the logo' },
+    ],
+    recommendation: 'b',
+    context_md: 'The logo is blue.',
+  }
+  const PAUSED =
+    'Paused: the owner will answer on the board, and the answer will arrive as your next message. End your turn now.'
+
+  it('pauses the run on the agent’s question and tells it to stop', async () => {
+    const { client, taskId, runId, phaseId } = await session()
+    const result = await client.callTool({ name: 'request_approval', arguments: ask })
+    expect(result.isError).toBeFalsy()
+    expect(text(result)).toBe(PAUSED)
+    const approval = await getTestDb()
+      .selectFrom('approval_requests')
+      .select(['kind', 'phase_id', 'question', 'options', 'recommendation', 'status'])
+      .where('run_id', '=', runId)
+      .executeTakeFirstOrThrow()
+    expect(approval).toEqual({
+      kind: 'question',
+      phase_id: phaseId,
+      question: ask.question,
+      options: ask.options,
+      recommendation: 'b',
+      status: 'open',
+    })
+    const task = await getTestDb()
+      .selectFrom('tasks')
+      .select('state')
+      .where('id', '=', taskId)
+      .executeTakeFirstOrThrow()
+    expect(task.state).toBe('needs_approval')
+  })
+
+  it('gives an out-of-plan request the server’s options', async () => {
+    const { client, runId } = await session()
+    const result = await client.callTool({
+      name: 'request_approval',
+      arguments: {
+        kind: 'out_of_plan',
+        question: 'The fix needs the shared HTTP client.',
+        files: ['src/http.ts'],
+        options: [{ id: 'x', label: 'Let me' }],
+      },
+    })
+    expect(text(result)).toBe(PAUSED)
+    const approval = await getTestDb()
+      .selectFrom('approval_requests')
+      .select(['options', 'files'])
+      .where('run_id', '=', runId)
+      .executeTakeFirstOrThrow()
+    expect(approval).toEqual({
+      options: [
+        { id: 'allow', label: 'Allow the change' },
+        { id: 'refuse', label: 'Keep to the plan' },
+      ],
+      files: ['src/http.ts'],
+    })
+  })
+
+  it.each([
+    ['a recommendation naming no option', { ...ask, recommendation: 'z' }, /recommendation/],
+    ['an out-of-plan request without files', { kind: 'out_of_plan', question: 'Can I?' }, /files/],
+  ])('refuses %s, naming what is wrong', async (_name, args, finding) => {
+    const { client } = await session()
+    const result = await client.callTool({ name: 'request_approval', arguments: args })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toMatch(finding)
+  })
+
+  it('refuses a second question while the first waits, telling the agent to stop', async () => {
+    const { client } = await session()
+    await client.callTool({ name: 'request_approval', arguments: ask })
+    const again = await client.callTool({ name: 'request_approval', arguments: ask })
+    expect(again.isError).toBe(true)
+    expect(text(again)).toBe('This run is already waiting for an answer. End your turn now.')
+  })
+
+  it('refuses a question when no phase of the run is running', async () => {
+    const { client, phaseId } = await session()
+    await getTestDb()
+      .updateTable('phases')
+      .set({ status: 'succeeded' })
+      .where('id', '=', phaseId)
+      .execute()
+    const result = await client.callTool({ name: 'request_approval', arguments: ask })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toBe('No phase of this run is running; nothing was asked.')
   })
 })
