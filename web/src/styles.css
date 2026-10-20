@@ -13,6 +13,10 @@ body {
   font-weight: 700;
   color: var(--zl-ink);
 }
+.questions-waiting {
+  margin: 0 0 0 auto;
+  color: var(--zl-ink-soft);
+}
 .page {
   padding: var(--zl-space-5);
   max-inline-size: 60rem;

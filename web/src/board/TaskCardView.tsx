@@ -37,6 +37,11 @@ export function TaskCardView({
     >
       <span className="card-key">{card.key}</span> <span className="card-title">{card.title}</span>{' '}
       <span className="card-meta">
+        {card.question_waiting && (
+          <>
+            <Badge tone="warning">Question waiting</Badge>{' '}
+          </>
+        )}
         {card.state === 'running' && card.phase !== null && (
           <>
             <Badge tone="accent">

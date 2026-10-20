@@ -5,7 +5,14 @@ describe('keysFor', () => {
   it.each([
     [
       { topic: 'task.updated', taskId: 't' },
-      [['board'], ['task', 't'], ['specs', 't'], ['runs', 't']],
+      [
+        ['board'],
+        ['task', 't'],
+        ['specs', 't'],
+        ['runs', 't'],
+        ['approvals', 't'],
+        ['approvals', 'open'],
+      ],
     ],
     [
       { topic: 'run.event', runId: 'r', taskId: 't' },
