@@ -17,6 +17,9 @@ describe('loadRunnerConfig', () => {
       testTimeoutMs: 900_000,
       claimWaitMs: 30_000,
       heartbeatMs: 30_000,
+      pauseGraceMs: 60_000,
+      stopGraceMs: 10_000,
+      markerPollMs: 500,
     })
   })
 

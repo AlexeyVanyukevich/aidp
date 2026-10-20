@@ -151,6 +151,9 @@ function harness(script: Script) {
       testTimeoutMs: 1000,
       claimWaitMs: 1,
       heartbeatMs: 1000,
+      pauseGraceMs: 1000,
+      stopGraceMs: 1000,
+      markerPollMs: 50,
     },
     signal: new AbortController().signal,
   }

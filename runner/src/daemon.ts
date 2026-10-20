@@ -37,7 +37,7 @@ export class Daemon {
     const heartbeat = setInterval(() => {
       this.api
         .heartbeat(this.config.runnerId, [work.run.id])
-        .then((cancel) => {
+        .then(({ cancel }) => {
           if (cancel.includes(work.run.id)) controller.abort()
         })
         .catch(() => undefined)
