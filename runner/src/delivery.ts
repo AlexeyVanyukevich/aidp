@@ -483,11 +483,16 @@ export async function carryOut(
   }
 }
 
-/** A run cancelled while paused or blocked: its worktree goes; the board has already ended it. */
+/**
+ * A run cancelled while paused or blocked: its worktree goes; the board has already ended it.
+ * The path is the runner's own convention, since the board learns a worktree's path only from a
+ * run's end.
+ */
 export async function cleanUp(
   work: Extract<Work, { kind: 'cleanup' }>,
-  deps: Pick<DeliveryDeps, 'git'>,
+  deps: Pick<DeliveryDeps, 'git' | 'config'>,
 ): Promise<void> {
-  if (work.run.worktree_path === null) return
-  await deps.git.removeWorktree(work.run.repo_path, work.run.worktree_path).catch(() => undefined)
+  const worktree = work.run.worktree_path ?? join(deps.config.home, 'worktrees', work.run.id)
+  if (!existsSync(worktree)) return
+  await deps.git.removeWorktree(work.run.repo_path, worktree).catch(() => undefined)
 }

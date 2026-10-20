@@ -43,7 +43,7 @@ export class Daemon {
     const work = await this.api.claim(this.config.runnerId, this.config.claimWaitMs)
     if (work === null) return false
     if (work.kind === 'cleanup') {
-      await cleanUp(work, { git: this.git })
+      await cleanUp(work, { git: this.git, config: this.config })
       return 'cleaned'
     }
     const runId = work.run.id
