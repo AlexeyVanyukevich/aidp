@@ -1,5 +1,8 @@
 import type {
+  ApprovalAnswer,
+  ApprovalView,
   EventView,
+  OpenApproval,
   PrFile,
   ProjectView,
   RunView,
@@ -62,7 +65,7 @@ export const api = {
     id: string,
     patch: { title?: string; description_md?: string; position?: number; state?: 'done' },
   ) => request<TaskView>('PATCH', `/api/tasks/${id}`, patch),
-  action: (id: string, action: 'cancel' | 'rerun') =>
+  action: (id: string, action: 'cancel' | 'rerun' | 'resume') =>
     request<TaskView>('POST', `/api/tasks/${id}/actions/${action}`),
   specs: (taskId: string) => request<SpecView[]>('GET', `/api/tasks/${taskId}/specs`),
   saveSpec: (taskId: string, body_md: string) =>
@@ -70,6 +73,10 @@ export const api = {
   approve: (specId: string) =>
     request<{ spec: SpecView; run_id: string }>('POST', `/api/specs/${specId}/approve`),
   runs: (taskId: string) => request<RunView[]>('GET', `/api/tasks/${taskId}/runs`),
+  approvals: (taskId: string) => request<ApprovalView[]>('GET', `/api/tasks/${taskId}/approvals`),
+  openApprovals: () => request<OpenApproval[]>('GET', '/api/approvals?status=open'),
+  answer: (approvalId: string, body: ApprovalAnswer) =>
+    request<ApprovalView>('POST', `/api/approvals/${approvalId}/answer`, body),
   costs: (taskId: string) => request<CostSummary>('GET', `/api/tasks/${taskId}/costs`),
   /** `files` is null when GitHub did not list them. */
   prFiles: (runId: string) =>

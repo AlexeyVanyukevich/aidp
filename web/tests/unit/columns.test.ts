@@ -21,6 +21,7 @@ const card = (id: string, state: TaskCard['state'], position: number): TaskCard 
   cost_usd: 0,
   cost_complete: true,
   pr_url: null,
+  question_waiting: false,
 })
 
 describe('columns', () => {

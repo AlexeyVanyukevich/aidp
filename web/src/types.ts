@@ -31,6 +31,7 @@ export interface TaskCard {
   cost_usd: number
   cost_complete: boolean
   pr_url: string | null
+  question_waiting: boolean
 }
 export interface TaskView {
   id: string
@@ -42,6 +43,48 @@ export interface TaskView {
   position: number
   budget_usd: number | null
   project: { key: string; name: string; github_repo: string }
+  /** The question the card waits on: open, or expired and blocking it. */
+  approval: { id: string; kind: ApprovalKind; status: ApprovalStatus } | null
+  /** Why a Blocked card is blocked; null in any other state. */
+  block: Block | null
+}
+export type ApprovalKind = 'question' | 'out_of_plan' | 'plan'
+export type ApprovalStatus = 'open' | 'answered' | 'expired' | 'withdrawn'
+export type Stage = 'prepare' | 'plan' | 'build' | 'tests' | 'verify' | 'push' | 'pr'
+export interface Block {
+  cause: 'runner_lost' | 'step_failed' | 'runner_stopped' | 'approval_expired'
+  stage: Stage | null
+  command?: string
+  output?: string
+}
+export interface ApprovalOption {
+  id: string
+  label: string
+  impact?: string
+}
+export interface ApprovalAnswer {
+  option_id?: string
+  text?: string
+}
+export interface ApprovalView {
+  id: string
+  run_id: string
+  phase_id: string | null
+  kind: ApprovalKind
+  question: string
+  options: ApprovalOption[]
+  recommendation: string | null
+  context_md: string | null
+  files: string[] | null
+  status: ApprovalStatus
+  answer: ApprovalAnswer | null
+  created_at: string
+  answered_at: string | null
+}
+export interface OpenApproval extends ApprovalView {
+  task_id: string
+  task_key: string
+  project_key: string
 }
 export interface LintFinding {
   code: string
@@ -72,6 +115,7 @@ export interface PhaseView {
   summary_md: string | null
   started_at: string
   ended_at: string | null
+  interrupted: boolean
 }
 export interface ArtifactView {
   id: string
@@ -138,6 +182,8 @@ export interface CostSummary {
     reportedUsd: number | null
     drift: number | null
     flagged: boolean
+    interrupted: boolean
+    cut: boolean
   })[]
   byAgent: (CostLine & { agent: string })[]
   byModel: (CostLine & { model: string })[]
