@@ -99,3 +99,47 @@ td {
 .failure {
   margin: 0;
 }
+
+/* The Approvals tab: the question it waits on, its options, and those answered before. */
+.approvals-tab,
+.approval,
+.answer {
+  display: grid;
+  gap: var(--zl-space-3);
+}
+.approval h3,
+.approvals-tab h3 {
+  margin: 0;
+  font-size: var(--zl-text);
+}
+.approval .question {
+  margin: 0;
+  font-weight: 600;
+}
+.approval .context {
+  white-space: pre-wrap;
+  color: var(--zl-ink-soft);
+}
+.options {
+  display: grid;
+  gap: var(--zl-space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+}
+.option .impact {
+  margin: var(--zl-space-1) 0 0;
+  color: var(--zl-ink-soft);
+  font-size: var(--zl-text-sm);
+}
+.answer {
+  justify-items: start;
+}
+.answered {
+  margin: 0;
+  padding-inline-start: var(--zl-space-5);
+}
+.answered .answer-given {
+  color: var(--zl-ink-soft);
+}

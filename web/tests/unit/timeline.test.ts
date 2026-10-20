@@ -12,6 +12,7 @@ const phase = (id: string, name: string, attempt: number, started: string): Phas
   summary_md: null,
   started_at: started,
   ended_at: null,
+  interrupted: false,
 })
 const event = (id: string, phaseId: string | null, ts: string, input = 0): EventView => ({
   id,
