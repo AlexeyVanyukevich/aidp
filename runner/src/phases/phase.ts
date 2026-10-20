@@ -1,13 +1,9 @@
-import { spawn } from 'node:child_process'
-import { appendFileSync, readFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { join } from 'node:path'
-import { createInterface } from 'node:readline'
 import type { BoardApi } from '../api.js'
-import { EventSink, newEvent } from '../sink.js'
-import { StreamNormalizer } from '../stream/normalize.js'
+import type { SessionTotals } from '../contract.js'
+import { newEvent, type EventSink } from '../sink.js'
 import { PHASES } from './agents.js'
-import { buildClaudeArgs } from './claude-args.js'
+import { runProcess, type ProcessResult, type ProcessTiming, type Stopped } from './process.js'
 
 export interface PhaseInput {
   runId: string
@@ -25,8 +21,28 @@ export interface PhaseDeps {
   claudeBin: string
   boardUrl: string
   signal?: AbortSignal
+  shutdown?: AbortSignal
+  pauseRequested?: () => boolean
+  timing?: ProcessTiming
   /** The sink reads the token through this, so buffered events replay with a live one. */
   setToken(token: string): void
+}
+
+/**
+ * One phase as the runner keeps it across its processes: one Claude Code session (slice 2
+ * spec, §7), its last reported totals, the cost credited to it so far, and whether a process of
+ * it was stopped. A checkpoint carries it from one runner to the next.
+ */
+export interface PhaseRecord {
+  runId: string
+  phaseId: string
+  phase: 'plan' | 'build' | 'verify'
+  attempt: number
+  sessionId: string
+  baseline: Record<string, SessionTotals>
+  reported: Record<string, number>
+  interrupted: boolean
+  summary: string
 }
 
 export interface PhaseResult {
@@ -37,123 +53,167 @@ export interface PhaseResult {
   cancelled: boolean
 }
 
-const STDERR_LINES = 50
+/** What one process of a phase came to. */
+export interface StepResult {
+  record: PhaseRecord
+  ok: boolean
+  stopped: Stopped
+  /** `claude --resume` found no session (spec §3, facts 10 and 12). */
+  sessionGone: boolean
+}
 
-export async function runPhase(input: PhaseInput, deps: PhaseDeps): Promise<PhaseResult> {
-  const config = PHASES[input.phase]
-  const phaseId = randomUUID()
-  const sessionId = randomUUID()
-  const label = `${input.phase}-${input.attempt}`
-  const base = { runId: input.runId, phaseId, agent: config.agent }
+const DEFAULT_TIMING: ProcessTiming = {
+  pauseGraceMs: 60_000,
+  stopGraceMs: 10_000,
+  markerPollMs: 500,
+}
 
-  const token = await deps.api.issueToken(input.runId)
+async function step(
+  record: PhaseRecord,
+  prompt: string,
+  resume: boolean,
+  input: Pick<PhaseInput, 'worktree' | 'runDir' | 'budgetUsd'>,
+  deps: PhaseDeps,
+): Promise<StepResult> {
+  const token = await deps.api.issueToken(record.runId)
   deps.setToken(token)
+  const result: ProcessResult = await runProcess(
+    {
+      runId: record.runId,
+      phaseId: record.phaseId,
+      phase: record.phase,
+      attempt: record.attempt,
+      prompt,
+      sessionId: record.sessionId,
+      resume,
+      worktree: input.worktree,
+      runDir: input.runDir,
+      budgetUsd: input.budgetUsd,
+      baseline: record.baseline,
+      token,
+    },
+    {
+      sink: deps.sink,
+      claudeBin: deps.claudeBin,
+      boardUrl: deps.boardUrl,
+      ...(deps.signal === undefined ? {} : { signal: deps.signal }),
+      ...(deps.shutdown === undefined ? {} : { shutdown: deps.shutdown }),
+      ...(deps.pauseRequested === undefined ? {} : { pauseRequested: deps.pauseRequested }),
+      ...(deps.timing ?? DEFAULT_TIMING),
+    },
+  )
+  await deps.api.retire(token).catch(() => undefined)
+  const { normalizer } = result
+  const reported = { ...record.reported }
+  for (const [model, usd] of Object.entries(normalizer.reportedCost()))
+    reported[model] = (reported[model] ?? 0) + usd
+  const next: PhaseRecord = {
+    ...record,
+    sessionId: normalizer.sessionId ?? record.sessionId,
+    baseline: normalizer.totals() ?? record.baseline,
+    reported,
+    interrupted: record.interrupted || result.interrupted,
+    summary: normalizer.result?.text ?? record.summary,
+  }
+  const ok = result.exitCode === 0 && normalizer.result !== null && !normalizer.result.isError
+  return { record: next, ok, stopped: result.stopped, sessionGone: normalizer.sessionGone }
+}
+
+/** Starts a phase on a new session: its `phase_start`, then its first process. */
+export async function startPhase(
+  input: PhaseInput,
+  deps: PhaseDeps,
+  ids: { phaseId?: string; sessionId?: string } = {},
+): Promise<StepResult> {
+  const config = PHASES[input.phase]
+  const record: PhaseRecord = {
+    runId: input.runId,
+    phaseId: ids.phaseId ?? randomUUID(),
+    phase: input.phase,
+    attempt: input.attempt,
+    sessionId: ids.sessionId ?? randomUUID(),
+    baseline: {},
+    reported: {},
+    interrupted: false,
+    summary: '',
+  }
+  // The token the start event travels with; the process gets its own.
+  deps.setToken(await deps.api.issueToken(input.runId))
   await deps.sink.send([
     newEvent(
-      { ...base, type: 'phase_start', model: config.model },
-      { payload: { name: input.phase, attempt: input.attempt, session_id: sessionId } },
+      {
+        runId: input.runId,
+        phaseId: record.phaseId,
+        agent: config.agent,
+        type: 'phase_start',
+        model: config.model,
+      },
+      { payload: { name: input.phase, attempt: input.attempt, session_id: record.sessionId } },
     ),
   ])
+  return step(record, input.handoff, false, input, deps)
+}
 
-  const normalizer = new StreamNormalizer({ runId: input.runId, phaseId, agent: config.agent })
-  const args = buildClaudeArgs({
-    prompt: input.handoff,
-    sessionId,
-    role: config.agent,
-    model: config.model,
-    effort: config.effort,
-    permissionMode: config.permissionMode,
-    tools: config.tools,
-    agentsJson: readFileSync(join(input.runDir, 'agents.json'), 'utf8'),
-    settingsPath: join(input.runDir, 'settings.json'),
-    mcpPath: join(input.runDir, 'mcp.json'),
-    budgetUsd: input.budgetUsd,
-  })
-  const child = spawn(deps.claudeBin, args, {
-    cwd: input.worktree,
-    env: {
-      ...process.env,
-      BOARD_URL: deps.boardUrl,
-      BOARD_RUN_TOKEN: token,
-      BOARD_RUN_ID: input.runId,
-      BOARD_PHASE_ID: phaseId,
-      BOARD_PHASE: input.phase,
-      BOARD_AGENT: config.agent,
-      BOARD_RUN_DIR: input.runDir,
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-  let cancelled = false
-  const onAbort = () => {
-    cancelled = true
-    child.kill('SIGTERM')
-  }
-  deps.signal?.addEventListener('abort', onAbort, { once: true })
-
-  const stderr: string[] = []
-  createInterface({ input: child.stderr }).on('line', (line) => {
-    appendFileSync(join(input.runDir, `${label}.stderr.log`), `${line}\n`)
-    stderr.push(line)
-    if (stderr.length > STDERR_LINES) stderr.shift()
-  })
-
-  // Lines are handled in order; a slow send never reorders two events.
-  let pending = Promise.resolve()
-  createInterface({ input: child.stdout }).on('line', (line) => {
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(line)
-    } catch {
-      appendFileSync(join(input.runDir, `${label}.stdout-noise.log`), `${line}\n`)
-      return
-    }
-    const events = normalizer.push(parsed)
-    if (events.length > 0) pending = pending.then(() => deps.sink.send(events))
-  })
-
-  const exitCode = await new Promise<number>((resolve) =>
-    child.on('close', (code) => resolve(code ?? 1)),
-  )
-  deps.signal?.removeEventListener('abort', onAbort)
-  await pending
-
-  const result = normalizer.result
-  const ok = !cancelled && exitCode === 0 && result !== null && !result.isError
-  const closing = [...normalizer.finish()]
-  if (!ok && !cancelled) {
-    closing.push(
-      newEvent(
-        { ...base, type: 'error' },
-        {
-          payload: {
-            exit_code: exitCode,
-            subtype: result?.subtype ?? null,
-            stderr_tail: stderr.join('\n'),
-          },
-        },
-      ),
-    )
-  }
-  closing.push(
+/** Resumes a phase's session with `message`, in the same phase row (spec §6). */
+export async function continuePhase(
+  record: PhaseRecord,
+  message: string,
+  input: Pick<PhaseInput, 'worktree' | 'runDir' | 'budgetUsd'>,
+  deps: PhaseDeps,
+): Promise<StepResult> {
+  const config = PHASES[record.phase]
+  deps.setToken(await deps.api.issueToken(record.runId))
+  await deps.sink.send([
     newEvent(
-      { ...base, type: 'phase_end' },
+      {
+        runId: record.runId,
+        phaseId: record.phaseId,
+        agent: config.agent,
+        type: 'phase_start',
+        model: config.model,
+      },
       {
         payload: {
-          status: ok ? 'succeeded' : 'failed',
-          summary_md: result?.text ?? '',
-          reported_cost: normalizer.reportedCost(),
-          session_id: normalizer.sessionId ?? sessionId,
+          name: record.phase,
+          attempt: record.attempt,
+          session_id: record.sessionId,
+          resumed: true,
         },
       },
     ),
-  )
-  await deps.sink.send(closing)
-  await deps.api.retire(token).catch(() => undefined)
+  ])
+  return step(record, message, true, input, deps)
+}
+
+/** Ends a phase: its cost as the sum of its processes' shares, and whether one was stopped. */
+export async function endPhase(record: PhaseRecord, ok: boolean, deps: PhaseDeps): Promise<void> {
+  const config = PHASES[record.phase]
+  await deps.sink.send([
+    newEvent(
+      { runId: record.runId, phaseId: record.phaseId, agent: config.agent, type: 'phase_end' },
+      {
+        payload: {
+          status: ok ? 'succeeded' : 'failed',
+          summary_md: record.summary,
+          reported_cost: record.reported,
+          session_id: record.sessionId,
+          ...(record.interrupted ? { interrupted: true } : {}),
+        },
+      },
+    ),
+  ])
+}
+
+/** Slice 1's whole phase in one call: start it, let its one process run, end it. */
+export async function runPhase(input: PhaseInput, deps: PhaseDeps): Promise<PhaseResult> {
+  const { record, ok, stopped } = await startPhase(input, deps)
+  const cancelled = stopped === 'cancelled'
+  await endPhase(record, ok && !cancelled, deps)
   return {
-    phaseId,
-    ok,
-    summary: result?.text ?? '',
-    sessionId: normalizer.sessionId ?? sessionId,
+    phaseId: record.phaseId,
+    ok: ok && !cancelled,
+    summary: record.summary,
+    sessionId: record.sessionId,
     cancelled,
   }
 }

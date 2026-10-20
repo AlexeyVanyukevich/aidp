@@ -10,14 +10,20 @@ export interface ClaudeArgsInput {
   settingsPath: string
   mcpPath: string
   budgetUsd: number | null
+  /** Continue `sessionId` with `prompt` as its next message, rather than start it. */
+  resume?: boolean
 }
 
-/** The spec's §6 call. `--setting-sources project` keeps the owner's plugins and hooks out. */
+/**
+ * The spec's §6 call. `--setting-sources project` keeps the owner's plugins and hooks out. A
+ * resume repeats every flag: the role, its tools and its model survive it only so (slice 2
+ * spec, §3, fact 4).
+ */
 export function buildClaudeArgs(input: ClaudeArgsInput): string[] {
   return [
     '-p',
     input.prompt,
-    '--session-id',
+    input.resume === true ? '--resume' : '--session-id',
     input.sessionId,
     '--agents',
     input.agentsJson,
