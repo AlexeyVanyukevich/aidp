@@ -25,11 +25,15 @@ export function decide(
   input: { tool_name: string; tool_input: Record<string, unknown> },
   ctx: {
     phase: string
-    planFiles: string[] | null
+    /** The plan's files and those the owner allowed since; null before there is a plan. */
+    allowedFiles: string[] | null
+    /** The board paused the run: nothing the agent does may change anything (spec §6). */
+    paused: boolean
     cwd: string
     exists: (path: string) => boolean
   },
 ): Verdict {
+  if (ctx.paused) return deny('The run is paused; end your turn.')
   if (input.tool_name === 'Bash') {
     const command = typeof input.tool_input.command === 'string' ? input.tool_input.command : ''
     for (const [pattern, reason] of COMMAND_RULES) if (pattern.test(command)) return deny(reason)
@@ -54,13 +58,14 @@ export function decide(
       'a new migration needs a person; finish without it and say in your report that one is needed',
     )
   }
+  const relativePath = inside.split(sep).join('/')
   if (
     ctx.phase === 'build' &&
-    ctx.planFiles !== null &&
-    !ctx.planFiles.includes(inside.split(sep).join('/'))
+    ctx.allowedFiles !== null &&
+    !ctx.allowedFiles.includes(relativePath)
   ) {
     return deny(
-      `${inside} is not in the plan. Do not change it; finish and say in your report which file the work needs and why.`,
+      `\`${relativePath}\` is not in the plan. If the work needs it, call request_approval with kind out_of_plan, the files, and why. Then end your turn.`,
     )
   }
   return { allow: true }

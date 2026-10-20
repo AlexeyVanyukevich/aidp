@@ -1,8 +1,9 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { BoardApi } from './api.js'
 import { decide, denyOutput } from './hooks/guard.js'
-import { hookToEvent } from './hooks/hook-event.js'
+import { hookToEvent, pausedBy } from './hooks/hook-event.js'
+import { PAUSED_MARKER } from './phases/run-dir.js'
 import { EventSink } from './sink.js'
 
 function env(name: string): string {
@@ -28,6 +29,8 @@ async function event(name: string): Promise<void> {
     throw new Error(`unknown hook ${name}`)
   const input = await readStdin()
   const runDir = env('BOARD_RUN_DIR')
+  // Before the event is sent: the marker must be down even if the board cannot be reached.
+  if (name === 'PostToolUse' && pausedBy(input)) writeFileSync(join(runDir, PAUSED_MARKER), '')
   const sink = new EventSink(
     new BoardApi(env('BOARD_URL'), ''),
     join(runDir, 'events.ndjson'),
@@ -48,7 +51,7 @@ async function event(name: string): Promise<void> {
 async function guard(): Promise<void> {
   const input = await readStdin()
   const runDir = env('BOARD_RUN_DIR')
-  const planPath = join(runDir, 'plan-files.json')
+  const allowedPath = join(runDir, 'allowed-files.json')
   const verdict = decide(
     {
       tool_name: typeof input.tool_name === 'string' ? input.tool_name : '',
@@ -59,9 +62,10 @@ async function guard(): Promise<void> {
     },
     {
       phase: env('BOARD_PHASE'),
-      planFiles: existsSync(planPath)
-        ? (JSON.parse(readFileSync(planPath, 'utf8')) as string[])
+      allowedFiles: existsSync(allowedPath)
+        ? (JSON.parse(readFileSync(allowedPath, 'utf8')) as string[])
         : null,
+      paused: existsSync(join(runDir, PAUSED_MARKER)),
       cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(),
       exists: existsSync,
     },

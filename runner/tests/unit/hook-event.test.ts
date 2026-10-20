@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { hookToEvent } from '../../src/hooks/hook-event.js'
+import { hookToEvent, pausedBy } from '../../src/hooks/hook-event.js'
 
 const ctx = { runId: 'r', phaseId: 'p', agent: 'builder' }
 
@@ -67,5 +67,36 @@ describe('hookToEvent', () => {
       ctx,
     )
     expect(JSON.stringify(event.payload).length).toBeLessThan(4_200)
+  })
+})
+
+// The hook's input as Claude Code 2.1.287 sent it for an MCP tool (slice 2 spec, §3, fact 6).
+describe('pausedBy', () => {
+  const PAUSED =
+    'Paused: the owner will answer on the board, and the answer will arrive as your next message. End your turn now.'
+  const call = (tool_name: string, tool_response: unknown) => ({
+    hook_event_name: 'PostToolUse',
+    tool_name,
+    tool_input: { question: 'Which?' },
+    tool_response,
+  })
+  it.each([
+    [
+      'the board’s answer to request_approval',
+      call('mcp__board__request_approval', [{ type: 'text', text: PAUSED }]),
+      true,
+    ],
+    [
+      'a refusal of request_approval',
+      call('mcp__board__request_approval', [
+        { type: 'text', text: 'This run is already waiting for an answer. End your turn now.' },
+      ]),
+      false,
+    ],
+    ['an error response', call('mcp__board__request_approval', { is_error: true }), false],
+    ['another board tool', call('mcp__board__log_step', [{ type: 'text', text: PAUSED }]), false],
+    ['a built-in tool', call('Read', 'Paused: no'), false],
+  ])('%s', (_name, input, paused) => {
+    expect(pausedBy(input)).toBe(paused)
   })
 })

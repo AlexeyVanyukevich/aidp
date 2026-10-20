@@ -63,3 +63,22 @@ export function hookToEvent(
     { payload: { agent_id: input.agent_id ?? null } },
   )
 }
+
+/**
+ * True when this hook input is the board pausing the run: a `request_approval` call that the
+ * board answered with its pause (spec §5). The event hook then marks the run directory, and the
+ * guard refuses every tool after it.
+ */
+export function pausedBy(input: Record<string, unknown>): boolean {
+  if (input.tool_name !== 'mcp__board__request_approval') return false
+  const response = input.tool_response
+  if (!Array.isArray(response)) return false
+  return response.some(
+    (block: unknown) =>
+      typeof block === 'object' &&
+      block !== null &&
+      (block as { type?: unknown }).type === 'text' &&
+      typeof (block as { text?: unknown }).text === 'string' &&
+      (block as { text: string }).text.startsWith('Paused:'),
+  )
+}

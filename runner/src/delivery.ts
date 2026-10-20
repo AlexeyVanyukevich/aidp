@@ -5,7 +5,7 @@ import type { RunnerConfig } from './config.js'
 import { GitError, type Git } from './git.js'
 import { buildHandoff, type HandoffInput } from './phases/handoff.js'
 import type { PhaseDeps, PhaseInput, PhaseResult } from './phases/phase.js'
-import { prepareRunDir, writePlanFiles } from './phases/run-dir.js'
+import { prepareRunDir, writeAllowedFiles } from './phases/run-dir.js'
 import { newEvent, type EventSink } from './sink.js'
 import type { runTestCommand } from './test-command.js'
 
@@ -107,7 +107,7 @@ export async function runDelivery(work: StartWork, deps: DeliveryDeps): Promise<
     const planArtifact = await artifact('plan', planned.phaseId)
     if (planArtifact === undefined) throw new End('failed', 'the planner saved no plan')
     const plan = planArtifact.data as PlanData
-    writePlanFiles(runDir, [...new Set(plan.steps.flatMap((step) => step.files))])
+    writeAllowedFiles(runDir, [...new Set(plan.steps.flatMap((step) => step.files))])
 
     let failingReport: string | undefined
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {

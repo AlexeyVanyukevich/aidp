@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -43,7 +43,7 @@ describe('board-cli as a hook', () => {
   })
 
   it('denies an edit outside the plan through stdout', () => {
-    writeFileSync(join(runDir, 'plan-files.json'), JSON.stringify(['src/retry.ts']))
+    writeFileSync(join(runDir, 'allowed-files.json'), JSON.stringify(['src/retry.ts']))
     const result = call(
       ['guard'],
       { cwd: runDir, tool_name: 'Edit', tool_input: { file_path: join(runDir, 'src/other.ts') } },
@@ -51,6 +51,36 @@ describe('board-cli as a hook', () => {
     )
     expect(result.status).toBe(0)
     expect(JSON.parse(result.stdout).hookSpecificOutput.permissionDecision).toBe('deny')
+  })
+
+  it('marks the run paused when the board pauses it, and then refuses every tool', () => {
+    expect(existsSync(join(runDir, 'paused'))).toBe(false)
+    const after = call(
+      ['event', 'PostToolUse'],
+      {
+        tool_name: 'mcp__board__request_approval',
+        tool_input: { question: 'Which?' },
+        tool_response: [
+          {
+            type: 'text',
+            text: 'Paused: the owner will answer on the board, and the answer will arrive as your next message. End your turn now.',
+          },
+        ],
+      },
+      env,
+    )
+    expect(after.status).toBe(0)
+    expect(existsSync(join(runDir, 'paused'))).toBe(true)
+
+    const refused = call(
+      ['guard'],
+      { cwd: runDir, tool_name: 'Read', tool_input: { file_path: join(runDir, 'x') } },
+      env,
+    )
+    expect(JSON.parse(refused.stdout).hookSpecificOutput.permissionDecisionReason).toBe(
+      'The run is paused; end your turn.',
+    )
+    rmSync(join(runDir, 'paused'))
   })
 
   it('stays silent to allow', () => {
