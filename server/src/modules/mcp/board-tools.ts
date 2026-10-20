@@ -3,6 +3,9 @@ import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { Database } from '../../db/schema.js'
 import { publish } from '../../shared/bus.js'
+import { AppError, ConflictError } from '../../shared/errors.js'
+import type { Finding } from '../approvals/approval-rules.js'
+import { openApproval } from '../approvals/approval.service.js'
 import { parseSpec } from '../specs/spec-parser.js'
 import {
   checkPlan,
@@ -84,7 +87,89 @@ const findingsText = (title: string, findings: { code: string; id: string; step?
     ...findings.map((f) => `- ${f.code} ${f.id}${f.step === undefined ? '' : ` (step ${f.step})`}`),
   ].join('\n')
 
+/** What the agent reads once its question is on the board (spec §5). */
+export const PAUSED_REPLY =
+  'Paused: the owner will answer on the board, and the answer will arrive as your next message. End your turn now.'
+
+/** Why a question was not asked, worded for the agent that asked it. */
+function refusal(error: unknown) {
+  if (!(error instanceof AppError)) throw error
+  const reason = error.details?.reason
+  if (reason === 'waiting')
+    return reply('This run is already waiting for an answer. End your turn now.', true)
+  if (reason === 'no_phase')
+    return reply('No phase of this run is running; nothing was asked.', true)
+  const findings = (error.details?.findings ?? []) as Finding[]
+  return reply(
+    [
+      'The question was not asked:',
+      ...findings.map((f) => `- ${f.field}: ${f.code.replaceAll('_', ' ')}`),
+    ].join('\n'),
+    true,
+  )
+}
+
 export function registerBoardTools(server: McpServer, ctx: ToolContext): void {
+  server.registerTool(
+    'request_approval',
+    {
+      description:
+        'Ask the owner a question you cannot settle yourself — an ambiguity, two approaches with real trade-offs, low confidence — or, with kind out_of_plan, permission to change files the plan does not list. Offer up to five options, recommend one if you can, and give the context the owner needs. The run pauses: end your turn when this answers, and the owner’s answer arrives as your next message.',
+      inputSchema: {
+        kind: z.enum(['question', 'out_of_plan']).optional(),
+        question: z.string(),
+        options: z
+          .array(z.object({ id: z.string(), label: z.string(), impact: z.string().optional() }))
+          .optional(),
+        recommendation: z.string().optional(),
+        context_md: z.string().optional(),
+        files: z.array(z.string()).optional(),
+      },
+    },
+    async (input) => {
+      const phase = await runningPhase(ctx)
+      if (phase === undefined) {
+        // Asking again after the first question paused the phase: the useful answer is to stop.
+        const waiting = await ctx.db
+          .selectFrom('approval_requests')
+          .select('id')
+          .where('run_id', '=', ctx.runId)
+          .where('status', '=', 'open')
+          .executeTakeFirst()
+        return refusal(
+          new ConflictError('', { reason: waiting === undefined ? 'no_phase' : 'waiting' }),
+        )
+      }
+      try {
+        await ctx.db.transaction().execute((trx) =>
+          openApproval(
+            trx,
+            {
+              runId: ctx.runId,
+              taskId: ctx.taskId,
+              phaseId: phase.id,
+              kind: input.kind ?? 'question',
+              question: input.question,
+              options: (input.options ?? []).map(({ id, label, impact }) => ({
+                id,
+                label,
+                ...(impact === undefined ? {} : { impact }),
+              })),
+              recommendation: input.recommendation ?? null,
+              context_md: input.context_md ?? null,
+              files: input.files ?? null,
+            },
+            ctx.clock(),
+            { recordEvent: true },
+          ),
+        )
+      } catch (error) {
+        return refusal(error)
+      }
+      return reply(PAUSED_REPLY)
+    },
+  )
+
   server.registerTool(
     'get_task',
     { description: 'Read the task this run carries out.' },
