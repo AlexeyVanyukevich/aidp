@@ -5,21 +5,10 @@ import { api } from '../api'
 import { Loaded } from '../Loaded'
 import type { EventView, RunView, TaskView } from '../types'
 import { formatDuration, formatTokens } from './format'
-import { timelineModel, type Band } from './timeline'
+import { stepLabel, timelineModel, type Band } from './timeline'
 
 const tokensOf = (event: EventView) =>
   event.usage.input + event.usage.output + event.usage.cache_read + event.usage.cache_write
-
-/** A step's line, in words: a failure says so rather than only turning red. */
-function stepLabel(event: EventView): string {
-  const base =
-    event.type === 'tool_call'
-      ? `${event.tool ?? 'tool'} ${event.target ?? ''}`.trim()
-      : event.type === 'message'
-        ? `${event.agent ?? ''} message${event.payload.declared ? `: ${String(event.payload.summary)}` : ''}`.trim()
-        : `${event.type.replaceAll('_', ' ')}${event.agent ? ` · ${event.agent}` : ''}`
-  return event.status === 'error' ? `${base} · failed` : base
-}
 
 function Step({ event }: { event: EventView }) {
   const tokens = tokensOf(event)
@@ -56,9 +45,15 @@ function BandView({ band }: { band: Band }) {
       </h3>
       {band.phase.summary_md && <p className="summary">{band.phase.summary_md}</p>}
       <ol>
-        {band.steps.map((e) => (
-          <Step key={e.id} event={e} />
-        ))}
+        {band.entries.map((e) =>
+          'kind' in e ? (
+            <li key={e.id} className="step step-paused">
+              Paused for {formatDuration(e.ms)}
+            </li>
+          ) : (
+            <Step key={e.id} event={e} />
+          ),
+        )}
       </ol>
     </section>
   )
