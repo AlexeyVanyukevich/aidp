@@ -1,0 +1,43 @@
+import type { Block, Stage, TaskState, TaskView } from '../types'
+
+const DURING: Record<Stage, string> = {
+  prepare: 'during preparation',
+  plan: 'during Plan',
+  build: 'during Build',
+  tests: 'during the tests',
+  verify: 'during Verify',
+  push: 'during the push',
+  pr: 'while opening the pull request',
+}
+
+/** Why a card is blocked, in the words of the slice 2 spec's §8. */
+export function blockText(block: Block): string {
+  if (block.cause === 'runner_lost') return 'The runner stopped sending heartbeats.'
+  if (block.cause === 'step_failed')
+    return `This step failed: ${block.command ?? 'a git or gh command'}`
+  if (block.cause === 'runner_stopped')
+    return `The runner was stopped ${block.stage === null ? 'mid-run' : DURING[block.stage]}.`
+  return 'The question went unanswered for 48 hours. Answer it in Approvals.'
+}
+
+/** The state line's actions a card offers besides Move up and Move down. */
+export function actionsFor(
+  state: TaskState,
+  block: Block | null,
+): { markDone: boolean; resume: boolean; cancel: boolean; rerun: boolean } {
+  return {
+    markDone: state === 'review',
+    // An expired question is answered in Approvals, not resumed past (spec §2).
+    resume: state === 'blocked' && block?.cause !== 'approval_expired',
+    cancel: ['ready', 'running', 'needs_approval', 'blocked'].includes(state),
+    rerun: state === 'failed',
+  }
+}
+
+/** A card waiting on a question opens on it. */
+export function initialTab(task: Pick<TaskView, 'state' | 'block'>): string {
+  return task.state === 'needs_approval' ||
+    (task.state === 'blocked' && task.block?.cause === 'approval_expired')
+    ? 'approvals'
+    : 'spec'
+}
