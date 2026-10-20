@@ -60,10 +60,12 @@ export function Board() {
   })
   const create = useMutation({
     mutationFn: () => api.createTask(key, { title: title.trim() }),
+    // The refetch is not awaited: Add task must be free again by the time the add is announced,
+    // or the next Enter — through a busy button's cancelled click — is silently dropped.
     onSuccess: (task) => {
       setTitle('')
       setMessage(`${task.key} added to Backlog.`)
-      return refresh()
+      void refresh()
     },
     onError: () => setMessage('The task could not be added. Try again.'),
   })
