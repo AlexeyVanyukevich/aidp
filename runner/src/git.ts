@@ -78,6 +78,44 @@ export class Git {
     return { number: Number(match[1]), url }
   }
 
+  async head(dir: string): Promise<string> {
+    return (await this.run('git', ['-C', dir, 'rev-parse', 'HEAD'])).trim()
+  }
+
+  async currentBranch(dir: string): Promise<string> {
+    return (await this.run('git', ['-C', dir, 'rev-parse', '--abbrev-ref', 'HEAD'])).trim()
+  }
+
+  /** A run's own branch, so a resumed `prepare` can create it afresh. */
+  async deleteBranch(repo: string, branch: string): Promise<void> {
+    await this.run('git', ['-C', repo, 'branch', '-D', branch])
+  }
+
+  /** The open pull request for `branch`, if a run that stopped after `gh pr create` left one. */
+  async findPr(
+    dir: string,
+    pr: { githubRepo: string; branch: string },
+  ): Promise<{ number: number; url: string } | null> {
+    const out = await this.run(
+      this.ghBin,
+      [
+        'pr',
+        'list',
+        '--repo',
+        pr.githubRepo,
+        '--head',
+        pr.branch,
+        '--state',
+        'open',
+        '--json',
+        'number,url',
+      ],
+      { cwd: dir },
+    )
+    const [open] = JSON.parse(out) as { number: number; url: string }[]
+    return open ?? null
+  }
+
   async removeWorktree(repo: string, dir: string): Promise<void> {
     await this.run('git', ['-C', repo, 'worktree', 'remove', '--force', dir])
   }

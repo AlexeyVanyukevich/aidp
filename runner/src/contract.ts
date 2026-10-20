@@ -64,6 +64,8 @@ export interface Checkpoint {
     id: string
     baseline: Record<string, SessionTotals>
     reported: Record<string, number>
+    /** A process of the phase was stopped: kept here so the next runner reports it (§7). */
+    interrupted?: boolean
   } | null
   head: string | null
   plan_artifact_id: string | null
@@ -129,7 +131,13 @@ export interface ArtifactView {
 export interface RunView {
   id: string
   status: string
-  phases: { id: string; name: PhaseName; attempt: number; status: string }[]
+  phases: {
+    id: string
+    name: PhaseName
+    attempt: number
+    status: string
+    summary_md: string | null
+  }[]
   artifacts: ArtifactView[]
 }
 

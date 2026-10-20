@@ -89,6 +89,22 @@ export class BoardApi {
     return this.call<RunView>('GET', `/api/runs/${runId}`, undefined)
   }
 
+  /**
+   * Whether the board recorded a message in the phase: a session that is gone and held none was
+   * killed before it wrote one, and nothing is lost by starting it again (spec §6).
+   */
+  async phaseHasMessages(runId: string, phaseId: string): Promise<boolean> {
+    let after: string | null = null
+    do {
+      const query: string = after === null ? '' : `&after=${encodeURIComponent(after)}`
+      const page: { events: Pick<RunnerEvent, 'type' | 'phase_id'>[]; next: string | null } =
+        await this.call('GET', `/api/runs/${runId}/events?limit=1000${query}`, undefined)
+      if (page.events.some((e) => e.phase_id === phaseId && e.type === 'message')) return true
+      after = page.next
+    } while (after !== null)
+    return false
+  }
+
   async sendEvents(token: string, events: RunnerEvent[]): Promise<number> {
     return (await this.call<{ accepted: number }>('POST', '/api/runner/events', token, { events }))
       .accepted

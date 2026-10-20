@@ -185,6 +185,35 @@ export async function continuePhase(
   return step(record, message, true, input, deps)
 }
 
+/**
+ * Starts a phase again on a new session, in the same phase row: its session was killed before
+ * writing a message and cannot be resumed (spec §3, fact 12). A plain `phase_start` creates the
+ * row if it never reached the board; the resumed one records the new session on it.
+ */
+export async function restartPhase(
+  record: PhaseRecord,
+  handoff: string,
+  input: Pick<PhaseInput, 'worktree' | 'runDir' | 'budgetUsd'>,
+  deps: PhaseDeps,
+): Promise<StepResult> {
+  const config = PHASES[record.phase]
+  const fresh: PhaseRecord = { ...record, sessionId: randomUUID(), baseline: {}, reported: {} }
+  deps.setToken(await deps.api.issueToken(record.runId))
+  const base = {
+    runId: record.runId,
+    phaseId: record.phaseId,
+    agent: config.agent,
+    type: 'phase_start' as const,
+    model: config.model,
+  }
+  const payload = { name: record.phase, attempt: record.attempt, session_id: fresh.sessionId }
+  await deps.sink.send([
+    newEvent(base, { payload }),
+    newEvent(base, { payload: { ...payload, resumed: true } }),
+  ])
+  return step(fresh, handoff, false, input, deps)
+}
+
 /** Ends a phase: its cost as the sum of its processes' shares, and whether one was stopped. */
 export async function endPhase(record: PhaseRecord, ok: boolean, deps: PhaseDeps): Promise<void> {
   const config = PHASES[record.phase]
