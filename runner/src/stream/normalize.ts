@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { RunnerEvent, Usage } from '../contract.js'
+import type { RunnerEvent, SessionTotals, Usage } from '../contract.js'
 import { newEvent } from '../sink.js'
 
 interface ApiUsage {
@@ -21,6 +21,7 @@ export interface ResultInfo {
   text: string
   isError: boolean
   subtype: string
+  turns: number
   totalCostUsd: number
   modelUsage: Record<string, ModelUsage>
 }
@@ -37,15 +38,21 @@ const toUsage = (u: ApiUsage | undefined): Usage => ({
   cache_write: num(u?.cache_creation_input_tokens),
 })
 
+const ZERO: Usage = { input: 0, output: 0, cache_read: 0, cache_write: 0 }
+
 /**
  * Turns one `claude -p` process's stream-json into usage events, so that their sum per model is
- * exactly the `modelUsage` of the process's last result. See the plan's Task 16 for which line
- * carries what; the rules were read off recordings, not documentation.
+ * exactly the `modelUsage` of the process's last result. See slice 1's plan, Task 16, for which
+ * line carries what; the rules were read off recordings, not documentation.
+ *
+ * A resumed process reports its session's totals so far, not its own (slice 2 spec, §3). Its
+ * normalizer is given the totals the session's previous result reported, its `baseline`, and
+ * counts only what lies beyond them.
  */
 export class StreamNormalizer {
   sessionId: string | null = null
   result: ResultInfo | null = null
-  private current: { model: string } | undefined
+  private current: { model: string; usage: Usage } | undefined
   private readonly attributed = new Map<string, Usage>()
   private readonly clock: () => Date
   private readonly newId: () => string
@@ -55,6 +62,8 @@ export class StreamNormalizer {
       runId: string
       phaseId: string
       agent: string
+      /** The session's totals as its previous process's result reported them. */
+      baseline?: Record<string, SessionTotals>
       clock?: () => Date
       newId?: () => string
     },
@@ -97,7 +106,10 @@ export class StreamNormalizer {
         const event = record(line.event)
         if (event?.type === 'message_start') {
           const message = record(event.message)
-          this.current = { model: typeof message?.model === 'string' ? message.model : 'unknown' }
+          this.current = {
+            model: typeof message?.model === 'string' ? message.model : 'unknown',
+            usage: toUsage(record(message?.usage) as ApiUsage | undefined),
+          }
           return []
         }
         if (event?.type === 'message_delta' && this.current !== undefined) {
@@ -148,6 +160,7 @@ export class StreamNormalizer {
           text: typeof line.result === 'string' ? line.result : '',
           isError: line.is_error === true,
           subtype: typeof line.subtype === 'string' ? line.subtype : 'unknown',
+          turns: num(line.num_turns),
           totalCostUsd: num(line.total_cost_usd),
           modelUsage,
         }
@@ -158,22 +171,31 @@ export class StreamNormalizer {
     }
   }
 
-  /** The remainder per model: Claude Code's own calls and background subagents. */
+  /**
+   * What the stream left unsaid when the process ended. A message still open — its process
+   * stopped before the message's `message_delta` — is recorded from its `message_start`, marked
+   * `cut`: its output count there is a floor (slice 2 spec, §3, fact 9). Then the remainder per
+   * model: Claude Code's own calls and background subagents, beyond the session's baseline.
+   */
   finish(): RunnerEvent[] {
-    if (this.result === null) return []
     const events: RunnerEvent[] = []
+    if (this.current !== undefined) {
+      const { model, usage } = this.current
+      this.current = undefined
+      events.push(this.emit(this.options.agent, model, usage, { cut: true }))
+    }
+    if (this.result === null) return events
     for (const [model, total] of Object.entries(this.result.modelUsage)) {
-      const done = this.attributed.get(model) ?? {
-        input: 0,
-        output: 0,
-        cache_read: 0,
-        cache_write: 0,
-      }
+      const done = this.attributed.get(model) ?? ZERO
+      const before = this.options.baseline?.[model] ?? { ...ZERO, usd: 0 }
       const rest: Usage = {
-        input: Math.max(0, total.inputTokens - done.input),
-        output: Math.max(0, total.outputTokens - done.output),
-        cache_read: Math.max(0, total.cacheReadInputTokens - done.cache_read),
-        cache_write: Math.max(0, total.cacheCreationInputTokens - done.cache_write),
+        input: Math.max(0, total.inputTokens - before.input - done.input),
+        output: Math.max(0, total.outputTokens - before.output - done.output),
+        cache_read: Math.max(0, total.cacheReadInputTokens - before.cache_read - done.cache_read),
+        cache_write: Math.max(
+          0,
+          total.cacheCreationInputTokens - before.cache_write - done.cache_write,
+        ),
       }
       if (rest.input + rest.output + rest.cache_read + rest.cache_write > 0) {
         events.push(this.emit('claude-code', model, rest, { unattributed: true }))
@@ -182,9 +204,43 @@ export class StreamNormalizer {
     return events
   }
 
+  /** This process's share of Claude Code's own cost per model: its total less the baseline's. */
   reportedCost(): Record<string, number> {
     return Object.fromEntries(
-      Object.entries(this.result?.modelUsage ?? {}).map(([model, u]) => [model, u.costUSD]),
+      Object.entries(this.result?.modelUsage ?? {}).map(([model, u]) => [
+        model,
+        Math.max(0, u.costUSD - (this.options.baseline?.[model]?.usd ?? 0)),
+      ]),
+    )
+  }
+
+  /** The session's totals as this process's result reported them: the next process's baseline. */
+  totals(): Record<string, SessionTotals> | null {
+    if (this.result === null) return null
+    return Object.fromEntries(
+      Object.entries(this.result.modelUsage).map(([model, u]) => [
+        model,
+        {
+          input: u.inputTokens,
+          output: u.outputTokens,
+          cache_read: u.cacheReadInputTokens,
+          cache_write: u.cacheCreationInputTokens,
+          usd: u.costUSD,
+        },
+      ]),
+    )
+  }
+
+  /**
+   * `claude --resume` found no conversation: Claude Code deleted it, or its first process was
+   * killed before writing one (slice 2 spec, §3, facts 10 and 12).
+   */
+  get sessionGone(): boolean {
+    return (
+      this.result !== null &&
+      this.result.isError &&
+      this.result.subtype === 'error_during_execution' &&
+      this.result.turns === 0
     )
   }
 }
