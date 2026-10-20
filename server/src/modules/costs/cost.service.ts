@@ -31,6 +31,7 @@ export class CostService {
         'events.output',
         'events.cache_read',
         'events.cache_write',
+        'events.payload',
       ])
       .where('runs.task_id', '=', taskId)
       .where('events.model', 'is not', null)
@@ -38,7 +39,13 @@ export class CostService {
     const phases = await this.db
       .selectFrom('phases')
       .innerJoin('runs', 'runs.id', 'phases.run_id')
-      .select(['phases.id', 'phases.name', 'phases.attempt', 'phases.reported_cost'])
+      .select([
+        'phases.id',
+        'phases.name',
+        'phases.attempt',
+        'phases.reported_cost',
+        'phases.interrupted',
+      ])
       .where('runs.task_id', '=', taskId)
       .orderBy('phases.started_at')
       .execute()
@@ -54,12 +61,14 @@ export class CostService {
           cacheRead: e.cache_read,
           cacheWrite: e.cache_write,
         },
+        cut: e.payload.cut === true,
       })),
       phases: phases.map((p) => ({
         id: p.id,
         name: p.name,
         attempt: p.attempt,
         reportedCost: p.reported_cost,
+        interrupted: p.interrupted,
       })),
       prices: await loadPrices(this.db),
     })
