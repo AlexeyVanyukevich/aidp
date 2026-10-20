@@ -1,6 +1,6 @@
 import { sql, type Kysely } from 'kysely'
 import type { Database } from '../../db/schema.js'
-import type { TaskState } from '../../shared/vocabulary.js'
+import type { ApprovalKind, ApprovalStatus, Block, TaskState } from '../../shared/vocabulary.js'
 
 export interface TaskView {
   id: string
@@ -12,6 +12,10 @@ export interface TaskView {
   position: number
   budget_usd: number | null
   project: { key: string; name: string; github_repo: string }
+  /** The question the card waits on: open, or expired and blocking it. */
+  approval: { id: string; kind: ApprovalKind; status: ApprovalStatus } | null
+  /** Why a Blocked card is blocked; null in any other state. */
+  block: Block | null
 }
 
 export interface TaskCard {
@@ -26,6 +30,8 @@ export interface TaskCard {
   cost_usd: number
   cost_complete: boolean
   pr_url: string | null
+  /** An open question, or an expired one, waits on this card. */
+  question_waiting: boolean
 }
 
 export class TaskRepository {
@@ -50,6 +56,22 @@ export class TaskRepository {
       .where('tasks.id', '=', id)
       .executeTakeFirst()
     if (row === undefined) return undefined
+    const run = await this.db
+      .selectFrom('runs')
+      .select(['id', 'block'])
+      .where('task_id', '=', id)
+      .orderBy('created_at', 'desc')
+      .executeTakeFirst()
+    const approval =
+      run === undefined
+        ? undefined
+        : await this.db
+            .selectFrom('approval_requests')
+            .select(['id', 'kind', 'status'])
+            .where('run_id', '=', run.id)
+            .where('status', 'in', ['open', 'expired'])
+            .orderBy('created_at', 'desc')
+            .executeTakeFirst()
     return {
       id: row.id,
       key: `${row.project_key}-${row.number}`,
@@ -60,6 +82,8 @@ export class TaskRepository {
       position: row.position,
       budget_usd: row.budget_usd === null ? null : Number(row.budget_usd),
       project: { key: row.project_key, name: row.project_name, github_repo: row.github_repo },
+      approval: approval ?? null,
+      block: row.state === 'blocked' ? (run?.block ?? null) : null,
     }
   }
 
@@ -72,6 +96,23 @@ export class TaskRepository {
       .orderBy('position')
       .orderBy('number')
       .execute()
+    const waiting = new Set(
+      rows.length === 0
+        ? []
+        : (
+            await this.db
+              .selectFrom('approval_requests')
+              .innerJoin('runs', 'runs.id', 'approval_requests.run_id')
+              .select('runs.task_id')
+              .where(
+                'runs.task_id',
+                'in',
+                rows.map((row) => row.id),
+              )
+              .where('approval_requests.status', 'in', ['open', 'expired'])
+              .execute()
+          ).map((row) => row.task_id),
+    )
     return rows.map((row) => ({
       id: row.id,
       key: `${projectKey}-${row.number}`,
@@ -85,6 +126,7 @@ export class TaskRepository {
       cost_usd: 0,
       cost_complete: true,
       pr_url: null,
+      question_waiting: waiting.has(row.id),
     }))
   }
 

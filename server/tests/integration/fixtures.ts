@@ -64,10 +64,22 @@ export async function seedTask(
 /** A project, a task in Ready with an approved spec, and its queued delivery run. */
 export async function seedQueuedRun(
   db: Kysely<Database>,
-  overrides: Partial<{ state: TaskState; projectKey: string }> = {},
+  overrides: Partial<{
+    state: TaskState
+    projectKey: string
+    /** Adds the task to this project instead of creating one. */
+    projectId: string
+    number: number
+  }> = {},
 ): Promise<{ projectId: string; taskId: string; runId: string }> {
-  const project = await seedProject(db, { key: overrides.projectKey ?? 'PAY' })
-  const task = await seedTask(db, project.id, { state: overrides.state ?? 'ready' })
+  const project =
+    overrides.projectId === undefined
+      ? await seedProject(db, { key: overrides.projectKey ?? 'PAY' })
+      : { id: overrides.projectId }
+  const task = await seedTask(db, project.id, {
+    state: overrides.state ?? 'ready',
+    number: overrides.number ?? 1,
+  })
   await db
     .insertInto('specs')
     .values({
@@ -98,7 +110,7 @@ export async function seedQueuedRun(
 /** A task in Running whose run is running a Build phase, as a runner leaves it mid-phase. */
 export async function seedRunningRun(
   db: Kysely<Database>,
-  overrides: Partial<{ projectKey: string }> = {},
+  overrides: Partial<{ projectKey: string; projectId: string; number: number }> = {},
 ): Promise<{
   projectId: string
   taskId: string
