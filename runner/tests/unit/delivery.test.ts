@@ -517,9 +517,10 @@ describe('blocks', () => {
 
 describe('cleaning up', () => {
   it('removes the worktree of a run cancelled while paused', async () => {
+    // The board knows no path for a run that never ended: the runner's own convention finds it.
     const h = harness({})
     await cleanUp(
-      { kind: 'cleanup', run: { id: RUN.id, repo_path: '/repo', worktree_path: '/wt' } },
+      { kind: 'cleanup', run: { id: RUN.id, repo_path: '/repo', worktree_path: null } },
       h.deps,
     )
     expect(h.gitCalls).toEqual(['remove'])
