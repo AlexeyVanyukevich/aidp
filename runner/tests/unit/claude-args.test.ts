@@ -54,4 +54,18 @@ describe('buildClaudeArgs', () => {
       args.slice(args.indexOf('--max-budget-usd'), args.indexOf('--max-budget-usd') + 2),
     ).toEqual(['--max-budget-usd', '3'])
   })
+
+  // Slice 2 spec §3, fact 4: a resume repeats the call's flags, and the role survives it.
+  it('resumes a session with the answer as its prompt, every other flag repeated', () => {
+    const start = buildClaudeArgs(BASE)
+    const resume = buildClaudeArgs({ ...BASE, prompt: 'The owner answered', resume: true })
+    expect(resume.slice(0, 4)).toEqual([
+      '-p',
+      'The owner answered',
+      '--resume',
+      '11111111-1111-4111-8111-111111111111',
+    ])
+    expect(resume).not.toContain('--session-id')
+    expect(resume.slice(4)).toEqual(start.slice(4))
+  })
 })
