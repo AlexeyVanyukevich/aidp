@@ -12,6 +12,12 @@ export interface RunnerConfig {
   testTimeoutMs: number
   claimWaitMs: number
   heartbeatMs: number
+  /** How long a paused process has to end its turn before the runner ends it. */
+  pauseGraceMs: number
+  /** How long a process has after SIGTERM before SIGKILL. */
+  stopGraceMs: number
+  /** How often a running process's directory is checked for the paused marker. */
+  markerPollMs: number
 }
 
 function positiveInt(env: NodeJS.ProcessEnv, key: string, fallback: number): number {
@@ -37,5 +43,8 @@ export function loadRunnerConfig(env: NodeJS.ProcessEnv): RunnerConfig {
     testTimeoutMs: positiveInt(env, 'TEST_TIMEOUT_MS', 900_000),
     claimWaitMs: positiveInt(env, 'CLAIM_WAIT_MS', 30_000),
     heartbeatMs: positiveInt(env, 'HEARTBEAT_MS', 30_000),
+    pauseGraceMs: positiveInt(env, 'PAUSE_GRACE_MS', 60_000),
+    stopGraceMs: positiveInt(env, 'STOP_GRACE_MS', 10_000),
+    markerPollMs: positiveInt(env, 'MARKER_POLL_MS', 500),
   }
 }
