@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { buildTestApp, closeTestDb, getTestDb, resetDb, TEST_RUNNER_KEY } from './helpers.js'
-import { seedQueuedRun } from './fixtures.js'
+import { seedQueuedRun, seedRunningRun } from './fixtures.js'
+import { openApproval } from '../../src/modules/approvals/approval.service.js'
 import { publish } from '../../src/shared/bus.js'
 
 let app: FastifyInstance
@@ -399,12 +400,338 @@ describe('POST /api/runner/heartbeat', () => {
       headers: auth,
       payload: { runner_id: 'r1', run_ids: [runId] },
     })
-    expect(response.json()).toEqual({ cancel: [runId] })
+    expect(response.json()).toEqual({ cancel: [runId], pause: [] })
     const run = await getTestDb()
       .selectFrom('runs')
       .select('last_heartbeat_at')
       .where('id', '=', runId)
       .executeTakeFirstOrThrow()
     expect(run.last_heartbeat_at).toEqual(now)
+  })
+})
+
+const db = () => getTestDb()
+const at = (seconds: number) => new Date(now.getTime() + seconds * 1_000)
+const CHECKPOINT = (phaseId: string, sessionId: string) => ({
+  stage: 'build',
+  attempt: 1,
+  phase_id: phaseId,
+  session: { id: sessionId, baseline: {}, reported: {} },
+  head: 'abc123',
+  plan_artifact_id: null,
+  failing_report_id: null,
+})
+
+/** A run paused and answered: queued to resume, as the approvals service leaves it. */
+async function queuedResume(projectKey = 'PAY', queuedAt = at(1)) {
+  const run = await seedRunningRun(db(), { projectKey })
+  await db()
+    .updateTable('runs')
+    .set({
+      status: 'queued',
+      pending: 'resume',
+      queued_at: queuedAt,
+      resume_message: 'The owner answered your question:\n\nBlue',
+      checkpoint: JSON.stringify(CHECKPOINT(run.phaseId, run.sessionId)),
+    })
+    .where('id', '=', run.runId)
+    .execute()
+  await db().updateTable('phases').set({ status: 'paused' }).where('id', '=', run.phaseId).execute()
+  return run
+}
+
+/** A run cancelled while paused, its worktree still on disk. */
+async function queuedCleanup(projectKey = 'PAY', queuedAt = at(1)) {
+  const run = await seedRunningRun(db(), { projectKey })
+  await db()
+    .updateTable('runs')
+    .set({ status: 'cancelled', pending: 'cleanup', queued_at: queuedAt, worktree_path: '/wt/x' })
+    .where('id', '=', run.runId)
+    .execute()
+  return run
+}
+
+const runRow = (id: string) =>
+  db().selectFrom('runs').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
+
+describe('claiming resumes and cleanups', () => {
+  it('hands over a resume with its checkpoint, message and allowed files; the card stays Running', async () => {
+    const { runId, taskId, phaseId, sessionId } = await queuedResume()
+    await db()
+      .insertInto('artifacts')
+      .values({
+        run_id: runId,
+        phase_id: null,
+        kind: 'plan',
+        body_md: 'plan',
+        uri: null,
+        data: JSON.stringify({
+          steps: [{ files: ['src/a.ts'] }, { files: ['src/a.ts', 'src/c.ts'] }],
+        }),
+      })
+      .execute()
+    await db()
+      .insertInto('approval_requests')
+      .values({
+        run_id: runId,
+        phase_id: phaseId,
+        kind: 'out_of_plan',
+        question: 'May I?',
+        options: '[]',
+        recommendation: null,
+        context_md: null,
+        status: 'answered',
+        answer: JSON.stringify({ option_id: 'allow' }),
+        checkpoint: null,
+        files: JSON.stringify(['src/b.ts']),
+        answered_at: now,
+      })
+      .execute()
+
+    const work = (await claim()).json().work
+    expect(work).toMatchObject({
+      kind: 'resume',
+      run: { id: runId, task: { key: 'PAY-1' }, project: { key: 'PAY' } },
+      checkpoint: CHECKPOINT(phaseId, sessionId),
+      message: 'The owner answered your question:\n\nBlue',
+      allowed_files: ['src/a.ts', 'src/c.ts', 'src/b.ts'],
+    })
+    expect(await state(taskId)).toBe('running')
+    expect(await runRow(runId)).toMatchObject({
+      status: 'running',
+      pending: null,
+      queued_at: null,
+      runner_id: 'r1',
+      last_heartbeat_at: now,
+    })
+    expect((await claim()).json()).toEqual({ work: null })
+  })
+
+  it('derives a checkpoint from the records when the runner never sent one', async () => {
+    const { runId, phaseId, sessionId } = await queuedResume()
+    await db().updateTable('runs').set({ checkpoint: null }).where('id', '=', runId).execute()
+    expect((await claim()).json().work.checkpoint).toEqual({
+      stage: 'build',
+      attempt: 1,
+      phase_id: phaseId,
+      session: { id: sessionId, baseline: {}, reported: {} },
+      head: null,
+      plan_artifact_id: null,
+      failing_report_id: null,
+    })
+  })
+
+  it('hands over a cleanup with what the runner needs to remove the worktree', async () => {
+    const { runId } = await queuedCleanup()
+    expect((await claim()).json().work).toEqual({
+      kind: 'cleanup',
+      run: { id: runId, repo_path: '/repos/PAY', worktree_path: '/wt/x' },
+    })
+    expect(await runRow(runId)).toMatchObject({
+      status: 'cancelled',
+      pending: null,
+      queued_at: null,
+    })
+  })
+
+  it('hands over work oldest first, whatever its kind', async () => {
+    const start = await seedQueuedRun(db(), { projectKey: 'ONE' })
+    await db()
+      .updateTable('runs')
+      .set({ queued_at: at(2) })
+      .where('id', '=', start.runId)
+      .execute()
+    await queuedResume('TWO', at(1))
+    await queuedCleanup('THREE', at(3))
+    const kinds = []
+    for (let n = 0; n < 3; n++) kinds.push((await claim()).json().work.kind)
+    expect(kinds).toEqual(['resume', 'start', 'cleanup'])
+  })
+
+  it('wakes a waiting claim as soon as the owner answers', async () => {
+    const run = await seedRunningRun(db())
+    const { id } = await db()
+      .transaction()
+      .execute((trx) =>
+        openApproval(
+          trx,
+          {
+            runId: run.runId,
+            taskId: run.taskId,
+            phaseId: run.phaseId,
+            kind: 'question',
+            question: 'Which colour?',
+            options: [{ id: 'a', label: 'Red' }],
+          },
+          now,
+          { recordEvent: true },
+        ),
+      )
+    const started = Date.now()
+    const waiting = claim(5_000)
+    await new Promise((done) => setTimeout(done, 200))
+    await app.inject({
+      method: 'POST',
+      url: `/api/approvals/${id}/answer`,
+      payload: { option_id: 'a' },
+    })
+    expect((await waiting).json().work).toMatchObject({ kind: 'resume', run: { id: run.runId } })
+    expect(Date.now() - started).toBeLessThan(2_000)
+  })
+
+  it('takes a skipped start off the queue', async () => {
+    const { runId } = await seedQueuedRun(db(), { state: 'failed' })
+    await claim()
+    expect(await runRow(runId)).toMatchObject({ status: 'cancelled', queued_at: null })
+  })
+})
+
+describe('the heartbeat’s answer', () => {
+  const beat = (runIds: string[], runner = 'r1') =>
+    app.inject({
+      method: 'POST',
+      url: '/api/runner/heartbeat',
+      headers: auth,
+      payload: { runner_id: runner, run_ids: runIds },
+    })
+
+  it.each([
+    {
+      name: 'a paused run of this runner is to pause',
+      status: 'paused',
+      owner: 'r1',
+      cancel: false,
+      pause: true,
+    },
+    {
+      name: 'a running run of this runner goes on',
+      status: 'running',
+      owner: 'r1',
+      cancel: false,
+      pause: false,
+    },
+    {
+      name: 'a blocked run is to stop',
+      status: 'blocked',
+      owner: 'r1',
+      cancel: true,
+      pause: false,
+    },
+    {
+      name: 'a cancelled run is to stop',
+      status: 'cancelled',
+      owner: 'r1',
+      cancel: true,
+      pause: false,
+    },
+    {
+      name: 'another runner’s run is to stop',
+      status: 'running',
+      owner: 'r2',
+      cancel: true,
+      pause: false,
+    },
+  ] as const)('$name', async ({ status, owner, cancel, pause }) => {
+    const { runId } = await seedRunningRun(db())
+    await db()
+      .updateTable('runs')
+      .set({ status, runner_id: owner })
+      .where('id', '=', runId)
+      .execute()
+    expect((await beat([runId])).json()).toEqual({
+      cancel: cancel ? [runId] : [],
+      pause: pause ? [runId] : [],
+    })
+  })
+})
+
+describe('events that pause, block and resume', () => {
+  const S1 = '00000000-0000-4000-8000-0000000000c1'
+  const S2 = '00000000-0000-4000-8000-0000000000c2'
+  async function running() {
+    const seeded = await claimed()
+    const phaseId = crypto.randomUUID()
+    const started = await send(seeded.token, [
+      event(
+        seeded.runId,
+        'phase_start',
+        { name: 'build', attempt: 1, session_id: S1 },
+        { phase_id: phaseId, agent: 'builder', model: 'sonnet' },
+      ),
+    ])
+    expect(started.json()).toEqual({ accepted: 1 })
+    return { ...seeded, phaseId }
+  }
+  const phase = (id: string) =>
+    db().selectFrom('phases').selectAll().where('id', '=', id).executeTakeFirstOrThrow()
+
+  it('keeps the latest checkpoint on the run', async () => {
+    const { runId, token, phaseId } = await running()
+    const checkpoint = CHECKPOINT(phaseId, S1)
+    expect((await send(token, [event(runId, 'checkpoint', checkpoint)])).statusCode).toBe(200)
+    expect((await runRow(runId)).checkpoint).toEqual(checkpoint)
+  })
+
+  it('blocks the run and the card on a failed step, pausing the phase', async () => {
+    const { runId, taskId, token, phaseId } = await running()
+    const block = { cause: 'step_failed', stage: 'push', command: 'git push', output: 'rejected' }
+    await send(token, [event(runId, 'error', { blocks: true, ...block })])
+    expect(await runRow(runId)).toMatchObject({ status: 'blocked', block })
+    expect(await state(taskId)).toBe('blocked')
+    expect((await phase(phaseId)).status).toBe('paused')
+  })
+
+  it('records a block on a card the owner already moved, moving nothing', async () => {
+    const { runId, taskId, token } = await running()
+    await db().updateTable('tasks').set({ state: 'failed' }).where('id', '=', taskId).execute()
+    await send(token, [
+      event(runId, 'error', { blocks: true, cause: 'runner_stopped', stage: 'build' }),
+    ])
+    expect(await state(taskId)).toBe('failed')
+    expect((await runRow(runId)).block).toEqual({ cause: 'runner_stopped', stage: 'build' })
+  })
+
+  it('runs a paused phase again on a resumed start, with its new session', async () => {
+    const { runId, token, phaseId } = await running()
+    await db().updateTable('phases').set({ status: 'paused' }).where('id', '=', phaseId).execute()
+    await send(token, [
+      event(
+        runId,
+        'phase_start',
+        { name: 'build', attempt: 1, session_id: S2, resumed: true },
+        { phase_id: phaseId, agent: 'builder', model: 'sonnet' },
+      ),
+    ])
+    expect(await phase(phaseId)).toMatchObject({ status: 'running', session_id: S2 })
+  })
+
+  it('marks a phase interrupted when its end says so', async () => {
+    const { runId, token, phaseId } = await running()
+    await send(token, [
+      event(runId, 'phase_end', { status: 'succeeded', interrupted: true }, { phase_id: phaseId }),
+    ])
+    expect((await phase(phaseId)).interrupted).toBe(true)
+  })
+
+  it('opens the plan gate’s approval once, however often the event arrives', async () => {
+    const { runId, taskId, token, phaseId } = await running()
+    const approvalId = '00000000-0000-4000-8000-0000000000bb'
+    const gate = event(
+      runId,
+      'approval_requested',
+      { approval_id: approvalId, kind: 'plan', question: 'Approve this plan?', context_md: '1. x' },
+      { phase_id: phaseId },
+    )
+    await send(token, [gate])
+    await send(token, [gate])
+    const approvals = await db().selectFrom('approval_requests').selectAll().execute()
+    expect(approvals).toHaveLength(1)
+    expect(approvals[0]).toMatchObject({
+      id: approvalId,
+      kind: 'plan',
+      options: [{ id: 'approve', label: 'Approve plan' }],
+      context_md: '1. x',
+    })
+    expect(await state(taskId)).toBe('needs_approval')
   })
 })

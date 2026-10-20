@@ -4,35 +4,46 @@ import type { Bus } from '../../shared/bus.js'
 import { publish } from '../../shared/bus.js'
 import { ConflictError, UnauthorizedError } from '../../shared/errors.js'
 import { hashToken, newToken } from '../../shared/tokens.js'
-import type { SpecCriterion } from '../../shared/vocabulary.js'
+import type { Checkpoint, SpecCriterion } from '../../shared/vocabulary.js'
+import { allowedFiles, type Answer } from '../approvals/approval-rules.js'
+import { openApproval } from '../approvals/approval.service.js'
 import { moveTask } from '../tasks/task.moves.js'
 import { effectOf, type Effect } from './event-effects.js'
 import type { RunnerEvent } from './runner.schemas.js'
 
-export interface Work {
-  kind: 'start'
-  run: {
+export interface RunWork {
+  id: string
+  number: number
+  kind: 'spec' | 'delivery'
+  spec_version: number
+  task: {
     id: string
-    number: number
-    kind: 'spec' | 'delivery'
-    spec_version: number
-    task: {
-      id: string
-      key: string
-      title: string
-      description_md: string
-      budget_usd: number | null
-    }
-    spec: { version: number; body_md: string; criteria: SpecCriterion[] }
-    project: {
-      key: string
-      repo_path: string
-      github_repo: string
-      base_branch: string
-      test_command: string
-    }
+    key: string
+    title: string
+    description_md: string
+    budget_usd: number | null
+  }
+  spec: { version: number; body_md: string; criteria: SpecCriterion[] }
+  project: {
+    key: string
+    repo_path: string
+    github_repo: string
+    base_branch: string
+    test_command: string
   }
 }
+
+/** What a claim hands the runner (spec §6): a run to start, to resume, or to clean up after. */
+export type Work =
+  | { kind: 'start'; run: RunWork }
+  | {
+      kind: 'resume'
+      run: RunWork
+      checkpoint: Checkpoint
+      message: string | null
+      allowed_files: string[]
+    }
+  | { kind: 'cleanup'; run: { id: string; repo_path: string; worktree_path: string | null } }
 
 const TOKEN_LIFETIME_MS = 12 * 3600_000
 const RETIRE_GRACE_MS = 5 * 60_000
@@ -51,20 +62,61 @@ export class RunnerService {
     return this.tryClaim(runnerId)
   }
 
-  /** Skips — and cancels — queued runs whose task is no longer Ready. */
+  /**
+   * Takes the oldest queued work of any kind. A start whose task is no longer Ready is skipped —
+   * and cancelled — rather than handed over.
+   */
   private async tryClaim(runnerId: string): Promise<Work | null> {
     for (let attempt = 0; attempt < 20; attempt++) {
       const outcome = await this.db.transaction().execute(async (trx) => {
         const run = await trx
           .selectFrom('runs')
-          .select(['id', 'task_id'])
-          .where('status', '=', 'queued')
+          .select(['id', 'task_id', 'pending', 'resume_message'])
+          .where('queued_at', 'is not', null)
+          .orderBy('queued_at')
           .orderBy('created_at')
           .limit(1)
           .forUpdate()
           .skipLocked()
           .executeTakeFirst()
         if (run === undefined) return 'none' as const
+        const now = this.clock()
+
+        if (run.pending === 'cleanup') {
+          await trx
+            .updateTable('runs')
+            .set({ pending: null, queued_at: null })
+            .where('id', '=', run.id)
+            .execute()
+          const row = await trx
+            .selectFrom('runs')
+            .innerJoin('tasks', 'tasks.id', 'runs.task_id')
+            .innerJoin('projects', 'projects.id', 'tasks.project_id')
+            .select(['projects.repo_path', 'runs.worktree_path'])
+            .where('runs.id', '=', run.id)
+            .executeTakeFirstOrThrow()
+          return { kind: 'cleanup' as const, run: { id: run.id, ...row } }
+        }
+
+        const claimedRun = {
+          status: 'running' as const,
+          runner_id: runnerId,
+          last_heartbeat_at: now,
+          pending: null,
+          queued_at: null,
+        }
+        if (run.pending === 'resume') {
+          // The answer or the Resume already moved the card to Running.
+          await trx.updateTable('runs').set(claimedRun).where('id', '=', run.id).execute()
+          return {
+            kind: 'resume' as const,
+            run: await this.work(trx, run.id),
+            checkpoint: await this.checkpointFor(trx, run.id),
+            message: run.resume_message,
+            allowed_files: await this.allowedFilesFor(trx, run.id),
+          }
+        }
+
         const task = await trx
           .selectFrom('tasks')
           .select('state')
@@ -74,19 +126,18 @@ export class RunnerService {
         if (task.state !== 'ready') {
           await trx
             .updateTable('runs')
-            .set({ status: 'cancelled', ended_at: this.clock() })
+            .set({ status: 'cancelled', ended_at: now, queued_at: null })
             .where('id', '=', run.id)
             .execute()
           return 'skipped' as const
         }
         await moveTask(trx, run.task_id, 'claim')
-        const now = this.clock()
         await trx
           .updateTable('runs')
-          .set({ status: 'running', runner_id: runnerId, started_at: now, last_heartbeat_at: now })
+          .set({ ...claimedRun, started_at: now })
           .where('id', '=', run.id)
           .execute()
-        return this.work(trx, run.id)
+        return { kind: 'start' as const, run: await this.work(trx, run.id) }
       })
       if (outcome === 'none') return null
       if (outcome !== 'skipped') return outcome
@@ -94,7 +145,67 @@ export class RunnerService {
     return null
   }
 
-  private async work(trx: Transaction<Database>, runId: string): Promise<Work> {
+  /**
+   * The checkpoint the runner last sent. A run paused before its runner sent any — a slice 1
+   * runner — gets one derived from its records: the latest phase, its session, and the plan.
+   */
+  private async checkpointFor(trx: Transaction<Database>, runId: string): Promise<Checkpoint> {
+    const run = await trx
+      .selectFrom('runs')
+      .select(['checkpoint', 'current_phase'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow()
+    if (run.checkpoint !== null) return run.checkpoint
+    const phase = await trx
+      .selectFrom('phases')
+      .select(['id', 'name', 'attempt', 'session_id'])
+      .where('run_id', '=', runId)
+      .orderBy('started_at', 'desc')
+      .executeTakeFirst()
+    const plan = await trx
+      .selectFrom('artifacts')
+      .select('id')
+      .where('run_id', '=', runId)
+      .where('kind', '=', 'plan')
+      .orderBy('created_at', 'desc')
+      .executeTakeFirst()
+    const stage = phase?.name ?? run.current_phase
+    return {
+      stage: stage === 'plan' || stage === 'build' || stage === 'verify' ? stage : 'prepare',
+      attempt: phase?.attempt ?? 1,
+      phase_id: phase?.id ?? null,
+      session:
+        phase?.session_id == null ? null : { id: phase.session_id, baseline: {}, reported: {} },
+      head: null,
+      plan_artifact_id: plan?.id ?? null,
+      failing_report_id: null,
+    }
+  }
+
+  /** The latest plan's files, and every file an answered out-of-plan request allowed. */
+  private async allowedFilesFor(trx: Transaction<Database>, runId: string): Promise<string[]> {
+    const plan = await trx
+      .selectFrom('artifacts')
+      .select('data')
+      .where('run_id', '=', runId)
+      .where('kind', '=', 'plan')
+      .orderBy('created_at', 'desc')
+      .executeTakeFirst()
+    const steps = ((plan?.data ?? {}) as { steps?: { files?: string[] }[] }).steps ?? []
+    const answered = await trx
+      .selectFrom('approval_requests')
+      .select(['kind', 'files', 'answer'])
+      .where('run_id', '=', runId)
+      .where('status', '=', 'answered')
+      .orderBy('answered_at')
+      .execute()
+    return allowedFiles(
+      steps.flatMap((step) => step.files ?? []),
+      answered.map((row) => ({ ...row, answer: (row.answer ?? {}) as Answer })),
+    )
+  }
+
+  private async work(trx: Transaction<Database>, runId: string): Promise<RunWork> {
     const row = await trx
       .selectFrom('runs')
       .innerJoin('tasks', 'tasks.id', 'runs.task_id')
@@ -134,46 +245,64 @@ export class RunnerService {
       )
       .executeTakeFirstOrThrow()
     return {
-      kind: 'start',
-      run: {
-        id: row.id,
-        number: count,
-        kind: row.kind,
-        spec_version: row.spec_version,
-        task: {
-          id: row.task_id,
-          key: `${row.key}-${row.number}`,
-          title: row.title,
-          description_md: row.description_md,
-          budget_usd: row.budget_usd === null ? null : Number(row.budget_usd),
-        },
-        spec: { version: row.spec_version, body_md: row.body_md, criteria: row.criteria ?? [] },
-        project: {
-          key: row.key,
-          repo_path: row.repo_path,
-          github_repo: row.github_repo,
-          base_branch: row.base_branch,
-          test_command: row.test_command,
-        },
+      id: row.id,
+      number: count,
+      kind: row.kind,
+      spec_version: row.spec_version,
+      task: {
+        id: row.task_id,
+        key: `${row.key}-${row.number}`,
+        title: row.title,
+        description_md: row.description_md,
+        budget_usd: row.budget_usd === null ? null : Number(row.budget_usd),
+      },
+      spec: { version: row.spec_version, body_md: row.body_md, criteria: row.criteria ?? [] },
+      project: {
+        key: row.key,
+        repo_path: row.repo_path,
+        github_repo: row.github_repo,
+        base_branch: row.base_branch,
+        test_command: row.test_command,
       },
     }
   }
 
-  async heartbeat(runnerId: string, runIds: string[]): Promise<{ cancel: string[] }> {
-    if (runIds.length === 0) return { cancel: [] }
+  /**
+   * Records liveness, and tells the runner which of its runs to stop — cancelled, blocked, or no
+   * longer its own — and which have paused, so it can end their processes (spec §6, §8).
+   */
+  async heartbeat(
+    runnerId: string,
+    runIds: string[],
+  ): Promise<{ cancel: string[]; pause: string[] }> {
+    if (runIds.length === 0) return { cancel: [], pause: [] }
     await this.db
       .updateTable('runs')
       .set({ last_heartbeat_at: this.clock() })
       .where('id', 'in', runIds)
       .where('runner_id', '=', runnerId)
+      .where('status', 'in', ['running', 'paused'])
       .execute()
     const rows = await this.db
       .selectFrom('runs')
-      .select('id')
+      .select(['id', 'status', 'runner_id', 'cancel_requested'])
       .where('id', 'in', runIds)
-      .where('cancel_requested', '=', true)
       .execute()
-    return { cancel: rows.map((row) => row.id) }
+    const mine = (row: (typeof rows)[number]) => row.runner_id === runnerId
+    return {
+      cancel: rows
+        .filter(
+          (row) =>
+            row.cancel_requested ||
+            !mine(row) ||
+            row.status === 'blocked' ||
+            row.status === 'cancelled',
+        )
+        .map((row) => row.id),
+      pause: rows
+        .filter((row) => mine(row) && !row.cancel_requested && row.status === 'paused')
+        .map((row) => row.id),
+    }
   }
 
   async issueToken(runId: string): Promise<{ token: string }> {
@@ -292,11 +421,69 @@ export class RunnerService {
             reported_cost:
               effect.reportedCost === null ? null : JSON.stringify(effect.reportedCost),
             session_id: eb.fn.coalesce(eb.val(effect.sessionId), eb.ref('session_id')),
+            // Once interrupted, always: a later clean process does not undo the lost usage.
+            ...(effect.interrupted ? { interrupted: true } : {}),
             ended_at: effect.at,
           }))
           .where('id', '=', effect.phaseId)
           .where('run_id', '=', context.runId)
           .execute()
+        return
+      case 'phase_resume':
+        await trx
+          .updateTable('phases')
+          .set((eb) => ({
+            status: 'running',
+            session_id: eb.fn.coalesce(eb.val(effect.sessionId), eb.ref('session_id')),
+          }))
+          .where('id', '=', effect.phaseId)
+          .where('run_id', '=', context.runId)
+          .execute()
+        return
+      case 'checkpoint':
+        await trx
+          .updateTable('runs')
+          .set({ checkpoint: JSON.stringify(effect.checkpoint) })
+          .where('id', '=', context.runId)
+          .execute()
+        return
+      case 'block': {
+        await trx
+          .updateTable('runs')
+          .set({ status: 'blocked', block: JSON.stringify(effect.block) })
+          .where('id', '=', context.runId)
+          .execute()
+        await trx
+          .updateTable('phases')
+          .set({ status: 'paused' })
+          .where('run_id', '=', context.runId)
+          .where('status', '=', 'running')
+          .execute()
+        const task = await trx
+          .selectFrom('tasks')
+          .select('state')
+          .where('id', '=', context.taskId)
+          .executeTakeFirstOrThrow()
+        // A card the owner already moved — a Cancel — stays where it is.
+        if (task.state === 'running') await moveTask(trx, context.taskId, 'block')
+        return
+      }
+      case 'plan_approval':
+        await openApproval(
+          trx,
+          {
+            id: effect.approvalId,
+            runId: context.runId,
+            taskId: context.taskId,
+            phaseId: effect.phaseId,
+            kind: 'plan',
+            question: effect.question,
+            options: [],
+            context_md: effect.contextMd,
+          },
+          this.clock(),
+          { recordEvent: false },
+        )
         return
       case 'run_end': {
         const status = effect.outcome === 'review' ? 'succeeded' : effect.outcome

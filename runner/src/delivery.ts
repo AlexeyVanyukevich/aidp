@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import type { BoardApi } from './api.js'
-import type { PlanData, ReportData, Work } from './contract.js'
+import type { PlanData, ReportData, StartWork } from './contract.js'
 import type { RunnerConfig } from './config.js'
 import { GitError, type Git } from './git.js'
 import { buildHandoff, type HandoffInput } from './phases/handoff.js'
@@ -33,7 +33,7 @@ class End extends Error {
   }
 }
 
-export async function runDelivery(work: Work, deps: DeliveryDeps): Promise<Outcome> {
+export async function runDelivery(work: StartWork, deps: DeliveryDeps): Promise<Outcome> {
   const { run } = work
   const { project, task } = run
   const branch = `board/${task.key}-r${run.number}`

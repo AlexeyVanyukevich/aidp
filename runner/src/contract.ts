@@ -45,30 +45,65 @@ export interface SpecCriterion {
   text: string
 }
 
-export interface Work {
-  kind: 'start'
-  run: {
+export type Stage = 'prepare' | 'plan' | 'build' | 'tests' | 'verify' | 'push' | 'pr'
+
+export interface SessionTotals {
+  input: number
+  output: number
+  cache_read: number
+  cache_write: number
+  usd: number
+}
+
+/** Where a run stands, as the runner last reported it: what a resume starts from. */
+export interface Checkpoint {
+  stage: Stage
+  attempt: number
+  phase_id: string | null
+  session: {
     id: string
-    number: number
-    kind: 'spec' | 'delivery'
-    spec_version: number
-    task: {
-      id: string
-      key: string
-      title: string
-      description_md: string
-      budget_usd: number | null
-    }
-    spec: { version: number; body_md: string; criteria: SpecCriterion[] }
-    project: {
-      key: string
-      repo_path: string
-      github_repo: string
-      base_branch: string
-      test_command: string
-    }
+    baseline: Record<string, SessionTotals>
+    reported: Record<string, number>
+  } | null
+  head: string | null
+  plan_artifact_id: string | null
+  failing_report_id: string | null
+}
+
+export interface RunWork {
+  id: string
+  number: number
+  kind: 'spec' | 'delivery'
+  spec_version: number
+  task: {
+    id: string
+    key: string
+    title: string
+    description_md: string
+    budget_usd: number | null
+  }
+  spec: { version: number; body_md: string; criteria: SpecCriterion[] }
+  project: {
+    key: string
+    repo_path: string
+    github_repo: string
+    base_branch: string
+    test_command: string
   }
 }
+
+export type Work =
+  | { kind: 'start'; run: RunWork }
+  | {
+      kind: 'resume'
+      run: RunWork
+      checkpoint: Checkpoint
+      message: string | null
+      allowed_files: string[]
+    }
+  | { kind: 'cleanup'; run: { id: string; repo_path: string; worktree_path: string | null } }
+
+export type StartWork = Extract<Work, { kind: 'start' }>
 
 export interface PlanData {
   summary: string

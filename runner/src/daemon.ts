@@ -31,6 +31,8 @@ export class Daemon {
   async runOnce(): Promise<boolean> {
     const work = await this.api.claim(this.config.runnerId, this.config.claimWaitMs)
     if (work === null) return false
+    // Resumes and cleanups are carried out once delivery runs in stages (slice 2, Task 20).
+    if (work.kind !== 'start') throw new Error(`this runner cannot yet carry out ${work.kind} work`)
     const controller = new AbortController()
     const heartbeat = setInterval(() => {
       this.api
