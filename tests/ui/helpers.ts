@@ -1,12 +1,14 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import AxeBuilder from '@axe-core/playwright'
-import { expect, type Locator, type Page } from '@playwright/test'
+import { expect, type APIRequestContext, type Locator, type Page } from '@playwright/test'
 
 interface Runtime {
   baseURL: string
   repoPath: string
   opsPath: string
+  askPath: string
+  flakyPath: string
 }
 
 let cached: Runtime | undefined
@@ -57,3 +59,36 @@ Failed deliveries back off.
 
 ## Open questions
 `
+
+/**
+ * A project and an approved task, set up through the API: the journeys that use it are about
+ * what happens after approval, which the first journey already drives through the page.
+ */
+export async function approvedTask(
+  request: APIRequestContext,
+  project: { key: string; name: string; path: string; repo: string },
+  title: string,
+): Promise<string> {
+  const projects = (await (await request.get(appUrl('/api/projects'))).json()) as { key: string }[]
+  if (!projects.some((p) => p.key === project.key)) {
+    const registered = await request.post(appUrl('/api/projects'), {
+      data: {
+        key: project.key,
+        name: project.name,
+        repo_path: project.path,
+        github_repo: project.repo,
+        base_branch: 'main',
+        test_command: 'test -f src/retry.ts',
+      },
+    })
+    expect(registered.ok()).toBe(true)
+  }
+  const task = (await (
+    await request.post(appUrl(`/api/projects/${project.key}/tasks`), { data: { title } })
+  ).json()) as { id: string; key: string }
+  const spec = (await (
+    await request.post(appUrl(`/api/tasks/${task.id}/specs`), { data: { body_md: SPEC } })
+  ).json()) as { id: string }
+  expect((await request.post(appUrl(`/api/specs/${spec.id}/approve`))).ok()).toBe(true)
+  return task.key
+}

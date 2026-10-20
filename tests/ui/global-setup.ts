@@ -1,5 +1,5 @@
 import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { PostgreSqlContainer } from '@testcontainers/postgresql'
@@ -21,7 +21,48 @@ const PLAN = {
   steps: [{ title: 'Delays', requirements: ['R1'], files: ['src/retry.ts'] }],
   checks: [{ criterion: 'AC1', how: 'read the delays' }],
 }
+const BUILD = [
+  { edit: 'src/retry.ts', content: 'export const delays = [1, 2, 4]\n' },
+  { commit: 'back off' },
+]
+const PASS = {
+  tool: 'save_report',
+  args: {
+    summary: 'Passed',
+    criteria: [{ id: 'AC1', status: 'pass', evidence: 'src/retry.ts lists 1, 2 and 4' }],
+  },
+}
+/** A builder that asks first, then builds once answered. */
+const asking = (question: string, options: { id: string; label: string; impact?: string }[]) => ({
+  planner: [[{ tool: 'save_plan', args: PLAN }]],
+  builder: [
+    [{ tool: 'request_approval', args: { question, options, recommendation: options.at(-1)!.id } }],
+    BUILD,
+  ],
+  verifier: [[PASS]],
+})
 const SCRIPT = {
+  // Slice 2's journeys pick their script by the task's title.
+  byTitle: {
+    'Ask about colours': asking('Which colour should the retry banner be?', [
+      { id: 'red', label: 'red' },
+      { id: 'blue', label: 'blue', impact: 'Matches the logo' },
+    ]),
+    'Ask about sizes': asking('Which size should the retry banner be?', [
+      { id: 'small', label: 'small' },
+      { id: 'large', label: 'large', impact: 'Readable at a glance' },
+    ]),
+    'Stop after the plan': {
+      planner: [[{ tool: 'save_plan', args: { ...PLAN, confidence: 'medium' } }]],
+      builder: [BUILD],
+      verifier: [[PASS]],
+    },
+    'Push fails once': {
+      planner: [[{ tool: 'save_plan', args: PLAN }]],
+      builder: [BUILD],
+      verifier: [[PASS]],
+    },
+  },
   planner: [[{ tool: 'save_plan', args: PLAN }]],
   builder: [
     [
@@ -97,6 +138,15 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   const root = mkdtempSync(join(tmpdir(), 'board-ui-'))
   const repoPath = targetRepository(root, 'pay')
   const opsPath = targetRepository(root, 'ops')
+  const askPath = targetRepository(root, 'ask')
+  const flakyPath = targetRepository(root, 'flaky')
+  // This remote refuses the first push it receives, so a run blocks on it and resumes.
+  const refuseOnce = join(root, 'flaky.git', 'hooks', 'pre-receive')
+  writeFileSync(
+    refuseOnce,
+    '#!/bin/sh\n[ -f pushed-once ] && exit 0\ntouch pushed-once\necho "refused once" >&2\nexit 1\n',
+  )
+  chmodSync(refuseOnce, 0o755)
   const scriptPath = join(root, 'script.json')
   writeFileSync(scriptPath, JSON.stringify(SCRIPT))
 
@@ -159,7 +209,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
 
   writeFileSync(
     resolve(REPO, 'tests/ui/.runtime.json'),
-    JSON.stringify({ baseURL: `http://127.0.0.1:${PORT}`, repoPath, opsPath }),
+    JSON.stringify({ baseURL: `http://127.0.0.1:${PORT}`, repoPath, opsPath, askPath, flakyPath }),
   )
 
   // The database stops last: a server still listening on it when it goes would die of the
