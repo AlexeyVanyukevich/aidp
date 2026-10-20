@@ -1,6 +1,12 @@
 import type { FastifyInstance } from 'fastify'
 
-const FORWARDED = new Set(['task.updated', 'run.event', 'resync'])
+const FORWARDED = new Set([
+  'task.updated',
+  'run.event',
+  'approval.requested',
+  'approval.answered',
+  'resync',
+])
 
 export function registerStream(app: FastifyInstance): void {
   app.get('/api/stream', (request, reply) => {

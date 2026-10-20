@@ -6,6 +6,8 @@ export type BoardMessage =
   | { topic: 'task.updated'; taskId: string }
   | { topic: 'run.queued'; runId: string }
   | { topic: 'run.event'; runId: string; taskId: string }
+  | { topic: 'approval.requested'; taskId: string }
+  | { topic: 'approval.answered'; taskId: string }
   /** Sent in-process after the listening connection comes back: notices meanwhile are lost. */
   | { topic: 'resync' }
 

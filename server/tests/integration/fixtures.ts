@@ -83,8 +83,61 @@ export async function seedQueuedRun(
     .execute()
   const run = await db
     .insertInto('runs')
-    .values({ task_id: task.id, kind: 'delivery', spec_version: 1, status: 'queued' })
+    .values({
+      task_id: task.id,
+      kind: 'delivery',
+      spec_version: 1,
+      status: 'queued',
+      queued_at: new Date(),
+    })
     .returning('id')
     .executeTakeFirstOrThrow()
   return { projectId: project.id, taskId: task.id, runId: run.id }
+}
+
+/** A task in Running whose run is running a Build phase, as a runner leaves it mid-phase. */
+export async function seedRunningRun(
+  db: Kysely<Database>,
+  overrides: Partial<{ projectKey: string }> = {},
+): Promise<{
+  projectId: string
+  taskId: string
+  runId: string
+  phaseId: string
+  sessionId: string
+}> {
+  const seeded = await seedQueuedRun(db, { state: 'running', ...overrides })
+  const now = new Date()
+  await db
+    .updateTable('runs')
+    .set({
+      status: 'running',
+      runner_id: 'r1',
+      started_at: now,
+      last_heartbeat_at: now,
+      current_phase: 'build',
+      queued_at: null,
+    })
+    .where('id', '=', seeded.runId)
+    .execute()
+  const phaseId = crypto.randomUUID()
+  const sessionId = crypto.randomUUID()
+  await db
+    .insertInto('phases')
+    .values({
+      id: phaseId,
+      run_id: seeded.runId,
+      name: 'build',
+      attempt: 1,
+      agent: 'builder',
+      model: 'sonnet',
+      status: 'running',
+      session_id: sessionId,
+      summary_md: null,
+      reported_cost: null,
+      started_at: now,
+      ended_at: null,
+    })
+    .execute()
+  return { ...seeded, phaseId, sessionId }
 }

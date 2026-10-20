@@ -46,6 +46,6 @@ export async function performAction(
       .orderBy('version', 'desc')
       .executeTakeFirst()
     if (spec === undefined) throw new ConflictError('This task has no approved spec to run')
-    await queueDeliveryRun(trx, taskId, spec.version)
+    await queueDeliveryRun(trx, taskId, spec.version, now)
   })
 }
