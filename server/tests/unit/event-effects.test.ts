@@ -52,7 +52,107 @@ describe('effectOf', () => {
       summary: 'Done',
       reportedCost: { m: 0.5 },
       sessionId: null,
+      interrupted: false,
       at: new Date(TS),
+    })
+  })
+
+  it('reads a phase end whose process was stopped', () => {
+    expect(effectOf(event('phase_end', { status: 'succeeded', interrupted: true }))).toMatchObject({
+      kind: 'phase_end',
+      interrupted: true,
+    })
+  })
+
+  it('reads a resumed phase start as the same phase running again', () => {
+    expect(
+      effectOf(
+        event('phase_start', { name: 'build', attempt: 1, session_id: 's2', resumed: true }),
+      ),
+    ).toEqual({
+      kind: 'phase_resume',
+      phaseId: '00000000-0000-4000-8000-000000000003',
+      sessionId: 's2',
+      at: new Date(TS),
+    })
+  })
+
+  const CHECKPOINT = {
+    stage: 'build',
+    attempt: 2,
+    phase_id: '00000000-0000-4000-8000-000000000003',
+    session: {
+      id: 's',
+      baseline: {
+        'claude-sonnet-x': { input: 1, output: 2, cache_read: 3, cache_write: 4, usd: 0.01 },
+      },
+      reported: { 'claude-sonnet-x': 0.01 },
+    },
+    head: 'abc123',
+    plan_artifact_id: '00000000-0000-4000-8000-000000000009',
+    failing_report_id: null,
+  }
+
+  it('reads a checkpoint', () => {
+    expect(effectOf(event('checkpoint', CHECKPOINT, { phase_id: null }))).toEqual({
+      kind: 'checkpoint',
+      checkpoint: CHECKPOINT,
+    })
+  })
+
+  it('reads a checkpoint between phases, with no session', () => {
+    const between = { ...CHECKPOINT, stage: 'tests', phase_id: null, session: null }
+    expect(effectOf(event('checkpoint', between, { phase_id: null }))).toEqual({
+      kind: 'checkpoint',
+      checkpoint: between,
+    })
+  })
+
+  it.each([
+    [
+      'a failed step',
+      { blocks: true, cause: 'step_failed', stage: 'push', command: 'git push', output: 'denied' },
+      { cause: 'step_failed', stage: 'push', command: 'git push', output: 'denied' },
+    ],
+    [
+      'a stopped runner',
+      { blocks: true, cause: 'runner_stopped', stage: 'verify' },
+      { cause: 'runner_stopped', stage: 'verify' },
+    ],
+  ])('reads a block for %s', (_name, payload, block) => {
+    expect(effectOf(event('error', payload, { phase_id: null }))).toEqual({
+      kind: 'block',
+      block,
+    })
+  })
+
+  it('keeps only the end of a long step output', () => {
+    const output = `${'x'.repeat(10_000)}the end`
+    const effect = effectOf(
+      event('error', { blocks: true, cause: 'step_failed', stage: 'pr', command: 'gh', output }),
+    )
+    expect(effect).toMatchObject({ kind: 'block' })
+    const kept = (effect as { block: { output: string } }).block.output
+    expect(kept).toHaveLength(8_000)
+    expect(kept.endsWith('the end')).toBe(true)
+  })
+
+  it('reads the plan gate’s approval request', () => {
+    expect(
+      effectOf(
+        event('approval_requested', {
+          approval_id: '00000000-0000-4000-8000-00000000000a',
+          kind: 'plan',
+          question: 'Approve this plan?',
+          context_md: '1. Do it',
+        }),
+      ),
+    ).toEqual({
+      kind: 'plan_approval',
+      approvalId: '00000000-0000-4000-8000-00000000000a',
+      phaseId: '00000000-0000-4000-8000-000000000003',
+      question: 'Approve this plan?',
+      contextMd: '1. Do it',
     })
   })
 
@@ -107,6 +207,51 @@ describe('effectOf', () => {
     ],
     ['a run end with an unknown outcome', event('run_end', { outcome: 'merged' })],
     ['a review without a pull request', event('run_end', { outcome: 'review' })],
+    ['a checkpoint at an unknown stage', event('checkpoint', { ...CHECKPOINT, stage: 'deploy' })],
+    ['a checkpoint at attempt zero', event('checkpoint', { ...CHECKPOINT, attempt: 0 })],
+    [
+      'a checkpoint whose session is not an object',
+      event('checkpoint', { ...CHECKPOINT, session: 'x' }),
+    ],
+    [
+      'a checkpoint whose baseline is not usage',
+      event('checkpoint', {
+        ...CHECKPOINT,
+        session: { ...CHECKPOINT.session, baseline: { m: { input: 'x' } } },
+      }),
+    ],
+    [
+      'a block the runner may not raise: a lost runner',
+      event('error', { blocks: true, cause: 'runner_lost', stage: null }),
+    ],
+    [
+      'a block the runner may not raise: an expired question',
+      event('error', { blocks: true, cause: 'approval_expired', stage: null }),
+    ],
+    [
+      'a failed step with no command',
+      event('error', { blocks: true, cause: 'step_failed', stage: 'push' }),
+    ],
+    [
+      'a plan approval with no id',
+      event('approval_requested', { kind: 'plan', question: 'Approve?' }),
+    ],
+    [
+      'a question from the runner rather than an agent',
+      event('approval_requested', {
+        approval_id: '00000000-0000-4000-8000-00000000000a',
+        kind: 'question',
+        question: 'Which?',
+      }),
+    ],
+    [
+      'a plan approval outside a phase',
+      event(
+        'approval_requested',
+        { approval_id: '00000000-0000-4000-8000-00000000000a', kind: 'plan', question: 'Approve?' },
+        { phase_id: null },
+      ),
+    ],
   ])('refuses %s', (_name, input) => {
     expect(() => effectOf(input)).toThrow(/payload/)
   })
