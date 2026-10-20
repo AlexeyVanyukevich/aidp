@@ -143,3 +143,14 @@ td {
 .answered .answer-given {
   color: var(--zl-ink-soft);
 }
+
+/* Why a Blocked card is blocked, and a failed step's output. */
+.block-reason p {
+  margin: 0;
+}
+.block-reason pre {
+  max-block-size: 16rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: var(--zl-text-sm);
+}

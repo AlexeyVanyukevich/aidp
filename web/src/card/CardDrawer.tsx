@@ -9,6 +9,7 @@ import { Loaded } from '../Loaded'
 import { useDocumentTitle } from '../page'
 import type { TaskState, TaskView } from '../types'
 import { ApprovalsTab } from './ApprovalsTab'
+import { actionsFor, blockText, initialTab } from './blocks'
 import { CostTab } from './CostTab'
 import { PlanTab } from './PlanTab'
 import { PrTab } from './PrTab'
@@ -31,14 +32,35 @@ export function CardDrawer() {
   const problemBox = useRef<HTMLDivElement>(null)
   useDocumentTitle(task.data ? `${task.data.key} ${task.data.title}` : undefined)
 
+  // A card waiting on a question opens on it, once, when it first loads.
+  const opened = useRef(false)
+  useEffect(() => {
+    if (task.data === undefined || opened.current) return
+    opened.current = true
+    setTab(initialTab(task.data))
+  }, [task.data])
+
   // The page behind a modal dialog is inert, its live region with it, so the card announces its
-  // own changes of state — those its buttons made and those the runner made.
+  // own changes of state — those its buttons made and those the runner made. What a button said
+  // (`lead`) comes first, so the state change does not replace it.
   const seen = useRef<TaskState | undefined>(undefined)
+  const lead = useRef('')
+  const announce = (text: string) => {
+    lead.current = text
+    setMessage(text)
+  }
   useEffect(() => {
     if (task.data === undefined) return
-    if (seen.current !== undefined && seen.current !== task.data.state)
-      setMessage(`${task.data.key} is now in ${LABELS[task.data.state]}.`)
-    seen.current = task.data.state
+    const { key: taskKey, state } = task.data
+    if (seen.current !== undefined && seen.current !== state) {
+      const question =
+        state === 'needs_approval' ? ` ${taskKey} has a question waiting in Approvals.` : ''
+      setMessage(
+        `${lead.current === '' ? '' : `${lead.current} `}${taskKey} is now in ${LABELS[state]}.${question}`,
+      )
+      lead.current = ''
+    }
+    seen.current = state
   }, [task.data])
   useEffect(() => {
     if (problem) problemBox.current?.focus()
@@ -65,7 +87,7 @@ export function CardDrawer() {
     onSettled: refresh,
   })
   const act = useMutation({
-    mutationFn: (action: 'cancel' | 'rerun') => api.action(taskId, action),
+    mutationFn: (action: 'cancel' | 'rerun' | 'resume') => api.action(taskId, action),
     onMutate: () => setProblem(undefined),
     onSuccess: leave,
     onError: fail,
@@ -99,7 +121,7 @@ export function CardDrawer() {
           task={t}
           onAnswered={(text) => {
             leave()
-            setMessage(text)
+            announce(text)
           }}
           onProblem={(text) => setProblem({ text })}
         />
@@ -118,41 +140,66 @@ export function CardDrawer() {
       className="card-dialog"
     >
       <Loaded query={task} failure="This card could not be loaded.">
-        {(t) => (
-          <div className="card-body">
-            <p className="state-line" ref={stateLine} tabIndex={-1}>
-              {t.key} · {LABELS[t.state]}
-            </p>
-            <div className="card-actions">
-              <Button busy={move.isPending} onClick={() => step('up')}>
-                Move up
-              </Button>
-              <Button busy={move.isPending} onClick={() => step('down')}>
-                Move down
-              </Button>
-              {t.state === 'review' && (
-                <Button onClick={() => move.mutate({ state: 'done' }, { onSuccess: leave })}>
-                  Mark done
-                </Button>
+        {(t) => {
+          const offered = actionsFor(t.state, t.block)
+          return (
+            <div className="card-body">
+              <p className="state-line" ref={stateLine} tabIndex={-1}>
+                {t.key} · {LABELS[t.state]}
+              </p>
+              {t.state === 'blocked' && t.block !== null && (
+                <div className="block-reason">
+                  <p>{blockText(t.block)}</p>
+                  {t.block.output !== undefined && t.block.output !== '' && (
+                    <details>
+                      <summary>Command output</summary>
+                      <pre>{t.block.output}</pre>
+                    </details>
+                  )}
+                </div>
               )}
-              {(t.state === 'ready' || t.state === 'running') && (
-                <Button variant="danger" onClick={() => act.mutate('cancel')}>
-                  Cancel run
+              <div className="card-actions">
+                <Button busy={move.isPending} onClick={() => step('up')}>
+                  Move up
                 </Button>
-              )}
-              {t.state === 'failed' && (
-                <Button variant="primary" onClick={() => act.mutate('rerun')}>
-                  Re-run
+                <Button busy={move.isPending} onClick={() => step('down')}>
+                  Move down
                 </Button>
-              )}
+                {offered.markDone && (
+                  <Button onClick={() => move.mutate({ state: 'done' }, { onSuccess: leave })}>
+                    Mark done
+                  </Button>
+                )}
+                {offered.resume && (
+                  <Button
+                    variant="primary"
+                    busy={act.isPending}
+                    onClick={() =>
+                      act.mutate('resume', { onSuccess: () => announce(`${t.key} resumed.`) })
+                    }
+                  >
+                    Resume
+                  </Button>
+                )}
+                {offered.cancel && (
+                  <Button variant="danger" onClick={() => act.mutate('cancel')}>
+                    Cancel run
+                  </Button>
+                )}
+                {offered.rerun && (
+                  <Button variant="primary" onClick={() => act.mutate('rerun')}>
+                    Re-run
+                  </Button>
+                )}
+              </div>
+              <Notice className="announce">{message}</Notice>
+              <Notice tone="danger" className="announce" ref={problemBox} tabIndex={-1}>
+                {problem?.text}
+              </Notice>
+              <Tabs label={`${t.key} sections`} items={items(t)} value={tab} onChange={setTab} />
             </div>
-            <Notice className="announce">{message}</Notice>
-            <Notice tone="danger" className="announce" ref={problemBox} tabIndex={-1}>
-              {problem?.text}
-            </Notice>
-            <Tabs label={`${t.key} sections`} items={items(t)} value={tab} onChange={setTab} />
-          </div>
-        )}
+          )
+        }}
       </Loaded>
     </Dialog>
   )
