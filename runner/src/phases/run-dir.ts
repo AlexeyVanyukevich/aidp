@@ -41,6 +41,10 @@ export function prepareRunDir(dir: string): void {
   )
 }
 
-export function writePlanFiles(dir: string, files: string[]): void {
-  writeFileSync(join(dir, 'plan-files.json'), JSON.stringify(files))
+/** The files Build may change: the plan's, and any the owner allowed since (spec §5). */
+export function writeAllowedFiles(dir: string, files: string[]): void {
+  writeFileSync(join(dir, 'allowed-files.json'), JSON.stringify(files))
 }
+
+/** Written by the event hook when the board pauses the run; the guard refuses everything after. */
+export const PAUSED_MARKER = 'paused'

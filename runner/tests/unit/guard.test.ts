@@ -4,10 +4,12 @@ import { decide, denyOutput } from '../../src/hooks/guard.js'
 const CWD = '/work/run-1'
 const ctx = (
   phase = 'build',
-  planFiles: string[] | null = ['src/retry.ts', 'src/retry.test.ts'],
+  allowedFiles: string[] | null = ['src/retry.ts', 'src/retry.test.ts'],
+  paused = false,
 ) => ({
   phase,
-  planFiles,
+  allowedFiles,
+  paused,
   cwd: CWD,
   exists: (path: string) => path !== '/work/run-1/db/migrations/002_new.ts',
 })
@@ -61,6 +63,34 @@ describe('the guard', () => {
     expect(
       decide(input, ctx(phase, planFiles ?? ['src/retry.ts', 'src/retry.test.ts'])).allow,
     ).toBe(allowed)
+  })
+
+  // Slice 2 spec §5: the builder asks rather than working around the plan.
+  it('tells the builder how to ask for a file the plan does not list', () => {
+    expect(decide(edit('src/other.ts'), ctx())).toEqual({
+      allow: false,
+      reason:
+        '`src/other.ts` is not in the plan. If the work needs it, call request_approval with kind out_of_plan, the files, and why. Then end your turn.',
+    })
+  })
+
+  it('allows a file the owner allowed, though the plan does not list it', () => {
+    expect(decide(edit('src/http.ts'), ctx('build', ['src/retry.ts', 'src/http.ts'])).allow).toBe(
+      true,
+    )
+  })
+
+  // Slice 2 spec §6: once the run is paused, nothing the agent does may change anything.
+  it.each([
+    ['Read', { tool_name: 'Read', tool_input: { file_path: 'src/retry.ts' } }],
+    ['Bash', bash('npm test')],
+    ['a planned edit', edit('src/retry.ts')],
+    ['a board tool', { tool_name: 'mcp__board__log_step', tool_input: { summary: 'x' } }],
+  ])('refuses %s once the run is paused', (_name, input) => {
+    expect(decide(input, ctx('build', ['src/retry.ts'], true))).toEqual({
+      allow: false,
+      reason: 'The run is paused; end your turn.',
+    })
   })
 
   it('denies with the JSON Claude Code reads', () => {
