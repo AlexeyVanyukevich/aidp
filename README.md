@@ -9,9 +9,9 @@ that drives Claude Code in git worktrees of the owner's repositories.
 
 ## Status
 
-**Slice 1 built:** one task from the board to a pull request. Pausing for approvals is
-slice 2, drafted specs slice 3 — see §13 of the
-[MVP spec](docs/superpowers/specs/2026-10-10-mvp-design.md). What the board does today is in
+**Slices 1 and 2 built:** one task from the board to a pull request, and runs that pause on a
+question, wait in Blocked when interrupted, and resume. Drafted specs are slice 3 — see §13 of
+the [MVP spec](docs/superpowers/specs/2026-10-10-mvp-design.md). What the board does today is in
 [docs/architecture.md](docs/architecture.md).
 
 ## Running it
@@ -27,6 +27,18 @@ use, from Anthropic's price list, in USD per million tokens:
     ./run price:set <model id> <input> <output> <cache read> <cache write>
 
 The Cost tab names any model that still has no price.
+
+Stopping the runner's daemon mid-run — SIGINT or SIGTERM, as Ctrl-C at its terminal sends —
+blocks the run it was carrying out rather than failing it: start the runner again and press
+Resume on the card. The timings that govern
+pauses and blocks have defaults, and can be set in `.env`:
+
+| Setting          | Default | What it is                                                    |
+| ---------------- | ------- | ------------------------------------------------------------- |
+| `SWEEP_MS`       | 60 000  | How often the server looks for lost runners and old questions |
+| `PAUSE_GRACE_MS` | 60 000  | How long a paused `claude` has to end its turn                |
+| `STOP_GRACE_MS`  | 10 000  | How long a stopped `claude` has between SIGTERM and SIGKILL   |
+| `MARKER_POLL_MS` | 500     | How often the runner looks for the paused marker              |
 
     ./run check          # types, formatting, lint, every suite (needs Docker)
     ./run test:ui        # the browser journeys, with a fake claude
