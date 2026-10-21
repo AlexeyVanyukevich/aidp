@@ -3,6 +3,42 @@
 What is known to be wrong and not yet fixed, newest first. The rule for this file is the kit's
 `core/rules/backlog.md`: one entry per finding, deleted by the commit that fixes it.
 
+## Stopping the runner through `./run` is not tested to block its run
+
+- Where: `run`, `scenario_stop` and `scenario_dev`; `runner/src/daemon.ts`, `main()`
+- Found: 2026-10-21, closing slice 2
+- Problem: a run is blocked as `runner_stopped` when its daemon gets SIGINT or SIGTERM itself:
+  the scenario tests and the slice 2 smoke run proved that. `./run stop` signals the
+  `npm run daemon` process instead, and Ctrl-C under `./run dev` sends SIGTERM to the whole
+  process group through its trap. Whether npm and tsx pass the signal on to the daemon, and let
+  it block its run before they exit, is untried.
+- Impact: if they do not, the run is still recoverable: the sweeper blocks it as `runner_lost`
+  90 seconds later, its phase marked interrupted. But the card names the wrong cause, and the
+  README promises the right one. A scenario that starts the daemon through `npm run`, stops it,
+  and reads the block would settle it.
+
+## The sweeper's sleep rule is not shown to work on a sleeping machine
+
+- Where: `server/src/modules/runs/sweeper.ts`, `server/src/modules/runs/sweep-rules.ts`
+- Found: 2026-10-21, the slice 2 smoke run
+- Problem: the rule — a tick after a gap longer than two intervals decides nothing — is tested
+  only with an injected clock. In the smoke run the machine slept six minutes during a run and
+  the card stayed out of Blocked, but nothing in the logs says whether the rule held it or a
+  heartbeat arrived first after waking: the sweeper logs nothing when it re-arms.
+- Impact: small while the injected-clock tests pass. A debug line when the sweeper re-arms,
+  and one more sleep during a run, would show the rule doing its work.
+
+## The Approvals tab is untried with a screen reader, at 200% zoom and at 320 px
+
+- Where: `web/src/card/ApprovalsTab.tsx`, `web/src/card/CardDrawer.tsx`
+- Found: 2026-10-21, closing slice 2
+- Problem: the browser journeys scan the tab with axe-core and answer by keyboard alone, but
+  no one has listened to it: whether the options' fieldset is announced by the question, an
+  option's impact as its description, and the answer and resume announcements in order. Nor has
+  it been looked at zoomed to 200% or 320 px wide with a long question and five options.
+- Impact: a WCAG 2.2 AA failure there — reflow, name or announcement — would be unknown. The
+  MVP design asks for these to be tried by hand or named as untried; this entry names them.
+
 ## A builder that backgrounds a long command and ends its turn loses the work
 
 - Where: `runner/src/phases/agents.ts`, the phases' prompts and tools; Claude Code's `Bash` tool
