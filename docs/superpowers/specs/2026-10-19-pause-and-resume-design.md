@@ -1,6 +1,6 @@
 # Slice 2 — pause and resume
 
-Status: **approved**, 2026-10-20; designed 2026-10-19. Builds on slice 1 as
+Status: **built**, 2026-10-21; approved 2026-10-20, designed 2026-10-19. Builds on slice 1 as
 [docs/architecture.md](../../architecture.md) describes it on that date.
 
 > **This is a decision record, not a description of the system.**
