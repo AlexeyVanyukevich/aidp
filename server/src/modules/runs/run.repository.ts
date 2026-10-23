@@ -76,7 +76,7 @@ export class RunRepository {
         'created_at',
         'started_at',
         'ended_at',
-        sql<number>`row_number() over (partition by task_id order by created_at)::int`.as('number'),
+        'number',
       ])
       .where('task_id', '=', taskId)
       .orderBy('created_at', 'desc')

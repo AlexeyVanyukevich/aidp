@@ -218,6 +218,7 @@ export class RunnerService {
       .select([
         'runs.id',
         'runs.kind',
+        'runs.number as run_number',
         // The joined spec's, which the join guarantees; the run's own may be null.
         'specs.version as spec_version',
         'tasks.id as task_id',
@@ -235,19 +236,9 @@ export class RunnerService {
       ])
       .where('runs.id', '=', runId)
       .executeTakeFirstOrThrow()
-    // Compared inside the database: a timestamp read into a Date loses its microseconds, and
-    // the run would then not count itself.
-    const { count } = await trx
-      .selectFrom('runs')
-      .select(sql<number>`count(*)::int`.as('count'))
-      .where('task_id', '=', row.task_id)
-      .where('created_at', '<=', (eb) =>
-        eb.selectFrom('runs as self').select('self.created_at').where('self.id', '=', runId),
-      )
-      .executeTakeFirstOrThrow()
     return {
       id: row.id,
-      number: count,
+      number: row.run_number,
       kind: row.kind,
       spec_version: row.spec_version,
       task: {
