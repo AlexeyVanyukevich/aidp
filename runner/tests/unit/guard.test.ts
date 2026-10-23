@@ -65,6 +65,42 @@ describe('the guard', () => {
     ).toBe(allowed)
   })
 
+  // Slice 3 spec §10: a command or agent left in the background is lost when the turn ends.
+  const BACKGROUND =
+    'Run it in the foreground: a command or agent left running in the background is lost when your turn ends. Give a long command a timeout instead.'
+  it.each<[string, { tool_name: string; tool_input: Record<string, unknown> }, boolean]>([
+    [
+      'a command sent to the background',
+      { tool_name: 'Bash', tool_input: { command: 'npm test', run_in_background: true } },
+      false,
+    ],
+    [
+      'an agent sent to the background',
+      { tool_name: 'Agent', tool_input: { prompt: 'find it', run_in_background: true } },
+      false,
+    ],
+    [
+      'a command kept in the foreground',
+      { tool_name: 'Bash', tool_input: { command: 'npm test', run_in_background: false } },
+      true,
+    ],
+    [
+      'an agent kept in the foreground',
+      { tool_name: 'Agent', tool_input: { prompt: 'find it', run_in_background: false } },
+      true,
+    ],
+    ['a command that does not say', bash('npm test'), true],
+    [
+      'another tool carrying the key',
+      { tool_name: 'Read', tool_input: { file_path: 'src/retry.ts', run_in_background: true } },
+      true,
+    ],
+  ])('%s', (_name, input, allowed) => {
+    expect(decide(input, ctx())).toEqual(
+      allowed ? { allow: true } : { allow: false, reason: BACKGROUND },
+    )
+  })
+
   // Slice 2 spec §5: the builder asks rather than working around the plan.
   it('tells the builder how to ask for a file the plan does not list', () => {
     expect(decide(edit('src/other.ts'), ctx())).toEqual({

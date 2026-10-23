@@ -17,6 +17,11 @@ const COMMAND_RULES: [RegExp, string][] = [
 
 const FILE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
 
+/** The tools a model can send to the background, where `-p` loses them when its turn ends. */
+const BACKGROUND_TOOLS = new Set(['Bash', 'Agent'])
+const BACKGROUND =
+  'Run it in the foreground: a command or agent left running in the background is lost when your turn ends. Give a long command a timeout instead.'
+
 function deny(reason: string): Verdict {
   return { allow: false, reason }
 }
@@ -34,6 +39,9 @@ export function decide(
   },
 ): Verdict {
   if (ctx.paused) return deny('The run is paused; end your turn.')
+  // The model asks for the background itself (slice 3 spec, §3, fact 3).
+  if (BACKGROUND_TOOLS.has(input.tool_name) && input.tool_input.run_in_background === true)
+    return deny(BACKGROUND)
   if (input.tool_name === 'Bash') {
     const command = typeof input.tool_input.command === 'string' ? input.tool_input.command : ''
     for (const [pattern, reason] of COMMAND_RULES) if (pattern.test(command)) return deny(reason)

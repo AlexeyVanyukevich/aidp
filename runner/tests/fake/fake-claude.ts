@@ -20,6 +20,7 @@ type Step =
   | { tool: string; args: Record<string, unknown> }
   | { edit: string; content: string }
   | { commit: string }
+  | { bash: string; background?: boolean }
   | { sleep: number }
   | { exit: number }
   | { stubborn: true }
@@ -132,6 +133,23 @@ for (const step of steps) {
     }
     mkdirSync(dirname(join(process.cwd(), step.edit)), { recursive: true })
     writeFileSync(join(process.cwd(), step.edit), step.content)
+    hook('PostToolUse', { ...input, tool_response: {} })
+  } else if ('bash' in step) {
+    // Through the guard as Claude Code sends it; run only when allowed.
+    const input = {
+      tool_name: 'Bash',
+      tool_input: { command: step.bash, ...(step.background ? { run_in_background: true } : {}) },
+    }
+    if (hook('PreToolUse', input).includes('"deny"')) {
+      print({ type: 'system', subtype: 'fake_denied', tool: 'Bash' })
+      if (process.env.FAKE_CLAUDE_LOG)
+        appendFileSync(
+          process.env.FAKE_CLAUDE_LOG,
+          `${JSON.stringify({ agent, denied: 'Bash' })}\n`,
+        )
+      continue
+    }
+    execFileSync('sh', ['-c', step.bash])
     hook('PostToolUse', { ...input, tool_response: {} })
   } else if ('commit' in step) {
     execFileSync('git', ['add', '-A'])
