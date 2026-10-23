@@ -98,6 +98,7 @@ export async function seedQueuedRun(
     .values({
       task_id: task.id,
       kind: 'delivery',
+      number: 1,
       spec_version: 1,
       status: 'queued',
       queued_at: new Date(),

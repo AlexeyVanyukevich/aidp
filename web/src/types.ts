@@ -130,7 +130,8 @@ export interface RunView {
   number: number
   kind: string
   status: string
-  spec_version: number
+  /** A spec run's first draft has none. */
+  spec_version: number | null
   current_phase: string | null
   branch: string | null
   pr_number: number | null

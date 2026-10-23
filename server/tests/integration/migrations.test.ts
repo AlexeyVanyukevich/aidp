@@ -89,6 +89,7 @@ describe('the initial migration', () => {
       .values({
         task_id: task.id,
         kind: 'delivery',
+        number: 1,
         spec_version: 1,
         status: 'running',
         current_phase: null,
@@ -179,6 +180,7 @@ async function run(status: RunStatus = 'running') {
     .values({
       task_id: task.id,
       kind: 'delivery',
+      number: 1,
       spec_version: 1,
       status,
       current_phase: null,
@@ -256,21 +258,92 @@ describe('the pause-and-resume migration', () => {
   })
 
   it('goes down and up again to the same columns', async () => {
-    const columns = async () =>
-      (
-        await sql<{ c: string }>`select table_name || '.' || column_name as c
-          from information_schema.columns where table_schema = 'public' order by 1`.execute(
-          getTestDb(),
-        )
-      ).rows.map((row) => row.c)
     const before = await columns()
-    const migrator = new Migrator({
-      db: getTestDb(),
-      provider: { getMigrations: async () => migrations },
-    })
-    expect((await migrator.migrateDown()).error).toBeUndefined()
+    expect((await migrator().migrateTo('001_initial')).error).toBeUndefined()
     expect(await columns()).not.toContain('runs.checkpoint')
-    expect((await migrator.migrateToLatest()).error).toBeUndefined()
+    expect((await migrator().migrateToLatest()).error).toBeUndefined()
+    expect(await columns()).toEqual(before)
+  })
+})
+
+const columns = async () =>
+  (
+    await sql<{ c: string }>`select table_name || '.' || column_name as c
+      from information_schema.columns where table_schema = 'public' order by 1`.execute(getTestDb())
+  ).rows.map((row) => row.c)
+
+const migrator = () =>
+  new Migrator({ db: getTestDb(), provider: { getMigrations: async () => migrations } })
+
+describe('the drafted-specs migration', () => {
+  it('numbers the runs already there by task and kind, in creation order', async () => {
+    expect((await migrator().migrateTo('002_pause_and_resume')).error).toBeUndefined()
+    const db = getTestDb()
+    const { id: projectId } = await project()
+    const { rows: tasks } = await sql<{ id: string }>`
+      insert into tasks (project_id, number, title, state, position, updated_at)
+      values (${projectId}, 1, 'A', 'running', 1, now()), (${projectId}, 2, 'B', 'running', 2, now())
+      returning id`.execute(db)
+    const [a, b] = tasks.map((task) => task.id)
+    // Created in this order: two drafts and two runs on A, interleaved, and one run on B.
+    const kinds = [
+      [a, 'delivery'],
+      [a, 'spec'],
+      [b, 'delivery'],
+      [a, 'delivery'],
+      [a, 'spec'],
+    ] as const
+    for (const [index, [task, kind]] of kinds.entries())
+      await sql`insert into runs (task_id, kind, spec_version, status, created_at)
+        values (${task}, ${kind}, 1, 'succeeded', now() + make_interval(secs => ${index}))`.execute(
+        db,
+      )
+    await sql`insert into specs (task_id, version, body_md, status)
+      values (${a}, 1, '## Requirements', 'draft')`.execute(db)
+
+    expect((await migrator().migrateToLatest()).error).toBeUndefined()
+
+    const { rows } = await sql<{ number: number }>`
+      select number from runs order by created_at`.execute(db)
+    expect(rows.map((row) => row.number)).toEqual([1, 1, 1, 2, 2])
+    const spec = await db.selectFrom('specs').select('run_id').executeTakeFirstOrThrow()
+    expect(spec.run_id).toBeNull()
+  })
+
+  it('refuses a delivery run without a spec version, and accepts a spec run without one', async () => {
+    const { id } = await run()
+    const { task_id: taskId } = await getTestDb()
+      .selectFrom('runs')
+      .select('task_id')
+      .where('id', '=', id)
+      .executeTakeFirstOrThrow()
+    const insert = (kind: 'spec' | 'delivery') =>
+      sql`insert into runs (task_id, kind, number, spec_version, status)
+        values (${taskId}, ${kind}, 2, null, 'queued')`.execute(getTestDb())
+    await expect(insert('delivery')).rejects.toThrow(/runs_delivery_has_spec/)
+    await expect(insert('spec')).resolves.toBeDefined()
+  })
+
+  // In SQL: the kind joins the code's vocabulary with its rules, in a later commit.
+  it('keeps a batch of questions', async () => {
+    const { id } = await run()
+    await sql`insert into approval_requests (run_id, kind, question, options, questions, status)
+      values (${id}, 'questions', '1 question about the spec', '[]',
+        ${JSON.stringify([{ id: 'q1', question: 'How often?', options: [] }])}, 'open')`.execute(
+      getTestDb(),
+    )
+    const row = await getTestDb()
+      .selectFrom('approval_requests')
+      .select('questions')
+      .executeTakeFirstOrThrow()
+    expect(row.questions).toEqual([{ id: 'q1', question: 'How often?', options: [] }])
+  })
+
+  it('goes down and up again to the same columns', async () => {
+    const before = await columns()
+    expect((await migrator().migrateTo('002_pause_and_resume')).error).toBeUndefined()
+    expect(await columns()).not.toContain('runs.number')
+    expect((await migrator().migrateToLatest()).error).toBeUndefined()
     expect(await columns()).toEqual(before)
   })
 })

@@ -1,6 +1,7 @@
 import type { Migration } from 'kysely/migration'
 import * as initial from './001_initial.js'
 import * as pauseAndResume from './002_pause_and_resume.js'
+import * as draftedSpecs from './003_drafted_specs.js'
 
 /**
  * Listed rather than discovered from disk: a file provider imports at runtime, which fails
@@ -10,4 +11,5 @@ import * as pauseAndResume from './002_pause_and_resume.js'
 export const migrations: Record<string, Migration> = {
   '001_initial': initial,
   '002_pause_and_resume': pauseAndResume,
+  '003_drafted_specs': draftedSpecs,
 }
