@@ -45,8 +45,11 @@ export const BLOCK_CAUSES = [
 ] as const
 export type BlockCause = (typeof BLOCK_CAUSES)[number]
 
-/** A delivery run's stages, in order; a checkpoint names the one it resumes from. */
-export const STAGES = ['prepare', 'plan', 'build', 'tests', 'verify', 'push', 'pr'] as const
+/**
+ * A run's stages: a delivery run's, in order, and a spec run's `prepare` then `spec`. A
+ * checkpoint names the one it resumes from.
+ */
+export const STAGES = ['prepare', 'spec', 'plan', 'build', 'tests', 'verify', 'push', 'pr'] as const
 export type Stage = (typeof STAGES)[number]
 
 export const PENDING_WORK = ['resume', 'cleanup'] as const

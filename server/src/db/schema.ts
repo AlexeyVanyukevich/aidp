@@ -56,6 +56,8 @@ export interface SpecsTable {
   criteria: JSONColumnType<SpecCriterion[] | null, string | null, string | null>
   status: 'draft' | 'approved' | 'superseded'
   approved_at: NullableTimestamp
+  /** The spec run that wrote this version; null for one saved by hand. */
+  run_id: ColumnType<string | null, string | null | undefined, string | null>
   created_at: Generated<Date>
 }
 
@@ -63,7 +65,12 @@ export interface RunsTable {
   id: Generated<string>
   task_id: string
   kind: 'spec' | 'delivery'
-  spec_version: number
+  /** Its number among the task's runs of the same kind: "Draft 2", "Run 1". */
+  number: number
+  /** The approved version a delivery run delivers; the version a spec run redrafts, or null. */
+  spec_version: number | null
+  /** What the owner asked a redraft to change. */
+  note: ColumnType<string | null, string | null | undefined, string | null>
   status: RunStatus
   current_phase: PhaseName | null
   branch: string | null
@@ -149,6 +156,8 @@ export interface ApprovalRequestsTable {
   checkpoint: ColumnType<unknown, string | null, string | null>
   /** The files an `out_of_plan` request asks to change. */
   files: JSONColumnType<string[] | null, string | null | undefined, string | null>
+  /** A batch's questions, numbered `q1` … `qn`; null for every other kind. */
+  questions: JSONColumnType<unknown[] | null, string | null | undefined, string | null>
   created_at: Generated<Date>
   answered_at: NullableTimestamp
 }

@@ -218,7 +218,8 @@ export class RunnerService {
       .select([
         'runs.id',
         'runs.kind',
-        'runs.spec_version',
+        // The joined spec's, which the join guarantees; the run's own may be null.
+        'specs.version as spec_version',
         'tasks.id as task_id',
         'tasks.number',
         'tasks.title',

@@ -46,11 +46,18 @@ export async function queueDeliveryRun(
   specVersion: number,
   now: Date,
 ): Promise<string> {
+  const { count } = await trx
+    .selectFrom('runs')
+    .select((eb) => eb.fn.countAll<number>().as('count'))
+    .where('task_id', '=', taskId)
+    .where('kind', '=', 'delivery')
+    .executeTakeFirstOrThrow()
   const run = await trx
     .insertInto('runs')
     .values({
       task_id: taskId,
       kind: 'delivery',
+      number: Number(count) + 1,
       spec_version: specVersion,
       status: 'queued',
       queued_at: now,
