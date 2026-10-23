@@ -391,7 +391,10 @@ tests `server/tests/integration/runs-read.test.ts`, `runner.test.ts`.
 
 - [ ] **Test:** `PHASES.spec` is §5's row, its tools in both the agent and the allowed list; the
       spec-writer's instructions name `request_approval` kind `questions`, `save_spec`, and an
-      empty Open questions; the handoff for a first draft carries `<task phase="spec">`, the
+      empty Open questions, and carry the Spec tab's template word for word — Task 4's
+      recording, told only the sections' names, wrote `**R1** …` and `**AC1 (R1, R8)** …`,
+      which the parser reads as items without ids; and, in `spec-lint-text.test.ts`, a bolded id
+      gets a finding naming the item, so the agent can fix it; the handoff for a first draft carries `<task phase="spec">`, the
       description and the return format, and for a redraft also `<spec version="n">` and
       `<note>`, all escaped; `prepareDetachedWorktree` leaves a worktree at `origin/<base>` with
       no branch and no new local branch in the repository.
