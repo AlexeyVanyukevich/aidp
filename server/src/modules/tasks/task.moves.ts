@@ -3,16 +3,41 @@ import type { Database } from '../../db/schema.js'
 import { publish } from '../../shared/bus.js'
 import { ConflictError, NotFoundError } from '../../shared/errors.js'
 import type { TaskState } from '../../shared/vocabulary.js'
-import { nextState, type Move } from './transitions.js'
+import { DELIVERY_FACTS, nextState, type Facts, type Move } from './transitions.js'
+
+type Db = Kysely<Database> | Transaction<Database>
+
+/**
+ * What a move's destination can depend on (`Facts`), read where the move is made: the kind of
+ * the task's latest run, and whether the task has a spec version.
+ */
+export async function moveFacts(db: Db, taskId: string): Promise<Facts> {
+  const run = await db
+    .selectFrom('runs')
+    .select('kind')
+    .where('task_id', '=', taskId)
+    .orderBy('created_at', 'desc')
+    .limit(1)
+    .executeTakeFirst()
+  const spec = await db
+    .selectFrom('specs')
+    .select('id')
+    .where('task_id', '=', taskId)
+    .limit(1)
+    .executeTakeFirst()
+  return { run: run?.kind ?? 'delivery', hasSpec: spec !== undefined }
+}
 
 /**
  * The only writer of `tasks.state`. The row is locked first, so two movers — the owner's tab
- * and the runner — are serialised, and the loser gets a 409 rather than a lost update.
+ * and the runner — are serialised, and the loser gets a 409 rather than a lost update. A move
+ * whose destination depends on the run's kind or on a spec existing takes `facts`.
  */
 export async function moveTask(
-  db: Kysely<Database> | Transaction<Database>,
+  db: Db,
   taskId: string,
   move: Move,
+  facts: Facts = DELIVERY_FACTS,
 ): Promise<{ from: TaskState; to: TaskState }> {
   const task = await db
     .selectFrom('tasks')
@@ -22,7 +47,7 @@ export async function moveTask(
     .executeTakeFirst()
   if (task === undefined) throw new NotFoundError('No such task')
 
-  const to = nextState(task.state, move)
+  const to = nextState(task.state, move, facts)
   if (to === undefined) {
     throw new ConflictError(`A task in ${task.state} cannot ${move.replaceAll('_', ' ')}`, {
       state: task.state,
