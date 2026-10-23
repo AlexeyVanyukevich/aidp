@@ -39,20 +39,6 @@ What is known to be wrong and not yet fixed, newest first. The rule for this fil
 - Impact: a WCAG 2.2 AA failure there — reflow, name or announcement — would be unknown. The
   MVP design asks for these to be tried by hand or named as untried; this entry names them.
 
-## A builder that backgrounds a long command and ends its turn loses the work
-
-- Where: `runner/src/phases/agents.ts`, the phases' prompts and tools; Claude Code's `Bash` tool
-  moves a long command into the background
-- Found: 2026-10-21, the slice 2 smoke run: a spec asked the builder to run `sleep 150`
-- Problem: Claude Code ran the command in the background, and the builder ended its turn
-  "waiting for the background sleep to complete". In `-p` mode, ending the turn ends the
-  process: nothing was committed, the attempt counted as a failed verify, and after three
-  attempts the run failed. A real slow command — a long test suite, a build — can go the same
-  way.
-- Impact: a run fails, at the cost of every attempt, for work the agent never finished. The
-  phases' prompts could tell agents to wait for a background command before ending their turn,
-  or the runner could refuse to end a phase while one is still running.
-
 ## A run that reaches the subscription's usage limit fails instead of waiting
 
 - Where: `runner/src/phases/phase.ts`, which treats every failed `claude` process alike; slice

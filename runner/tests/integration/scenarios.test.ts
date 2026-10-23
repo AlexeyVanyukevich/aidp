@@ -499,6 +499,36 @@ describe('a run that asks', () => {
   })
 })
 
+// The backlog entry slice 3 took: a builder that backgrounded a command and ended its turn lost
+// the work. The guard refuses the background, so the work stays in the turn (slice 3 spec, §10).
+describe('a command sent to the background', () => {
+  it('is refused; the builder runs it in the foreground and commits', async () => {
+    const taskId = await approvedTask()
+    const f = fleet({
+      planner: [[{ tool: 'save_plan', args: PLAN }]],
+      builder: [
+        [
+          { bash: 'echo late > background.txt', background: true },
+          { bash: 'echo ran > foreground.txt' },
+          { edit: 'src/retry.ts', content: 'export const delays = [1, 2, 4]\n' },
+          { commit: 'back off' },
+        ],
+      ],
+      verifier: [[report('pass')]],
+    })
+    expect(await f.daemon().runOnce()).toBe('review')
+    expect(await state(taskId)).toBe('review')
+    expect(f.calls().some((c) => c.denied === 'Bash')).toBe(true)
+    const files = execFileSync(
+      'git',
+      ['-C', target.remote, 'ls-tree', '-r', '--name-only', 'board/PAY-1-r1'],
+      { encoding: 'utf8' },
+    )
+    expect(files).toContain('foreground.txt')
+    expect(files).not.toContain('background.txt')
+  })
+})
+
 describe('a run that is blocked', () => {
   it('blocks on a push the remote refuses, and pushes on Resume', async () => {
     const taskId = await approvedTask()
