@@ -33,7 +33,8 @@ export type PhaseStatus = (typeof PHASE_STATUSES)[number]
 export const APPROVAL_STATUSES = ['open', 'answered', 'expired', 'withdrawn'] as const
 export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number]
 
-export const APPROVAL_KINDS = ['question', 'out_of_plan', 'plan'] as const
+/** `questions` is a batch: several questions, asked together and answered whole (slice 3). */
+export const APPROVAL_KINDS = ['question', 'out_of_plan', 'plan', 'questions'] as const
 export type ApprovalKind = (typeof APPROVAL_KINDS)[number]
 
 /** Why a run is Blocked. The first and last are the server's sweeper's; the others the runner's. */

@@ -2,9 +2,15 @@ import { describe, expect, it } from 'vitest'
 import {
   allowedFiles,
   checkAnswer,
+  checkBatchAnswer,
   checkRequest,
+  leadLine,
+  numberQuestions,
   optionsFor,
+  questionCount,
   resumeMessage,
+  type BatchQuestion,
+  type BatchQuestionInput,
   type RequestInput,
 } from '../../src/modules/approvals/approval-rules.js'
 
@@ -234,5 +240,245 @@ describe('checkAnswer', () => {
     ],
   ])('%s', (_name, answer, findings) => {
     expect(checkAnswer({ options: [A, B] }, answer)).toEqual(findings)
+  })
+})
+
+// Slice 3: a batch of questions, asked together and answered whole (slice 3 spec, §6).
+const HOW_OFTEN: BatchQuestionInput = {
+  question: 'How often?',
+  options: [A, B],
+  recommendation: 'a',
+  context_md: 'Today it never retries.',
+}
+const WHICH: BatchQuestionInput = { question: 'Which errors?' }
+const batch = (questions: BatchQuestionInput[], change: Partial<RequestInput> = {}) =>
+  checkRequest({ kind: 'questions', question: '', options: [], questions, ...change })
+
+describe('checkRequest for a batch', () => {
+  it.each<[string, BatchQuestionInput[], Partial<RequestInput>, { field: string; code: string }[]]>(
+    [
+      ['two questions, no lead line', [HOW_OFTEN, WHICH], {}, []],
+      ['a lead line', [WHICH], { question: 'Before the spec' }, []],
+      ['eight questions', Array.from({ length: 8 }, () => WHICH), {}, []],
+      ['no question at all', [], {}, [{ field: 'questions', code: 'required' }]],
+      [
+        'nine questions',
+        Array.from({ length: 9 }, () => WHICH),
+        {},
+        [{ field: 'questions', code: 'too_many' }],
+      ],
+      [
+        'an empty question',
+        [WHICH, { question: ' ' }],
+        {},
+        [{ field: 'questions[1].question', code: 'required' }],
+      ],
+      [
+        'a question of 1 001 characters',
+        [{ question: 'q'.repeat(1001) }],
+        {},
+        [{ field: 'questions[0].question', code: 'too_long' }],
+      ],
+      [
+        'six options on one question',
+        [{ question: 'Which?', options: [1, 2, 3, 4, 5, 6].map(option) }],
+        {},
+        [{ field: 'questions[0].options', code: 'too_many' }],
+      ],
+      [
+        'an empty label',
+        [{ question: 'Which?', options: [{ id: 'a', label: '' }] }],
+        {},
+        [{ field: 'questions[0].options[0].label', code: 'required' }],
+      ],
+      [
+        'two options sharing an id',
+        [{ question: 'Which?', options: [A, { ...B, id: 'a' }] }],
+        {},
+        [{ field: 'questions[0].options[1].id', code: 'duplicate' }],
+      ],
+      [
+        'a recommendation naming no option of its question',
+        [WHICH, { ...HOW_OFTEN, recommendation: 'z' }],
+        {},
+        [{ field: 'questions[1].recommendation', code: 'unknown_option' }],
+      ],
+      [
+        'a question’s context of 2 001 characters',
+        [{ question: 'Which?', context_md: 'c'.repeat(2001) }],
+        {},
+        [{ field: 'questions[0].context_md', code: 'too_long' }],
+      ],
+      [
+        'shared context of 8 001 characters',
+        [WHICH],
+        { context_md: 'c'.repeat(8001) },
+        [{ field: 'context_md', code: 'too_long' }],
+      ],
+      [
+        'a lead line of 1 001 characters',
+        [WHICH],
+        { question: 'q'.repeat(1001) },
+        [{ field: 'question', code: 'too_long' }],
+      ],
+    ],
+  )('%s', (_name, questions, change, findings) => {
+    expect(batch(questions, change)).toEqual(findings)
+  })
+})
+
+describe('numberQuestions', () => {
+  it('numbers the questions in their order, and fills what the agent left out', () => {
+    expect(numberQuestions([HOW_OFTEN, WHICH])).toEqual([
+      {
+        id: 'q1',
+        question: 'How often?',
+        options: [A, B],
+        recommendation: 'a',
+        context_md: 'Today it never retries.',
+      },
+      { id: 'q2', question: 'Which errors?', options: [], recommendation: null, context_md: null },
+    ])
+  })
+
+  it.each([
+    [1, '1 question about the spec'],
+    [3, '3 questions about the spec'],
+  ])('gives %i questions the lead line "%s"', (count, line) => {
+    expect(leadLine(count)).toBe(line)
+  })
+})
+
+const NUMBERED: BatchQuestion[] = numberQuestions([HOW_OFTEN, WHICH])
+
+describe('checkBatchAnswer', () => {
+  it.each<[string, Parameters<typeof checkBatchAnswer>[1], { field: string; code: string }[]]>([
+    [
+      'every question, by option and by words',
+      {
+        answers: [
+          { question_id: 'q1', option_id: 'b' },
+          { question_id: 'q2', text: 'Only 5xx' },
+        ],
+      },
+      [],
+    ],
+    [
+      'both an option and words',
+      {
+        answers: [
+          { question_id: 'q1', option_id: 'a', text: 'and jitter' },
+          { question_id: 'q2', text: 'All' },
+        ],
+      },
+      [],
+    ],
+    [
+      'answers in another order',
+      {
+        answers: [
+          { question_id: 'q2', text: 'All' },
+          { question_id: 'q1', option_id: 'a' },
+        ],
+      },
+      [],
+    ],
+    [
+      'a question left out',
+      { answers: [{ question_id: 'q1', option_id: 'a' }] },
+      [{ field: 'answers[1]', code: 'required' }],
+    ],
+    [
+      'a question answered with blank words',
+      {
+        answers: [
+          { question_id: 'q1', option_id: 'a' },
+          { question_id: 'q2', text: '  ' },
+        ],
+      },
+      [{ field: 'answers[1]', code: 'required' }],
+    ],
+    [
+      'an option its question does not offer',
+      {
+        answers: [
+          { question_id: 'q1', option_id: 'zz' },
+          { question_id: 'q2', text: 'All' },
+        ],
+      },
+      [{ field: 'answers[0].option_id', code: 'unknown_option' }],
+    ],
+    [
+      'words over 4 000 characters',
+      {
+        answers: [
+          { question_id: 'q1', option_id: 'a' },
+          { question_id: 'q2', text: 'x'.repeat(4001) },
+        ],
+      },
+      [{ field: 'answers[1].text', code: 'too_long' }],
+    ],
+    [
+      'a question the batch does not have',
+      {
+        answers: [
+          { question_id: 'q1', option_id: 'a' },
+          { question_id: 'q2', text: 'All' },
+          { question_id: 'q9', text: 'Extra' },
+        ],
+      },
+      [{ field: 'answers', code: 'unknown_question' }],
+    ],
+    [
+      'a question answered twice',
+      {
+        answers: [
+          { question_id: 'q1', option_id: 'a' },
+          { question_id: 'q1', option_id: 'b' },
+          { question_id: 'q2', text: 'All' },
+        ],
+      },
+      [{ field: 'answers', code: 'duplicate' }],
+    ],
+  ])('%s', (_name, answer, findings) => {
+    expect(checkBatchAnswer(NUMBERED, answer)).toEqual(findings)
+  })
+})
+
+describe('resumeMessage for a batch', () => {
+  it('lists each question with its answer, in the batch’s order', () => {
+    expect(
+      resumeMessage(
+        { kind: 'questions', options: [], files: null, questions: NUMBERED },
+        {
+          answers: [
+            { question_id: 'q2', text: 'Only 5xx.\nNever 4xx.' },
+            { question_id: 'q1', option_id: 'a', text: 'Add jitter.' },
+          ],
+        },
+      ),
+    ).toBe(
+      [
+        'The owner answered your questions:',
+        '',
+        '1. How often?',
+        '   3 retries, exponential backoff — Matches the email worker',
+        '   Add jitter.',
+        '',
+        '2. Which errors?',
+        '   Only 5xx.',
+        '   Never 4xx.',
+      ].join('\n'),
+    )
+  })
+})
+
+describe('questionCount', () => {
+  it.each<[string, Parameters<typeof questionCount>[0], number]>([
+    ['a single question', { kind: 'question', questions: null }, 1],
+    ['a plan', { kind: 'plan', questions: null }, 1],
+    ['a batch of two', { kind: 'questions', questions: NUMBERED }, 2],
+  ])('%s counts %i', (_name, approval, count) => {
+    expect(questionCount(approval)).toBe(count)
   })
 })
