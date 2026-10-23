@@ -110,6 +110,27 @@ describe('reading a run', () => {
     ])
   })
 
+  it('numbers a task’s drafts and its delivery runs apart', async () => {
+    await getTestDb()
+      .insertInto('runs')
+      .values({
+        task_id: ids.taskId,
+        kind: 'spec',
+        number: 1,
+        spec_version: null,
+        status: 'succeeded',
+        created_at: new Date('2026-01-01T00:00:00Z'),
+      })
+      .execute()
+    const response = await app.inject({ method: 'GET', url: `/api/tasks/${ids.taskId}/runs` })
+    expect(
+      response.json().map((run: { kind: string; number: number }) => [run.kind, run.number]),
+    ).toEqual([
+      ['delivery', 1],
+      ['spec', 1],
+    ])
+  })
+
   it('pages through events in time order with a cursor', async () => {
     const first = (
       await app.inject({ method: 'GET', url: `/api/runs/${ids.runId}/events?limit=2` })

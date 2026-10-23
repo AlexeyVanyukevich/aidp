@@ -158,6 +158,22 @@ describe('POST /api/runner/claim', () => {
     expect((await claim()).json()).toEqual({ work: null })
   })
 
+  it('numbers the run among the task’s delivery runs, not its drafts', async () => {
+    const { taskId } = await seedQueuedRun(getTestDb())
+    await getTestDb()
+      .insertInto('runs')
+      .values({
+        task_id: taskId,
+        kind: 'spec',
+        number: 1,
+        spec_version: null,
+        status: 'succeeded',
+        created_at: new Date('2026-01-01T00:00:00Z'),
+      })
+      .execute()
+    expect((await claim()).json().work.run.number).toBe(1)
+  })
+
   it('waits for work when asked to, and answers as soon as a run is queued', async () => {
     const pending = claim(5_000)
     await new Promise((done) => setTimeout(done, 200))
