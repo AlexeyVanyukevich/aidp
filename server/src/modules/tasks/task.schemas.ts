@@ -26,3 +26,9 @@ export const PatchTaskBody = Type.Object(
   },
   { additionalProperties: false, minProperties: 1 },
 )
+
+/** Blank text passes here and is refused by the action, which names the field (§8). */
+export const RedraftBody = Type.Object(
+  { note: Type.String({ maxLength: 4_000 }) },
+  { additionalProperties: false },
+)

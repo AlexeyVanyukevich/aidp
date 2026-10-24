@@ -142,3 +142,22 @@ describe('moveTask', () => {
     expect(row.position).toBe(8)
   })
 })
+
+// Slice 3 spec §8: a draft reads the description it started with.
+describe('the description', () => {
+  it.each([
+    ['backlog', 200],
+    ['spec_review', 200],
+    ['spec_draft', 409],
+    ['ready', 409],
+    ['running', 409],
+  ] as const)('in %s answers %i', async (state, status) => {
+    const { id } = await seedTask(getTestDb(), projectId, { state })
+    const response = await app.inject({
+      method: 'PATCH',
+      url: `/api/tasks/${id}`,
+      payload: { description_md: 'Retry failed webhooks.' },
+    })
+    expect(response.statusCode).toBe(status)
+  })
+})

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { buildTestApp, closeTestDb, getTestDb, resetDb } from './helpers.js'
-import { seedQueuedRun, seedRunningRun } from './fixtures.js'
+import { GOOD_SPEC, seedProject, seedQueuedRun, seedRunningRun, seedTask } from './fixtures.js'
 import { openApproval } from '../../src/modules/approvals/approval.service.js'
 import type { BlockCause } from '../../src/shared/vocabulary.js'
 
@@ -249,4 +249,193 @@ describe('what a card says about a pause or a block', () => {
     const runs = (await app.inject({ method: 'GET', url: `/api/tasks/${taskId}/runs` })).json()
     expect(runs[0].phases[0]).toMatchObject({ id: phaseId, interrupted: true })
   })
+})
+
+// Slice 3: a spec drafted by the spec-writer, redrafted with a note, and a draft cancelled.
+const describeAs = (taskId: string, description: string) =>
+  db().updateTable('tasks').set({ description_md: description }).where('id', '=', taskId).execute()
+const runsOf = (taskId: string) =>
+  db()
+    .selectFrom('runs')
+    .select(['kind', 'number', 'spec_version', 'note', 'status', 'queued_at'])
+    .where('task_id', '=', taskId)
+    .orderBy('created_at')
+    .execute()
+const redraft = (taskId: string, payload?: Record<string, unknown>) => {
+  const url = `/api/tasks/${taskId}/actions/redraft`
+  return payload === undefined
+    ? app.inject({ method: 'POST', url })
+    : app.inject({ method: 'POST', url, payload })
+}
+
+/** A task in Spec review with two versions, as a first draft and a hand edit leave it. */
+async function inReview() {
+  const { id: projectId } = await seedProject(db())
+  const { id: taskId } = await seedTask(db(), projectId, { state: 'spec_review' })
+  await describeAs(taskId, 'Retry failed webhooks.')
+  for (const version of [1, 2])
+    await db()
+      .insertInto('specs')
+      .values({ task_id: taskId, version, body_md: GOOD_SPEC, status: 'draft', criteria: null })
+      .execute()
+  return taskId
+}
+
+/** A spec run in its Spec phase, the card in Spec draft, waiting on a question. */
+async function pausedDraft(hasSpec: boolean) {
+  const { id: projectId } = await seedProject(db())
+  const { id: taskId } = await seedTask(db(), projectId, { state: 'spec_draft' })
+  if (hasSpec)
+    await db()
+      .insertInto('specs')
+      .values({ task_id: taskId, version: 1, body_md: GOOD_SPEC, status: 'draft', criteria: null })
+      .execute()
+  const { id: runId } = await db()
+    .insertInto('runs')
+    .values({
+      task_id: taskId,
+      kind: 'spec',
+      number: 1,
+      spec_version: hasSpec ? 1 : null,
+      status: 'running',
+      started_at: new Date(),
+    })
+    .returning('id')
+    .executeTakeFirstOrThrow()
+  const phaseId = crypto.randomUUID()
+  await db()
+    .insertInto('phases')
+    .values({
+      id: phaseId,
+      run_id: runId,
+      name: 'spec',
+      attempt: 1,
+      agent: 'spec-writer',
+      model: 'opus',
+      status: 'running',
+      session_id: crypto.randomUUID(),
+      started_at: new Date(),
+    })
+    .execute()
+  const { id: approvalId } = await db()
+    .transaction()
+    .execute((trx) =>
+      openApproval(
+        trx,
+        { runId, taskId, phaseId, kind: 'question', question: 'How often?', options: [] },
+        new Date(),
+        { recordEvent: true },
+      ),
+    )
+  return { taskId, runId, approvalId }
+}
+
+describe('Draft spec', () => {
+  it('queues a first draft from a Backlog card that has a description', async () => {
+    const { id: projectId } = await seedProject(db())
+    const { id: taskId } = await seedTask(db(), projectId)
+    await describeAs(taskId, 'Retry failed webhooks.')
+    const queued = app.bus.next('run.queued', 5_000)
+
+    const response = await act(taskId, 'draft-spec')
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json().state).toBe('spec_draft')
+    const [first] = await runsOf(taskId)
+    expect(first).toMatchObject({
+      kind: 'spec',
+      number: 1,
+      spec_version: null,
+      note: null,
+      status: 'queued',
+    })
+    expect(first?.queued_at).not.toBeNull()
+    expect(await queued).toMatchObject({ topic: 'run.queued' })
+  })
+
+  it('refuses an empty description, naming the field, and changes nothing', async () => {
+    const { id: projectId } = await seedProject(db())
+    const { id: taskId } = await seedTask(db(), projectId)
+    await describeAs(taskId, '   ')
+    const response = await act(taskId, 'draft-spec')
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({
+      error: 'validation_error',
+      details: { field: 'description_md' },
+    })
+    expect((await taskRow(taskId)).state).toBe('backlog')
+    expect(await runsOf(taskId)).toEqual([])
+  })
+
+  it('refuses a card in Spec review, whose action is Redraft', async () => {
+    expect((await act(await inReview(), 'draft-spec')).statusCode).toBe(409)
+  })
+})
+
+describe('Redraft', () => {
+  it('queues a draft of the latest version, carrying the owner’s note', async () => {
+    const taskId = await inReview()
+    const response = await redraft(taskId, { note: 'Say how long to wait.' })
+    expect(response.statusCode).toBe(200)
+    expect(response.json().state).toBe('spec_draft')
+    expect(await runsOf(taskId)).toEqual([
+      expect.objectContaining({
+        kind: 'spec',
+        number: 1,
+        spec_version: 2,
+        note: 'Say how long to wait.',
+        status: 'queued',
+      }),
+    ])
+  })
+
+  it('refuses an empty note, naming the field', async () => {
+    const response = await redraft(await inReview(), { note: '  ' })
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({ details: { field: 'note' } })
+  })
+
+  it.each([
+    ['no body', undefined],
+    ['an unknown field', { note: 'x', urgent: true }],
+    ['a note over 4 000 characters', { note: 'x'.repeat(4001) }],
+  ])('refuses %s', async (_name, payload) => {
+    expect((await redraft(await inReview(), payload)).statusCode).toBe(400)
+  })
+
+  it('refuses a card in Backlog', async () => {
+    const { id: projectId } = await seedProject(db())
+    const { id: taskId } = await seedTask(db(), projectId)
+    expect((await redraft(taskId, { note: 'x' })).statusCode).toBe(409)
+  })
+})
+
+describe('Cancel, on a draft', () => {
+  it('returns a card whose first draft is still queued to Backlog', async () => {
+    const { id: projectId } = await seedProject(db())
+    const { id: taskId } = await seedTask(db(), projectId)
+    await describeAs(taskId, 'Retry failed webhooks.')
+    await act(taskId, 'draft-spec')
+
+    expect((await act(taskId, 'cancel')).json().state).toBe('backlog')
+    expect(await runsOf(taskId)).toEqual([expect.objectContaining({ status: 'cancelled' })])
+  })
+
+  it.each([
+    [false, 'backlog'],
+    [true, 'spec_review'],
+  ])(
+    'returns a draft waiting on a question, the task having a spec %s, to %s',
+    async (hasSpec, state) => {
+      const { taskId, runId, approvalId } = await pausedDraft(hasSpec)
+      expect((await act(taskId, 'cancel')).json().state).toBe(state)
+      expect(await run(runId)).toMatchObject({ status: 'cancelled', pending: 'cleanup' })
+      const approval = await db()
+        .selectFrom('approval_requests')
+        .select('status')
+        .where('id', '=', approvalId)
+        .executeTakeFirstOrThrow()
+      expect(approval.status).toBe('withdrawn')
+    },
+  )
 })
