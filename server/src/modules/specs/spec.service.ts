@@ -68,6 +68,39 @@ export async function queueDeliveryRun(
   return run.id
 }
 
+/**
+ * A spec run for the task: a first draft (`baseVersion` null) or a redraft of a version, with
+ * the owner's note. Numbered among the task's drafts (slice 3 spec, §2).
+ */
+export async function queueSpecRun(
+  trx: Transaction<Database>,
+  taskId: string,
+  draft: { baseVersion: number | null; note: string | null },
+  now: Date,
+): Promise<string> {
+  const { count } = await trx
+    .selectFrom('runs')
+    .select((eb) => eb.fn.countAll<number>().as('count'))
+    .where('task_id', '=', taskId)
+    .where('kind', '=', 'spec')
+    .executeTakeFirstOrThrow()
+  const run = await trx
+    .insertInto('runs')
+    .values({
+      task_id: taskId,
+      kind: 'spec',
+      number: Number(count) + 1,
+      spec_version: draft.baseVersion,
+      note: draft.note,
+      status: 'queued',
+      queued_at: now,
+    })
+    .returning('id')
+    .executeTakeFirstOrThrow()
+  await publish(trx, { topic: 'run.queued', runId: run.id })
+  return run.id
+}
+
 export class SpecService {
   constructor(
     private readonly db: Kysely<Database>,

@@ -1,12 +1,16 @@
 import type { Kysely } from 'kysely'
 import type { Database } from '../../db/schema.js'
 import { publish } from '../../shared/bus.js'
-import { NotFoundError } from '../../shared/errors.js'
+import { ConflictError, NotFoundError } from '../../shared/errors.js'
+import type { TaskState } from '../../shared/vocabulary.js'
 import type { CostService } from '../costs/cost.service.js'
 import type { ProjectRepository, ProjectView } from '../projects/project.repository.js'
 import type { RunRepository } from '../runs/run.repository.js'
 import { moveTask } from './task.moves.js'
 import type { TaskCard, TaskRepository, TaskView } from './task.repository.js'
+
+/** Where the description may change: before a draft, and between drafts (slice 3 spec, §8). */
+const DESCRIBABLE: readonly TaskState[] = ['backlog', 'spec_review']
 
 export class TaskService {
   constructor(
@@ -75,8 +79,11 @@ export class TaskService {
       state?: 'done'
     },
   ): Promise<TaskView> {
-    await this.get(id)
+    const task = await this.get(id)
     const { state, ...fields } = input
+    // A draft reads the description it started with; later runs read the approved spec.
+    if (fields.description_md !== undefined && !DESCRIBABLE.includes(task.state))
+      throw new ConflictError(`The description is fixed in ${task.state}`, { state: task.state })
     if (state === 'done') await moveTask(this.db, id, 'drag_done')
     if (Object.keys(fields).length > 0) {
       await this.tasks.update(id, fields)

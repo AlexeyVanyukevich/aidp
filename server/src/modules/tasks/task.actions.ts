@@ -1,15 +1,74 @@
-import type { Kysely } from 'kysely'
+import type { Kysely, Transaction } from 'kysely'
 import type { Database } from '../../db/schema.js'
 import { publish } from '../../shared/bus.js'
-import { ConflictError } from '../../shared/errors.js'
-import { queueDeliveryRun } from '../specs/spec.service.js'
-import { moveTask } from './task.moves.js'
+import { ConflictError, ValidationError } from '../../shared/errors.js'
+import { queueDeliveryRun, queueSpecRun } from '../specs/spec.service.js'
+import { moveFacts, moveTask } from './task.moves.js'
 
-export const ACTIONS = ['cancel', 'rerun', 'resume'] as const
+export const ACTIONS = ['cancel', 'rerun', 'resume', 'draft-spec'] as const
 export type Action = (typeof ACTIONS)[number]
 
 /** What a resumed agent reads after a block (spec §6). */
 export const INTERRUPTED = 'You were interrupted. Continue from where you stopped.'
+
+const blank = (text: string) => text.trim() === ''
+
+/**
+ * Cancel: the card leaves its run. A delivery run's card goes to Failed; a draft's goes back
+ * where it came from (slice 3 spec, §2).
+ */
+async function cancel(trx: Transaction<Database>, taskId: string, now: Date): Promise<void> {
+  const run = await trx
+    .selectFrom('runs')
+    .select(['id', 'kind', 'status', 'pending'])
+    .where('task_id', '=', taskId)
+    .where('status', 'in', ['queued', 'running', 'paused', 'blocked'])
+    .orderBy('created_at', 'desc')
+    .executeTakeFirst()
+  if (run?.kind === 'spec') await moveTask(trx, taskId, 'drop_draft', await moveFacts(trx, taskId))
+  else await moveTask(trx, taskId, 'cancel')
+  if (run === undefined) return
+  const reason = 'cancelled by the owner'
+  // A start still queued never began: it ends here. A running run is stopped by its runner,
+  // which learns of it in its next heartbeat and reports the run's end itself. A run that
+  // holds no process — paused, blocked, or answered but not yet resumed — leaves a worktree
+  // behind, which the runner removes when it claims the cleanup.
+  if (run.status === 'queued' && run.pending === null) {
+    await trx
+      .updateTable('runs')
+      .set({ status: 'cancelled', ended_at: now, queued_at: null, failure_reason: reason })
+      .where('id', '=', run.id)
+      .execute()
+    return
+  }
+  if (run.status === 'running') {
+    await trx
+      .updateTable('runs')
+      .set({ cancel_requested: true, failure_reason: reason })
+      .where('id', '=', run.id)
+      .execute()
+    return
+  }
+  await trx
+    .updateTable('runs')
+    .set({
+      status: 'cancelled',
+      ended_at: now,
+      failure_reason: reason,
+      pending: 'cleanup',
+      queued_at: now,
+      resume_message: null,
+    })
+    .where('id', '=', run.id)
+    .execute()
+  await trx
+    .updateTable('approval_requests')
+    .set({ status: 'withdrawn' })
+    .where('run_id', '=', run.id)
+    .where('status', 'in', ['open', 'expired'])
+    .execute()
+  await publish(trx, { topic: 'run.queued', runId: run.id })
+}
 
 export async function performAction(
   db: Kysely<Database>,
@@ -19,60 +78,27 @@ export async function performAction(
 ): Promise<void> {
   await db.transaction().execute(async (trx) => {
     if (action === 'cancel') {
-      await moveTask(trx, taskId, 'cancel')
-      const run = await trx
-        .selectFrom('runs')
-        .select(['id', 'status', 'pending'])
-        .where('task_id', '=', taskId)
-        .where('status', 'in', ['queued', 'running', 'paused', 'blocked'])
-        .orderBy('created_at', 'desc')
-        .executeTakeFirst()
-      if (run === undefined) return
-      const reason = 'cancelled by the owner'
-      // A start still queued never began: it ends here. A running run is stopped by its runner,
-      // which learns of it in its next heartbeat and reports the run's end itself. A run that
-      // holds no process — paused, blocked, or answered but not yet resumed — leaves a worktree
-      // behind, which the runner removes when it claims the cleanup.
-      if (run.status === 'queued' && run.pending === null) {
-        await trx
-          .updateTable('runs')
-          .set({ status: 'cancelled', ended_at: now, queued_at: null, failure_reason: reason })
-          .where('id', '=', run.id)
-          .execute()
-        return
-      }
-      if (run.status === 'running') {
-        await trx
-          .updateTable('runs')
-          .set({ cancel_requested: true, failure_reason: reason })
-          .where('id', '=', run.id)
-          .execute()
-        return
-      }
-      await trx
-        .updateTable('runs')
-        .set({
-          status: 'cancelled',
-          ended_at: now,
-          failure_reason: reason,
-          pending: 'cleanup',
-          queued_at: now,
-          resume_message: null,
+      await cancel(trx, taskId, now)
+      return
+    }
+
+    if (action === 'draft-spec') {
+      // The move first: a card in the wrong state is a stale view (409), whatever it holds.
+      await moveTask(trx, taskId, 'draft_spec')
+      const task = await trx
+        .selectFrom('tasks')
+        .select('description_md')
+        .where('id', '=', taskId)
+        .executeTakeFirstOrThrow()
+      if (blank(task.description_md))
+        throw new ValidationError('The task has no description to draft from', {
+          field: 'description_md',
         })
-        .where('id', '=', run.id)
-        .execute()
-      await trx
-        .updateTable('approval_requests')
-        .set({ status: 'withdrawn' })
-        .where('run_id', '=', run.id)
-        .where('status', 'in', ['open', 'expired'])
-        .execute()
-      await publish(trx, { topic: 'run.queued', runId: run.id })
+      await queueSpecRun(trx, taskId, { baseVersion: null, note: null }, now)
       return
     }
 
     if (action === 'resume') {
-      await moveTask(trx, taskId, 'resume')
       const run = await trx
         .selectFrom('runs')
         .select(['id', 'block', 'checkpoint'])
@@ -80,6 +106,7 @@ export async function performAction(
         .where('status', '=', 'blocked')
         .orderBy('created_at', 'desc')
         .executeTakeFirst()
+      await moveTask(trx, taskId, 'resume', await moveFacts(trx, taskId))
       // An expired question is answered, not resumed past: the agent would decide it itself.
       if (run === undefined || run.block?.cause === 'approval_expired')
         throw new ConflictError('This card is waiting on a question; answer it to go on', {
@@ -114,5 +141,26 @@ export async function performAction(
       .executeTakeFirst()
     if (spec === undefined) throw new ConflictError('This task has no approved spec to run')
     await queueDeliveryRun(trx, taskId, spec.version, now)
+  })
+}
+
+/** Redraft: the latest version goes back to the spec-writer with the owner's note (§4). */
+export async function redraft(
+  db: Kysely<Database>,
+  taskId: string,
+  note: string,
+  now: Date,
+): Promise<void> {
+  await db.transaction().execute(async (trx) => {
+    await moveTask(trx, taskId, 'redraft')
+    if (blank(note)) throw new ValidationError('Say what to change', { field: 'note' })
+    const latest = await trx
+      .selectFrom('specs')
+      .select('version')
+      .where('task_id', '=', taskId)
+      .orderBy('version', 'desc')
+      .executeTakeFirst()
+    if (latest === undefined) throw new ConflictError('This task has no spec to redraft')
+    await queueSpecRun(trx, taskId, { baseVersion: latest.version, note: note.trim() }, now)
   })
 }
