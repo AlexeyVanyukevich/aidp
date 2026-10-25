@@ -12,10 +12,12 @@ export interface TaskView {
   position: number
   budget_usd: number | null
   project: { key: string; name: string; github_repo: string }
-  /** The question the card waits on: open, or expired and blocking it. */
-  approval: { id: string; kind: ApprovalKind; status: ApprovalStatus } | null
+  /** The question the card waits on: open, or expired and blocking it; a batch's count. */
+  approval: { id: string; kind: ApprovalKind; status: ApprovalStatus; questions: number } | null
   /** Why a Blocked card is blocked; null in any other state. */
   block: Block | null
+  /** Why the latest run, a draft, failed; null otherwise (slice 3 spec, §5). */
+  draft_failure: string | null
 }
 
 export interface TaskCard {
@@ -58,7 +60,7 @@ export class TaskRepository {
     if (row === undefined) return undefined
     const run = await this.db
       .selectFrom('runs')
-      .select(['id', 'block'])
+      .select(['id', 'kind', 'status', 'block', 'failure_reason'])
       .where('task_id', '=', id)
       .orderBy('created_at', 'desc')
       .executeTakeFirst()
@@ -67,7 +69,7 @@ export class TaskRepository {
         ? undefined
         : await this.db
             .selectFrom('approval_requests')
-            .select(['id', 'kind', 'status'])
+            .select(['id', 'kind', 'status', 'questions'])
             .where('run_id', '=', run.id)
             .where('status', 'in', ['open', 'expired'])
             .orderBy('created_at', 'desc')
@@ -82,8 +84,17 @@ export class TaskRepository {
       position: row.position,
       budget_usd: row.budget_usd === null ? null : Number(row.budget_usd),
       project: { key: row.project_key, name: row.project_name, github_repo: row.github_repo },
-      approval: approval ?? null,
+      approval:
+        approval === undefined
+          ? null
+          : {
+              id: approval.id,
+              kind: approval.kind,
+              status: approval.status,
+              questions: approval.kind === 'questions' ? (approval.questions ?? []).length : 1,
+            },
       block: row.state === 'blocked' ? (run?.block ?? null) : null,
+      draft_failure: run?.kind === 'spec' && run.status === 'failed' ? run.failure_reason : null,
     }
   }
 
