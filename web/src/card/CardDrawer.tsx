@@ -9,7 +9,7 @@ import { Loaded } from '../Loaded'
 import { useDocumentTitle } from '../page'
 import type { TaskState, TaskView } from '../types'
 import { ApprovalsTab } from './ApprovalsTab'
-import { actionsFor, blockText, initialTab } from './blocks'
+import { actionsFor, blockText, initialTab, stateAnnouncement } from './blocks'
 import { CostTab } from './CostTab'
 import { PlanTab } from './PlanTab'
 import { PrTab } from './PrTab'
@@ -51,17 +51,26 @@ export function CardDrawer() {
   }
   useEffect(() => {
     if (task.data === undefined) return
-    const { key: taskKey, state } = task.data
-    if (seen.current !== undefined && seen.current !== state) {
-      const question =
-        state === 'needs_approval' ? ` ${taskKey} has a question waiting in Approvals.` : ''
-      setMessage(
-        `${lead.current === '' ? '' : `${lead.current} `}${taskKey} is now in ${LABELS[state]}.${question}`,
-      )
+    const { key: taskKey, state, draft_failure: draftFailure } = task.data
+    const from = seen.current
+    seen.current = state
+    if (from === undefined || from === state) return
+    const say = (latestVersion: number | null) => {
+      const text = stateAnnouncement({ key: taskKey, from, to: state, latestVersion, draftFailure })
+      setMessage(`${lead.current === '' ? '' : `${lead.current} `}${text}`)
       lead.current = ''
     }
-    seen.current = state
-  }, [task.data])
+    // A finished draft names its version; the specs are read afresh, since the notice that
+    // moved the card may arrive before the one that refreshes them.
+    if (from === 'spec_draft' && state === 'spec_review' && draftFailure === null)
+      client
+        .fetchQuery({ queryKey: ['specs', taskId], queryFn: () => api.specs(taskId), staleTime: 0 })
+        .then(
+          (specs) => say(specs[0]?.version ?? null),
+          () => say(null),
+        )
+    else say(null)
+  }, [task.data, client, taskId])
   useEffect(() => {
     if (problem) problemBox.current?.focus()
   }, [problem])
@@ -157,6 +166,9 @@ export function CardDrawer() {
                     </details>
                   )}
                 </div>
+              )}
+              {t.draft_failure !== null && (
+                <p className="block-reason">The last draft did not finish: {t.draft_failure}.</p>
               )}
               <div className="card-actions">
                 <Button busy={move.isPending} onClick={() => step('up')}>
