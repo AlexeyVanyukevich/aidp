@@ -388,3 +388,48 @@ describe('get_spec, in a spec run', () => {
     )
   })
 })
+
+describe('request_approval with a batch', () => {
+  it('numbers the questions, pauses the run, and tells the agent to stop', async () => {
+    const { client, runId } = await session()
+    const result = await client.callTool({
+      name: 'request_approval',
+      arguments: {
+        kind: 'questions',
+        questions: [
+          {
+            question: 'How often?',
+            options: [{ id: 'three', label: 'Three times' }],
+            recommendation: 'three',
+          },
+          { question: 'Which errors?' },
+        ],
+      },
+    })
+    expect(result.isError).toBeFalsy()
+    expect(text(result)).toMatch(/^Paused:/)
+    const approval = await getTestDb()
+      .selectFrom('approval_requests')
+      .select(['kind', 'question', 'questions'])
+      .where('run_id', '=', runId)
+      .executeTakeFirstOrThrow()
+    expect(approval).toMatchObject({
+      kind: 'questions',
+      question: '2 questions about the spec',
+      questions: [{ id: 'q1' }, { id: 'q2' }],
+    })
+  })
+
+  it('refuses a batch whose question names no option it offers, naming the field', async () => {
+    const { client } = await session()
+    const result = await client.callTool({
+      name: 'request_approval',
+      arguments: {
+        kind: 'questions',
+        questions: [{ question: 'How often?', recommendation: 'z' }],
+      },
+    })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('questions[0].recommendation: unknown option')
+  })
+})

@@ -291,3 +291,122 @@ describe('listing approvals', () => {
     ).toBe(400)
   })
 })
+
+// Slice 3 spec §6: several questions asked together, answered whole.
+const HOW_OFTEN = { question: 'How often?', options: [A, B], recommendation: 'b' }
+const WHICH = { question: 'Which errors?' }
+const openBatch = () =>
+  open({
+    kind: 'questions',
+    question: '',
+    options: [],
+    recommendation: null,
+    questions: [HOW_OFTEN, WHICH],
+  })
+
+describe('a batch of questions', () => {
+  it('numbers its questions, gives it a lead line, and pauses as a single question does', async () => {
+    const { approvalId, runId, taskId } = await openBatch()
+    expect(await row(approvalId)).toMatchObject({
+      kind: 'questions',
+      question: '2 questions about the spec',
+      options: [],
+      status: 'open',
+      questions: [
+        {
+          id: 'q1',
+          question: 'How often?',
+          options: [A, B],
+          recommendation: 'b',
+          context_md: null,
+        },
+        {
+          id: 'q2',
+          question: 'Which errors?',
+          options: [],
+          recommendation: null,
+          context_md: null,
+        },
+      ],
+    })
+    expect((await runRow(runId)).status).toBe('paused')
+    expect(await taskState(taskId)).toBe('needs_approval')
+  })
+
+  it('refuses a batch with no questions, naming the field', async () => {
+    await expect(
+      open({ kind: 'questions', question: '', options: [], recommendation: null, questions: [] }),
+    ).rejects.toMatchObject({ details: { findings: [{ field: 'questions', code: 'required' }] } })
+  })
+
+  it('takes an answer to every question, and resumes the run with all of them', async () => {
+    const { approvalId, runId, taskId } = await openBatch()
+    const response = await answer(approvalId, {
+      answers: [
+        { question_id: 'q1', option_id: 'b' },
+        { question_id: 'q2', text: 'Only 5xx.' },
+      ],
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ status: 'answered', question_count: 2 })
+    expect(await taskState(taskId)).toBe('running')
+    expect(await runRow(runId)).toMatchObject({
+      status: 'queued',
+      pending: 'resume',
+      resume_message:
+        'The owner answered your questions:\n\n1. How often?\n   Blue — Matches the logo\n\n2. Which errors?\n   Only 5xx.',
+    })
+  })
+
+  it.each<[string, Record<string, unknown>, string]>([
+    ['a question left out', { answers: [{ question_id: 'q1', option_id: 'a' }] }, 'answers[1]'],
+    ['a single answer to a batch', { option_id: 'a' }, 'answers'],
+  ])('refuses %s, naming the field, and changes nothing', async (_name, payload, field) => {
+    const { approvalId, taskId } = await openBatch()
+    const response = await answer(approvalId, payload)
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({ error: 'validation_error', details: { field } })
+    expect(await taskState(taskId)).toBe('needs_approval')
+  })
+
+  it('refuses answers to a single question', async () => {
+    const { approvalId } = await open()
+    const response = await answer(approvalId, { answers: [{ question_id: 'q1', text: 'Red' }] })
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({ details: { field: 'answers' } })
+  })
+
+  it('counts its questions in the open list', async () => {
+    await openBatch()
+    const response = await app.inject({ method: 'GET', url: '/api/approvals?status=open' })
+    expect(response.json()).toEqual([
+      expect.objectContaining({ kind: 'questions', question_count: 2 }),
+    ])
+  })
+
+  it('stays answerable once expired on the card it blocked', async () => {
+    const { approvalId, runId, taskId } = await openBatch()
+    await db()
+      .updateTable('approval_requests')
+      .set({ status: 'expired' })
+      .where('id', '=', approvalId)
+      .execute()
+    await db()
+      .updateTable('runs')
+      .set({
+        status: 'blocked',
+        block: JSON.stringify({ cause: 'approval_expired', stage: 'build' }),
+      })
+      .where('id', '=', runId)
+      .execute()
+    await db().updateTable('tasks').set({ state: 'blocked' }).where('id', '=', taskId).execute()
+    const response = await answer(approvalId, {
+      answers: [
+        { question_id: 'q1', option_id: 'a' },
+        { question_id: 'q2', text: 'All' },
+      ],
+    })
+    expect(response.statusCode).toBe(200)
+    expect(await taskState(taskId)).toBe('running')
+  })
+})
