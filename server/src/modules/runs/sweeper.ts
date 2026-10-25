@@ -94,7 +94,9 @@ export class Sweeper {
         .select('state')
         .where('id', '=', run.task_id)
         .executeTakeFirstOrThrow()
-      if (task.state === 'running') await moveTask(trx, run.task_id, 'block')
+      // A delivery run's card runs; a draft's drafts (slice 3 spec, §4).
+      if (task.state === 'running' || task.state === 'spec_draft')
+        await moveTask(trx, run.task_id, 'block')
     })
   }
 

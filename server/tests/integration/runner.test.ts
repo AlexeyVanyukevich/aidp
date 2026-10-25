@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { buildTestApp, closeTestDb, getTestDb, resetDb, TEST_RUNNER_KEY } from './helpers.js'
-import { seedQueuedRun, seedRunningRun } from './fixtures.js'
+import { GOOD_SPEC, seedProject, seedQueuedRun, seedRunningRun, seedTask } from './fixtures.js'
 import { openApproval } from '../../src/modules/approvals/approval.service.js'
 import { publish } from '../../src/shared/bus.js'
 
@@ -749,5 +749,199 @@ describe('events that pause, block and resume', () => {
       context_md: '1. x',
     })
     expect(await state(taskId)).toBe('needs_approval')
+  })
+})
+
+// Slice 3: spec runs, handed out by the claim and settled by their events (spec §4, §5).
+const act = (taskId: string, action: string, payload?: Record<string, unknown>) =>
+  app.inject({
+    method: 'POST',
+    url: `/api/tasks/${taskId}/actions/${action}`,
+    ...(payload === undefined ? {} : { payload }),
+  })
+
+/** A Backlog task with a description and, when asked, a version already saved. */
+async function draftable(versions = 0) {
+  const { id: projectId } = await seedProject(getTestDb())
+  const { id: taskId } = await seedTask(getTestDb(), projectId)
+  await getTestDb()
+    .updateTable('tasks')
+    .set({ description_md: 'Retry failed webhooks.' })
+    .where('id', '=', taskId)
+    .execute()
+  for (let version = 1; version <= versions; version++)
+    await getTestDb()
+      .insertInto('specs')
+      .values({ task_id: taskId, version, body_md: GOOD_SPEC, status: 'draft', criteria: null })
+      .execute()
+  if (versions > 0)
+    await getTestDb()
+      .updateTable('tasks')
+      .set({ state: 'spec_review' })
+      .where('id', '=', taskId)
+      .execute()
+  return taskId
+}
+
+/** A spec run claimed and running, with its token: a first draft, or a redraft of v1. */
+async function drafting(redraft = false) {
+  const taskId = await draftable(redraft ? 1 : 0)
+  if (redraft) await act(taskId, 'redraft', { note: 'Say how long.' })
+  else await act(taskId, 'draft-spec')
+  const work = (await claim()).json().work
+  const token = (
+    await app.inject({
+      method: 'POST',
+      url: `/api/runner/runs/${work.run.id}/tokens`,
+      headers: auth,
+    })
+  ).json().token as string
+  return { taskId, runId: work.run.id as string, token, work }
+}
+
+const runEnd = (runId: string, outcome: string, reason?: string) =>
+  event(runId, 'run_end', { outcome, ...(reason === undefined ? {} : { reason }) })
+
+const saveVersion = (taskId: string, runId: string) =>
+  getTestDb()
+    .insertInto('specs')
+    .values({
+      task_id: taskId,
+      version: 9,
+      body_md: GOOD_SPEC,
+      status: 'draft',
+      criteria: null,
+      run_id: runId,
+    })
+    .execute()
+
+describe('a spec run', () => {
+  it('is handed out as a first draft, leaving the card in Spec draft', async () => {
+    const { taskId, work } = await drafting()
+    expect(work).toMatchObject({
+      kind: 'start',
+      run: {
+        kind: 'spec',
+        number: 1,
+        spec_version: null,
+        spec: null,
+        note: null,
+        task: { id: taskId, key: 'PAY-1', description_md: 'Retry failed webhooks.' },
+        project: { key: 'PAY', base_branch: 'main' },
+      },
+    })
+    expect(await state(taskId)).toBe('spec_draft')
+  })
+
+  it('is handed out as a redraft, with the version it redrafts and the note', async () => {
+    const { work } = await drafting(true)
+    expect(work.run).toMatchObject({
+      kind: 'spec',
+      spec_version: 1,
+      spec: { version: 1, body_md: GOOD_SPEC },
+      note: 'Say how long.',
+    })
+  })
+
+  it('is skipped and cancelled when its card has left Spec draft before the claim', async () => {
+    const taskId = await draftable()
+    await act(taskId, 'draft-spec')
+    await getTestDb()
+      .updateTable('tasks')
+      .set({ state: 'backlog' })
+      .where('id', '=', taskId)
+      .execute()
+    expect((await claim()).json()).toEqual({ work: null })
+    const run = await getTestDb()
+      .selectFrom('runs')
+      .select('status')
+      .where('task_id', '=', taskId)
+      .executeTakeFirstOrThrow()
+    expect(run.status).toBe('cancelled')
+  })
+
+  it('moves its card to Spec review when it ends with a saved version', async () => {
+    const { taskId, runId, token } = await drafting()
+    await saveVersion(taskId, runId)
+    expect((await send(token, [runEnd(runId, 'drafted')])).statusCode).toBe(200)
+    expect(await state(taskId)).toBe('spec_review')
+    const run = await getTestDb()
+      .selectFrom('runs')
+      .select(['status', 'failure_reason'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow()
+    expect(run).toEqual({ status: 'succeeded', failure_reason: null })
+  })
+
+  it('fails, and returns its card to Backlog, when it ends without saving one', async () => {
+    const { taskId, runId, token } = await drafting()
+    await send(token, [runEnd(runId, 'drafted')])
+    expect(await state(taskId)).toBe('backlog')
+    const run = await getTestDb()
+      .selectFrom('runs')
+      .select(['status', 'failure_reason'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow()
+    expect(run).toEqual({ status: 'failed', failure_reason: 'the spec-writer saved no spec' })
+  })
+
+  it('returns a redraft that failed to Spec review', async () => {
+    const { taskId, runId, token } = await drafting(true)
+    await send(token, [runEnd(runId, 'failed', 'the spec phase failed')])
+    expect(await state(taskId)).toBe('spec_review')
+  })
+
+  it('pauses on a question and drafts again on the answer', async () => {
+    const { taskId, runId } = await drafting()
+    const phaseId = crypto.randomUUID()
+    await getTestDb()
+      .insertInto('phases')
+      .values({
+        id: phaseId,
+        run_id: runId,
+        name: 'spec',
+        attempt: 1,
+        agent: 'spec-writer',
+        model: 'opus',
+        status: 'running',
+        started_at: now,
+      })
+      .execute()
+    const { id } = await getTestDb()
+      .transaction()
+      .execute((trx) =>
+        openApproval(
+          trx,
+          { runId, taskId, phaseId, kind: 'question', question: 'How often?', options: [] },
+          now,
+          { recordEvent: true },
+        ),
+      )
+    expect(await state(taskId)).toBe('needs_approval')
+    await app.inject({
+      method: 'POST',
+      url: `/api/approvals/${id}/answer`,
+      payload: { text: 'Three' },
+    })
+    expect(await state(taskId)).toBe('spec_draft')
+  })
+
+  it('is blocked when its runner is stopped, and drafts again on Resume', async () => {
+    const { taskId, runId, token } = await drafting()
+    const checkpoint = {
+      stage: 'spec',
+      attempt: 1,
+      phase_id: null,
+      session: null,
+      head: null,
+      plan_artifact_id: null,
+      failing_report_id: null,
+    }
+    await send(token, [
+      event(runId, 'checkpoint', checkpoint),
+      event(runId, 'error', { blocks: true, cause: 'runner_stopped', stage: 'spec' }),
+    ])
+    expect(await state(taskId)).toBe('blocked')
+    expect((await act(taskId, 'resume')).json().state).toBe('spec_draft')
   })
 })

@@ -132,6 +132,11 @@ export async function carryOut(
     work.kind === 'start'
       ? { stage: 'prepare', attempt: 1, phase: null, planId: null, failingId: null }
       : stateOf(work.checkpoint, run.id)
+  /** A delivery run always carries its approved spec; one without it cannot go on. */
+  const specOf = () => {
+    if (run.spec === null) throw new End('failed', 'the run has no approved spec')
+    return run.spec
+  }
   /** The answer or nudge for the phase a resume continues; null once used, or for a plan approved. */
   let message: string | null = work.kind === 'resume' ? work.message : null
   let testOutput: string | undefined
@@ -217,8 +222,8 @@ export async function carryOut(
     const common = {
       taskKey: task.key,
       title: task.title,
-      specVersion: run.spec.version,
-      specMd: run.spec.body_md,
+      specVersion: specOf().version,
+      specMd: specOf().body_md,
       budgetUsd: task.budget_usd,
       phase: name,
       attempt,
@@ -445,7 +450,7 @@ export async function carryOut(
               base: project.base_branch,
               branch,
               title: `${task.key}: ${task.title}`,
-              body: `${task.key}, run ${run.number}, spec v${run.spec.version}.\n\n## Verify report\n\n${report?.body_md ?? ''}\n`,
+              body: `${task.key}, run ${run.number}, spec v${specOf().version}.\n\n## Verify report\n\n${report?.body_md ?? ''}\n`,
             }))
           outcome = 'review'
           extra = { pr_number: pr.number, pr_url: pr.url }
