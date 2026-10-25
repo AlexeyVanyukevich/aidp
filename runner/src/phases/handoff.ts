@@ -1,10 +1,15 @@
 export interface HandoffInput {
   taskKey: string
   title: string
-  phase: 'plan' | 'build' | 'verify'
+  phase: 'spec' | 'plan' | 'build' | 'verify'
   attempt: number
-  specVersion: number
-  specMd: string
+  /** The approved spec a delivery phase works to; the version a redraft starts from. */
+  specVersion?: number
+  specMd?: string
+  /** What a spec run drafts from. */
+  description?: string
+  /** What the owner asked a redraft to change. */
+  note?: string
   budgetUsd: number | null
   summaries: { phase: string; attempt: number; text: string }[]
   plan?: string
@@ -24,6 +29,7 @@ function cut(label: string, text: string, max: number): string {
 }
 
 const RETURNS: Record<HandoffInput['phase'], string> = {
+  spec: 'Call save_spec until the lint is clean, then reply with one paragraph.',
   plan: 'Call save_plan, then reply with one paragraph.',
   build:
     '<build_report status="done|blocked" files="…" tests="…" confidence="high|medium|low"/> and one paragraph.',
@@ -34,8 +40,12 @@ const RETURNS: Record<HandoffInput['phase'], string> = {
 export function buildHandoff(input: HandoffInput): string {
   const parts = [
     `<task id="${attr(input.taskKey)}" phase="${input.phase}" attempt="${input.attempt}">${escape(input.title)}</task>`,
-    `<spec version="${input.specVersion}">\n${escape(input.specMd)}\n</spec>`,
   ]
+  if (input.description !== undefined)
+    parts.push(`<description>\n${escape(input.description)}\n</description>`)
+  if (input.specVersion !== undefined && input.specMd !== undefined)
+    parts.push(`<spec version="${input.specVersion}">\n${escape(input.specMd)}\n</spec>`)
+  if (input.note !== undefined) parts.push(`<note>\n${escape(input.note)}\n</note>`)
   if (input.summaries.length > 0) {
     parts.push(
       `<context>\n${input.summaries.map((s) => `<summary phase="${s.phase}" attempt="${s.attempt}">${escape(s.text)}</summary>`).join('\n')}\n</context>`,

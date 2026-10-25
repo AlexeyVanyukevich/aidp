@@ -49,6 +49,21 @@ describe('Git', () => {
     expect(existsSync(worktree)).toBe(false)
   })
 
+  // Slice 3 spec §5: a spec run reads the code and pushes nothing, so it needs no branch.
+  it('checks out a spec run’s worktree at the remote’s base, with no branch', async () => {
+    const { repo } = targetRepository()
+    const subject = new Git(realExec, FAKE_GH)
+    const worktree = join(mkdtempSync(join(tmpdir(), 'wt-')), 'draft')
+
+    await subject.prepareDetachedWorktree(repo, 'main', worktree)
+
+    expect(readFileSync(join(worktree, 'src/retry.ts'), 'utf8')).toContain('delays')
+    expect(git(['rev-parse', '--abbrev-ref', 'HEAD'], worktree).trim()).toBe('HEAD')
+    expect(git(['branch', '--format=%(refname:short)'], repo).trim()).toBe('main')
+    await subject.removeWorktree(repo, worktree)
+    expect(existsSync(worktree)).toBe(false)
+  })
+
   it('names the command and its output when git fails', async () => {
     const subject = new Git(realExec, FAKE_GH)
     const error = await subject

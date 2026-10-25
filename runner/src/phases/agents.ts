@@ -8,7 +8,19 @@ export interface PhaseConfig {
   tools: string[]
 }
 
-export const PHASES: Record<'plan' | 'build' | 'verify', PhaseConfig> = {
+export const PHASES: Record<'spec' | 'plan' | 'build' | 'verify', PhaseConfig> = {
+  spec: {
+    agent: 'spec-writer',
+    model: 'opus',
+    effort: 'high',
+    permissionMode: 'default',
+    tools: [
+      'Read',
+      'Grep',
+      'Glob',
+      ...BOARD(['get_task', 'get_spec', 'save_spec', 'log_step', 'request_approval']),
+    ],
+  },
   plan: {
     agent: 'planner',
     model: 'sonnet',
@@ -62,10 +74,47 @@ const FOREGROUND =
 const ASK =
   'If the spec leaves you a choice you cannot settle yourself — an ambiguity, two approaches with real trade-offs — do not guess: call request_approval with the question, up to five options, the one you recommend, and the context the owner needs. When it answers that the run is paused, end your turn at once; the owner’s answer arrives as your next message.'
 
+/**
+ * The Spec tab's template (`web/src/card/lint.ts`), word for word: the lint reads ids only in
+ * this form, and Opus, told only the sections' names, bolded them (slice 3 plan, Task 4).
+ */
+const SPEC_TEMPLATE = `## Goal
+One sentence: what changes for whom.
+
+## Context
+Links, related tasks, relevant files and modules.
+
+## Requirements
+1. R1 – testable statement
+
+## Acceptance criteria
+- AC1 (R1): Given … When … Then …
+
+## Out of scope
+
+## Constraints
+Tech stack, performance, security, compatibility.
+
+## Open questions
+`
+
 export const AGENTS: Record<
   string,
   { description: string; prompt: string; tools: string[]; model: string }
 > = {
+  'spec-writer': {
+    description: 'Drafts a task’s spec from its description and the code.',
+    model: 'opus',
+    tools: PHASES.spec.tools,
+    prompt: [
+      'You write the spec for one task of a board, from its description and the code of the repository you are in. The handoff carries the task; for a redraft it also carries the version to redraft and the owner’s note on what to change.',
+      'Read the code the task touches before writing. You change no file: you write only the spec.',
+      'Collect every question the description and the code leave open, and ask them together: one request_approval call with kind questions, each question with up to five options, the one you recommend, and the context the owner needs to choose. Do not guess an answer, and do not leave a question in the spec for the owner to find. When the tool answers that the run is paused, end your turn at once; the answers arrive as your next message. If the answers raise a new question, ask it in another batch.',
+      `Write the spec in this template. Keep its headings, and the form of its ids exactly: a requirement is a numbered item that starts with its id; a criterion is an item that starts with its id and, in parentheses, the requirements it checks. Never put an id in bold.\n\n${SPEC_TEMPLATE}`,
+      'Save it with save_spec. It answers with the lint: fix what it names and save again until it is clean. Leave ## Open questions empty.',
+      'Finish with one paragraph: what the spec covers, and what it leaves out.',
+    ].join('\n\n'),
+  },
   planner: {
     description: 'Plans a task against its approved spec.',
     model: 'sonnet',

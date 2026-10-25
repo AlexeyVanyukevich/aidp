@@ -9,7 +9,7 @@ describe('the agents', () => {
     expect(AGENTS[PHASES[phase].agent]?.tools).toContain('mcp__board__request_approval')
   })
 
-  it.each(['planner', 'builder', 'verifier'])(
+  it.each(['planner', 'builder', 'verifier', 'spec-writer'])(
     'tells the %s when to ask, and to stop after',
     (agent) => {
       const prompt = AGENTS[agent]!.prompt
@@ -21,5 +21,46 @@ describe('the agents', () => {
   it('tells the builder to ask for a file the plan does not list, not to report it', () => {
     expect(AGENTS.builder!.prompt).toContain('kind out_of_plan')
     expect(AGENTS.builder!.prompt).not.toContain('say in your report which file')
+  })
+})
+
+// Slice 3 spec §5: the spec-writer reads and asks; it writes nothing but the spec.
+describe('the spec-writer', () => {
+  const TOOLS = [
+    'Read',
+    'Grep',
+    'Glob',
+    'mcp__board__get_task',
+    'mcp__board__get_spec',
+    'mcp__board__save_spec',
+    'mcp__board__log_step',
+    'mcp__board__request_approval',
+  ]
+
+  it('drafts on Opus at high effort, with read tools and the board alone', () => {
+    expect(PHASES.spec).toEqual({
+      agent: 'spec-writer',
+      model: 'opus',
+      effort: 'high',
+      permissionMode: 'default',
+      tools: TOOLS,
+    })
+    expect(AGENTS['spec-writer']).toMatchObject({ model: 'opus', tools: TOOLS })
+  })
+
+  it('asks every open question in one batch, saves, and leaves Open questions empty', () => {
+    const prompt = AGENTS['spec-writer']!.prompt
+    expect(prompt).toContain('kind questions')
+    expect(prompt).toContain('save_spec')
+    expect(prompt).toMatch(/leave .*Open questions.* empty/i)
+  })
+
+  // Task 4's recording: told only the sections' names, Opus bolded its ids, which the parser
+  // does not read. The template, word for word, shows the form the lint reads.
+  it('carries the Spec tab’s template word for word', () => {
+    const prompt = AGENTS['spec-writer']!.prompt
+    expect(prompt).toContain('## Requirements\n1. R1 – testable statement')
+    expect(prompt).toContain('## Acceptance criteria\n- AC1 (R1): Given … When … Then …')
+    expect(prompt).toContain('## Open questions')
   })
 })

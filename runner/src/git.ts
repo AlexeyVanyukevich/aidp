@@ -35,6 +35,12 @@ export class Git {
     await this.run('git', ['-C', repo, 'worktree', 'add', '-b', branch, dir, `origin/${base}`])
   }
 
+  /** A spec run's checkout: the remote's base, detached, since a draft pushes nothing. */
+  async prepareDetachedWorktree(repo: string, base: string, dir: string): Promise<void> {
+    await this.run('git', ['-C', repo, 'fetch', 'origin', base])
+    await this.run('git', ['-C', repo, 'worktree', 'add', '--detach', dir, `origin/${base}`])
+  }
+
   async newCommits(dir: string, base: string): Promise<number> {
     return Number(
       (await this.run('git', ['-C', dir, 'rev-list', '--count', `origin/${base}..HEAD`])).trim(),
