@@ -1,5 +1,6 @@
 import type {
   ApprovalAnswer,
+  BatchAnswer,
   ApprovalView,
   EventView,
   OpenApproval,
@@ -77,7 +78,7 @@ export const api = {
   runs: (taskId: string) => request<RunView[]>('GET', `/api/tasks/${taskId}/runs`),
   approvals: (taskId: string) => request<ApprovalView[]>('GET', `/api/tasks/${taskId}/approvals`),
   openApprovals: () => request<OpenApproval[]>('GET', '/api/approvals?status=open'),
-  answer: (approvalId: string, body: ApprovalAnswer) =>
+  answer: (approvalId: string, body: ApprovalAnswer | BatchAnswer) =>
     request<ApprovalView>('POST', `/api/approvals/${approvalId}/answer`, body),
   costs: (taskId: string) => request<CostSummary>('GET', `/api/tasks/${taskId}/costs`),
   /** `files` is null when GitHub did not list them. */

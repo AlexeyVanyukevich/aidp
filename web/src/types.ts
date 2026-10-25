@@ -68,6 +68,18 @@ export interface ApprovalAnswer {
   option_id?: string
   text?: string
 }
+/** One question of a batch, numbered by the server. */
+export interface BatchQuestion {
+  id: string
+  question: string
+  options: ApprovalOption[]
+  recommendation: string | null
+  context_md: string | null
+}
+/** A batch is answered whole: one entry per question. */
+export interface BatchAnswer {
+  answers: (ApprovalAnswer & { question_id: string })[]
+}
 export interface ApprovalView {
   id: string
   run_id: string
@@ -78,8 +90,11 @@ export interface ApprovalView {
   recommendation: string | null
   context_md: string | null
   files: string[] | null
+  /** A batch's questions; null for every other kind. */
+  questions: BatchQuestion[] | null
+  question_count: number
   status: ApprovalStatus
-  answer: ApprovalAnswer | null
+  answer: ApprovalAnswer | BatchAnswer | null
   created_at: string
   answered_at: string | null
 }

@@ -4,8 +4,17 @@ import { Button, Empty, Field, Textarea } from '@zellige/react'
 import { api } from '../api'
 import { isConflict } from '../errors'
 import { Loaded } from '../Loaded'
-import type { ApprovalAnswer, ApprovalView, TaskView } from '../types'
-import { answerSummary, currentApproval, fieldLabel, headingFor, optionName } from './approvals'
+import type { ApprovalAnswer, ApprovalView, BatchAnswer, TaskView } from '../types'
+import {
+  answerSummary,
+  batchAnswerLines,
+  batchHeading,
+  currentApproval,
+  fieldLabel,
+  headingFor,
+  optionName,
+} from './approvals'
+import { BatchForm } from './BatchForm'
 
 /**
  * The card's questions (slice 2 spec, §11): the one it waits on, answered by an option or in
@@ -37,7 +46,8 @@ export function ApprovalsTab({
   const impactId = useId()
 
   const answer = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: ApprovalAnswer }) => api.answer(id, body),
+    mutationFn: ({ id, body }: { id: string; body: ApprovalAnswer | BatchAnswer }) =>
+      api.answer(id, body),
     onSuccess: () => {
       setText('')
       onAnswered(`${task.key} answered. The run continues.`)
@@ -57,7 +67,7 @@ export function ApprovalsTab({
     },
   })
 
-  const send = (approval: ApprovalView, body: ApprovalAnswer, which: string) => {
+  const send = (approval: ApprovalView, body: ApprovalAnswer | BatchAnswer, which: string) => {
     setSending(which)
     answer.mutate({ id: approval.id, body })
   }
@@ -82,7 +92,21 @@ export function ApprovalsTab({
           )
         return (
           <div className="approvals-tab">
-            {current !== undefined && (
+            {current !== undefined && current.kind === 'questions' && (
+              <section aria-labelledby={headingId} className="approval">
+                <h3 id={headingId}>{batchHeading(current.status)}</h3>
+                <p className="question">{current.question}</p>
+                {current.context_md !== null && current.context_md !== '' && (
+                  <div className="context">{current.context_md}</div>
+                )}
+                <BatchForm
+                  questions={current.questions ?? []}
+                  sending={sending === 'batch'}
+                  onSend={(body) => send(current, body, 'batch')}
+                />
+              </section>
+            )}
+            {current !== undefined && current.kind !== 'questions' && (
               <section aria-labelledby={headingId} className="approval">
                 <h3 id={headingId}>{headingFor(current.status)}</h3>
                 <p id={questionId} className="question">
@@ -156,7 +180,18 @@ export function ApprovalsTab({
                   {answered.map((approval) => (
                     <li key={approval.id}>
                       <span className="question">{approval.question}</span>{' '}
-                      <span className="answer-given">{answerSummary(approval)}</span>
+                      {approval.kind === 'questions' && approval.status === 'answered' ? (
+                        <ul>
+                          {batchAnswerLines(approval).map((line) => (
+                            <li key={line.question}>
+                              <span className="question">{line.question}</span>{' '}
+                              <span className="answer-given">{line.answer}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <span className="answer-given">{answerSummary(approval)}</span>
+                      )}
                     </li>
                   ))}
                 </ul>

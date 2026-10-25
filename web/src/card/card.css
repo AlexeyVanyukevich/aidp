@@ -154,3 +154,26 @@ td {
   white-space: pre-wrap;
   font-size: var(--zl-text-sm);
 }
+
+/* A batch: each question its own section, the form's one button at its end. */
+.batch {
+  display: grid;
+  gap: var(--zl-space-4);
+}
+
+.batch-question {
+  display: grid;
+  gap: var(--zl-space-2);
+  padding-block-start: var(--zl-space-3);
+  border-block-start: 1px solid var(--zl-line);
+}
+
+.batch-question h4 {
+  margin: 0;
+  font-size: var(--zl-text-sm);
+  color: var(--zl-ink-soft);
+}
+
+.batch > .zl-button {
+  justify-self: start;
+}
