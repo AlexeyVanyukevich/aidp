@@ -7,7 +7,7 @@ import { runProcess, type ProcessResult, type ProcessTiming, type Stopped } from
 
 export interface PhaseInput {
   runId: string
-  phase: 'plan' | 'build' | 'verify'
+  phase: 'spec' | 'plan' | 'build' | 'verify'
   attempt: number
   handoff: string
   worktree: string
@@ -36,7 +36,7 @@ export interface PhaseDeps {
 export interface PhaseRecord {
   runId: string
   phaseId: string
-  phase: 'plan' | 'build' | 'verify'
+  phase: 'spec' | 'plan' | 'build' | 'verify'
   attempt: number
   sessionId: string
   baseline: Record<string, SessionTotals>

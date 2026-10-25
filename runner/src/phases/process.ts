@@ -12,7 +12,7 @@ import { PAUSED_MARKER } from './run-dir.js'
 export interface ProcessInput {
   runId: string
   phaseId: string
-  phase: 'plan' | 'build' | 'verify'
+  phase: 'spec' | 'plan' | 'build' | 'verify'
   attempt: number
   /** The handoff when starting a session; the owner's answer, or a nudge, when resuming one. */
   prompt: string
