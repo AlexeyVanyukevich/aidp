@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { stepLabel, timelineModel } from '../../src/card/timeline'
+import { runLabel, stepLabel, timelineModel } from '../../src/card/timeline'
 import type { EventView, PhaseView } from '../../src/types'
 
 const phase = (id: string, name: string, attempt: number, started: string): PhaseView => ({
@@ -27,6 +27,16 @@ const event = (id: string, phaseId: string | null, ts: string, input = 0): Event
   duration_ms: null,
   usage: { input, output: 0, cache_read: 0, cache_write: 0 },
   payload: {},
+})
+
+// Slice 3: drafts and delivery runs are numbered apart.
+describe('runLabel', () => {
+  it.each([
+    [{ kind: 'spec', number: 2 }, 'Draft 2'],
+    [{ kind: 'delivery', number: 1 }, 'Run 1'],
+  ])('names %j "%s"', (run, label) => {
+    expect(runLabel(run)).toBe(label)
+  })
 })
 
 describe('timelineModel', () => {

@@ -42,7 +42,7 @@ export function TaskCardView({
             <Badge tone="warning">Question waiting</Badge>{' '}
           </>
         )}
-        {card.state === 'running' && card.phase !== null && (
+        {(card.state === 'running' || card.state === 'spec_draft') && card.phase !== null && (
           <>
             <Badge tone="accent">
               {card.phase}
