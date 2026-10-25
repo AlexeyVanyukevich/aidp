@@ -47,7 +47,8 @@ export type Effect =
     }
   | {
       kind: 'run_end'
-      outcome: 'review' | 'failed' | 'cancelled'
+      /** `drafted`: a spec run's phase succeeded; the server checks it saved a version. */
+      outcome: 'review' | 'drafted' | 'failed' | 'cancelled'
       reason: string | null
       prNumber: number | null
       prUrl: string | null
@@ -199,10 +200,13 @@ export function effectOf(event: RunnerEvent): Effect | undefined {
     }
     case 'run_end': {
       const outcome =
-        p.outcome === 'review' || p.outcome === 'failed' || p.outcome === 'cancelled'
+        p.outcome === 'review' ||
+        p.outcome === 'drafted' ||
+        p.outcome === 'failed' ||
+        p.outcome === 'cancelled'
           ? p.outcome
           : undefined
-      if (outcome === undefined) bad(event, 'outcome must be review, failed or cancelled')
+      if (outcome === undefined) bad(event, 'outcome must be review, drafted, failed or cancelled')
       const prNumber =
         typeof p.pr_number === 'number' && Number.isInteger(p.pr_number) ? p.pr_number : null
       const prUrl = text(p.pr_url)

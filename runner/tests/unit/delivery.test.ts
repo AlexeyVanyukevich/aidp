@@ -20,6 +20,7 @@ const RUN: RunWork = {
   number: 2,
   kind: 'delivery',
   spec_version: 1,
+  note: null,
   task: { id: 't', key: 'PAY-1', title: 'Retry', description_md: '', budget_usd: null },
   spec: {
     version: 1,

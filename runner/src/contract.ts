@@ -45,7 +45,8 @@ export interface SpecCriterion {
   text: string
 }
 
-export type Stage = 'prepare' | 'plan' | 'build' | 'tests' | 'verify' | 'push' | 'pr'
+/** A delivery run's stages, and a spec run's `prepare` then `spec`. */
+export type Stage = 'prepare' | 'spec' | 'plan' | 'build' | 'tests' | 'verify' | 'push' | 'pr'
 
 export interface SessionTotals {
   input: number
@@ -76,7 +77,10 @@ export interface RunWork {
   id: string
   number: number
   kind: 'spec' | 'delivery'
-  spec_version: number
+  /** A delivery run's approved version; a spec run's version it redrafts, or null. */
+  spec_version: number | null
+  /** What the owner asked a redraft to change. */
+  note: string | null
   task: {
     id: string
     key: string
@@ -84,7 +88,8 @@ export interface RunWork {
     description_md: string
     budget_usd: number | null
   }
-  spec: { version: number; body_md: string; criteria: SpecCriterion[] }
+  /** The spec at `spec_version`: null for a first draft. */
+  spec: { version: number; body_md: string; criteria: SpecCriterion[] } | null
   project: {
     key: string
     repo_path: string

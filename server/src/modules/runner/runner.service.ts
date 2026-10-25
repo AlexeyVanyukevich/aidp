@@ -7,7 +7,7 @@ import { hashToken, newToken } from '../../shared/tokens.js'
 import type { Checkpoint, SpecCriterion } from '../../shared/vocabulary.js'
 import { allowedFiles, type Answer } from '../approvals/approval-rules.js'
 import { openApproval } from '../approvals/approval.service.js'
-import { moveTask } from '../tasks/task.moves.js'
+import { moveFacts, moveTask } from '../tasks/task.moves.js'
 import { effectOf, type Effect } from './event-effects.js'
 import type { RunnerEvent } from './runner.schemas.js'
 
@@ -15,7 +15,10 @@ export interface RunWork {
   id: string
   number: number
   kind: 'spec' | 'delivery'
-  spec_version: number
+  /** A delivery run's approved version; a spec run's version it redrafts, or null. */
+  spec_version: number | null
+  /** What the owner asked a redraft to change. */
+  note: string | null
   task: {
     id: string
     key: string
@@ -23,7 +26,8 @@ export interface RunWork {
     description_md: string
     budget_usd: number | null
   }
-  spec: { version: number; body_md: string; criteria: SpecCriterion[] }
+  /** The spec at `spec_version`: null for a first draft. */
+  spec: { version: number; body_md: string; criteria: SpecCriterion[] } | null
   project: {
     key: string
     repo_path: string
@@ -63,15 +67,16 @@ export class RunnerService {
   }
 
   /**
-   * Takes the oldest queued work of any kind. A start whose task is no longer Ready is skipped —
-   * and cancelled — rather than handed over.
+   * Takes the oldest queued work of any kind. A start whose card has moved on — out of Ready for
+   * a delivery run, out of Spec draft for a spec run — is skipped, and cancelled, rather than
+   * handed over.
    */
   private async tryClaim(runnerId: string): Promise<Work | null> {
     for (let attempt = 0; attempt < 20; attempt++) {
       const outcome = await this.db.transaction().execute(async (trx) => {
         const run = await trx
           .selectFrom('runs')
-          .select(['id', 'task_id', 'pending', 'resume_message'])
+          .select(['id', 'task_id', 'kind', 'pending', 'resume_message'])
           .where('queued_at', 'is not', null)
           .orderBy('queued_at')
           .orderBy('created_at')
@@ -123,7 +128,8 @@ export class RunnerService {
           .where('id', '=', run.task_id)
           .forUpdate()
           .executeTakeFirstOrThrow()
-        if (task.state !== 'ready') {
+        // A draft's card is already in Spec draft: claiming it moves nothing (slice 3 spec, §4).
+        if (task.state !== (run.kind === 'spec' ? 'spec_draft' : 'ready')) {
           await trx
             .updateTable('runs')
             .set({ status: 'cancelled', ended_at: now, queued_at: null })
@@ -131,7 +137,7 @@ export class RunnerService {
             .execute()
           return 'skipped' as const
         }
-        await moveTask(trx, run.task_id, 'claim')
+        if (run.kind === 'delivery') await moveTask(trx, run.task_id, 'claim')
         await trx
           .updateTable('runs')
           .set({ ...claimedRun, started_at: now })
@@ -210,7 +216,8 @@ export class RunnerService {
       .selectFrom('runs')
       .innerJoin('tasks', 'tasks.id', 'runs.task_id')
       .innerJoin('projects', 'projects.id', 'tasks.project_id')
-      .innerJoin('specs', (join) =>
+      // A first draft has no spec to join.
+      .leftJoin('specs', (join) =>
         join
           .onRef('specs.task_id', '=', 'runs.task_id')
           .onRef('specs.version', '=', 'runs.spec_version'),
@@ -219,8 +226,9 @@ export class RunnerService {
         'runs.id',
         'runs.kind',
         'runs.number as run_number',
-        // The joined spec's, which the join guarantees; the run's own may be null.
-        'specs.version as spec_version',
+        'runs.spec_version',
+        'runs.note',
+        'specs.version',
         'tasks.id as task_id',
         'tasks.number',
         'tasks.title',
@@ -241,6 +249,7 @@ export class RunnerService {
       number: row.run_number,
       kind: row.kind,
       spec_version: row.spec_version,
+      note: row.note,
       task: {
         id: row.task_id,
         key: `${row.key}-${row.number}`,
@@ -248,7 +257,10 @@ export class RunnerService {
         description_md: row.description_md,
         budget_usd: row.budget_usd === null ? null : Number(row.budget_usd),
       },
-      spec: { version: row.spec_version, body_md: row.body_md, criteria: row.criteria ?? [] },
+      spec:
+        row.version === null || row.body_md === null
+          ? null
+          : { version: row.version, body_md: row.body_md, criteria: row.criteria ?? [] },
       project: {
         key: row.key,
         repo_path: row.repo_path,
@@ -457,7 +469,8 @@ export class RunnerService {
           .where('id', '=', context.taskId)
           .executeTakeFirstOrThrow()
         // A card the owner already moved — a Cancel — stays where it is.
-        if (task.state === 'running') await moveTask(trx, context.taskId, 'block')
+        if (task.state === 'running' || task.state === 'spec_draft')
+          await moveTask(trx, context.taskId, 'block')
         return
       }
       case 'plan_approval':
@@ -478,13 +491,21 @@ export class RunnerService {
         )
         return
       case 'run_end': {
-        const status = effect.outcome === 'review' ? 'succeeded' : effect.outcome
+        // A draft that ended well but saved nothing failed: there is nothing to review.
+        const saved =
+          effect.outcome !== 'drafted' ||
+          (await trx
+            .selectFrom('specs')
+            .select('id')
+            .where('run_id', '=', context.runId)
+            .executeTakeFirst()) !== undefined
+        const outcome = saved ? effect.outcome : 'failed'
         await trx
           .updateTable('runs')
           .set({
-            status,
+            status: outcome === 'review' || outcome === 'drafted' ? 'succeeded' : outcome,
             ended_at: effect.at,
-            failure_reason: effect.reason,
+            failure_reason: saved ? effect.reason : 'the spec-writer saved no spec',
             pr_number: effect.prNumber,
             pr_url: effect.prUrl,
             branch: effect.branch,
@@ -511,8 +532,17 @@ export class RunnerService {
           .where('id', '=', context.taskId)
           .executeTakeFirstOrThrow()
         // A run the owner cancelled has already moved its card; its own report moves nothing.
+        if (task.state === 'spec_draft') {
+          await moveTask(
+            trx,
+            context.taskId,
+            outcome === 'drafted' ? 'finish_draft' : 'drop_draft',
+            await moveFacts(trx, context.taskId),
+          )
+          return
+        }
         if (task.state !== 'running') return
-        await moveTask(trx, context.taskId, effect.outcome === 'review' ? 'finish_review' : 'fail')
+        await moveTask(trx, context.taskId, outcome === 'review' ? 'finish_review' : 'fail')
         return
       }
     }

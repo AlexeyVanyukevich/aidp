@@ -182,6 +182,30 @@ describe('effectOf', () => {
     })
   })
 
+  // Slice 3: a spec run's stage, and its end with a drafted spec.
+  it('reads a checkpoint in a spec run’s Spec stage', () => {
+    const drafting = { ...CHECKPOINT, stage: 'spec', plan_artifact_id: null }
+    expect(effectOf(event('checkpoint', drafting, { phase_id: null }))).toEqual({
+      kind: 'checkpoint',
+      checkpoint: drafting,
+    })
+  })
+
+  it('reads a spec run’s end with its draft', () => {
+    expect(
+      effectOf(event('run_end', { outcome: 'drafted', worktree_path: '/w' }, { phase_id: null })),
+    ).toEqual({
+      kind: 'run_end',
+      outcome: 'drafted',
+      reason: null,
+      prNumber: null,
+      prUrl: null,
+      branch: null,
+      worktreePath: '/w',
+      at: new Date(TS),
+    })
+  })
+
   it.each(['message', 'tool_call', 'subagent_start', 'error'] as const)(
     'has no effect for %s',
     (type) => {

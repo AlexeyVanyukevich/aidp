@@ -3,7 +3,7 @@ import type { Database } from '../../db/schema.js'
 import { publish } from '../../shared/bus.js'
 import { ConflictError, NotFoundError, ValidationError } from '../../shared/errors.js'
 import type { ApprovalKind, ApprovalStatus, Block } from '../../shared/vocabulary.js'
-import { moveTask } from '../tasks/task.moves.js'
+import { moveFacts, moveTask } from '../tasks/task.moves.js'
 import {
   checkAnswer,
   checkBatchAnswer,
@@ -275,7 +275,7 @@ export class ApprovalService {
           payload: JSON.stringify({ approval_id: id, ...body }),
         })
         .execute()
-      await moveTask(trx, row.task_id, 'answer')
+      await moveTask(trx, row.task_id, 'answer', await moveFacts(trx, row.task_id))
       await trx
         .updateTable('runs')
         .set({
