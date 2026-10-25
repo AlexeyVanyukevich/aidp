@@ -613,3 +613,117 @@ describe('a run that is blocked', () => {
     f.stopAll()
   })
 })
+
+// Slice 3: a spec run, from Draft spec to Spec review (spec §5), on Opus's recordings.
+const DESCRIPTION = 'Retry failed webhooks, backing off between tries.'
+const QUESTIONS = {
+  tool: 'request_approval',
+  args: {
+    kind: 'questions',
+    questions: [
+      {
+        question: 'How many retries?',
+        options: [{ id: 'three', label: 'Three' }],
+        recommendation: 'three',
+      },
+      { question: 'Which errors?' },
+    ],
+  },
+}
+const SAVE = { tool: 'save_spec', args: { body_md: SPEC } }
+
+/** A Backlog task with a description, its Draft spec pressed. */
+async function draftingTask(title = 'Back off retries'): Promise<string> {
+  const created = await api<{ id: string }>('POST', '/api/projects/PAY/tasks', {
+    title,
+    description_md: DESCRIPTION,
+  })
+  await api('POST', `/api/tasks/${created.id}/actions/draft-spec`)
+  return created.id
+}
+const versions = (taskId: string) =>
+  api<{ version: number; status: string }[]>('GET', `/api/tasks/${taskId}/specs`)
+
+describe('a spec run end to end', () => {
+  it('asks a batch, takes the answers, saves, and leaves the card in Spec review', async () => {
+    const taskId = await draftingTask()
+    const f = fleet({ 'spec-writer': [[QUESTIONS], [SAVE]] })
+
+    expect(await f.daemon().runOnce()).toBe('released')
+    const waiting = await task(taskId)
+    expect(waiting).toMatchObject({ state: 'needs_approval', approval: { kind: 'questions' } })
+    await answer(waiting.approval!.id, {
+      answers: [
+        { question_id: 'q1', option_id: 'three' },
+        { question_id: 'q2', text: 'Only 5xx.' },
+      ],
+    })
+    expect(await f.daemon().runOnce()).toBe('drafted')
+
+    expect(await state(taskId)).toBe('spec_review')
+    expect(await versions(taskId)).toEqual([
+      expect.objectContaining({ version: 1, status: 'draft' }),
+    ])
+    const [run] = await runs(taskId)
+    expect(run).toMatchObject({ status: 'succeeded', branch: null })
+    expect(run!.phases.map((p) => `${p.name}:${p.status}`)).toEqual(['spec:succeeded'])
+    const calls = f.calls().filter((c) => c.agent === 'spec-writer')
+    expect(calls.map((c) => c.resumed)).toEqual([false, true])
+    expect(calls[0]?.prompt).toContain(`<description>\n${DESCRIPTION}\n</description>`)
+    expect(calls[1]?.prompt).toContain('1. How many retries?')
+    expect(existsSync(join(f.home, 'worktrees', run!.id))).toBe(false)
+  })
+
+  it('redrafts the latest version with the owner’s note', async () => {
+    const created = await api<{ id: string }>('POST', '/api/projects/PAY/tasks', {
+      title: 'Back off retries',
+      description_md: DESCRIPTION,
+    })
+    await api('POST', `/api/tasks/${created.id}/specs`, { body_md: SPEC })
+    await api('POST', `/api/tasks/${created.id}/actions/redraft`, { note: 'Say how long to wait.' })
+    const f = fleet({ 'spec-writer': [[SAVE]] })
+
+    expect(await f.daemon().runOnce()).toBe('drafted')
+
+    const [call] = f.calls()
+    expect(call?.prompt).toContain('<spec version="1">')
+    expect(call?.prompt).toContain('<note>\nSay how long to wait.\n</note>')
+    expect(await state(created.id)).toBe('spec_review')
+    expect((await versions(created.id)).map((v) => [v.version, v.status])).toEqual([
+      [2, 'draft'],
+      [1, 'superseded'],
+    ])
+  })
+
+  it('returns its card to Backlog, saying why, when the spec-writer saves nothing', async () => {
+    const taskId = await draftingTask()
+    expect(
+      await fleet({ 'spec-writer': [[]] })
+        .daemon()
+        .runOnce(),
+    ).toBe('drafted')
+    expect(
+      await api<{ state: string; draft_failure: string | null }>('GET', `/api/tasks/${taskId}`),
+    ).toMatchObject({ state: 'backlog', draft_failure: 'the spec-writer saved no spec' })
+  })
+
+  it('is blocked when its daemon is stopped, and drafts on Resume in the same phase', async () => {
+    const taskId = await draftingTask()
+    const f = fleet({ 'spec-writer': [[{ sleep: 60_000 }], [SAVE]] })
+    const child = f.child()
+    await until(async () => (await runs(taskId))[0]?.current_phase === 'spec', 'the Spec phase')
+    await new Promise((done) => setTimeout(done, 1_000))
+    child.kill('SIGTERM')
+    await child.exited()
+    expect(await task(taskId)).toMatchObject({
+      state: 'blocked',
+      block: { cause: 'runner_stopped', stage: 'spec' },
+    })
+
+    await api('POST', `/api/tasks/${taskId}/actions/resume`)
+    expect(await f.daemon().runOnce()).toBe('drafted')
+    expect(await state(taskId)).toBe('spec_review')
+    expect((await runs(taskId))[0]!.phases).toHaveLength(1)
+    f.stopAll()
+  })
+})
