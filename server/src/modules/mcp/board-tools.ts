@@ -6,7 +6,9 @@ import { publish } from '../../shared/bus.js'
 import { AppError, ConflictError } from '../../shared/errors.js'
 import type { Finding } from '../approvals/approval-rules.js'
 import { openApproval } from '../approvals/approval.service.js'
+import { lintReply } from '../specs/spec-lint-text.js'
 import { parseSpec } from '../specs/spec-parser.js'
+import { SpecRepository } from '../specs/spec.repository.js'
 import {
   checkPlan,
   checkReport,
@@ -37,6 +39,15 @@ async function runningPhase(ctx: ToolContext) {
     .where('status', '=', 'running')
     .orderBy('started_at', 'desc')
     .executeTakeFirst()
+}
+
+async function runKind(ctx: ToolContext) {
+  const run = await ctx.db
+    .selectFrom('runs')
+    .select('kind')
+    .where('id', '=', ctx.runId)
+    .executeTakeFirstOrThrow()
+  return run.kind
 }
 
 async function frozenSpec(ctx: ToolContext) {
@@ -193,8 +204,43 @@ export function registerBoardTools(server: McpServer, ctx: ToolContext): void {
 
   server.registerTool(
     'get_spec',
-    { description: 'Read the approved, frozen spec this run must satisfy.' },
-    async () => json(await frozenSpec(ctx)),
+    {
+      description:
+        'Read the spec: in a delivery run, the approved, frozen spec it must satisfy; in a spec run, the task’s latest version, which a redraft starts from.',
+    },
+    async () => {
+      if ((await runKind(ctx)) === 'delivery') return json(await frozenSpec(ctx))
+      const latest = await ctx.db
+        .selectFrom('specs')
+        .select(['version', 'body_md'])
+        .where('task_id', '=', ctx.taskId)
+        .orderBy('version', 'desc')
+        .executeTakeFirst()
+      return latest === undefined ? reply('This task has no spec yet.') : json(latest)
+    },
+  )
+
+  server.registerTool(
+    'save_spec',
+    {
+      description:
+        'Save the spec, as Markdown in the Spec tab’s template. Every save of this run rewrites its one version. Answers with the lint: fix what it names and save again.',
+      inputSchema: { body_md: z.string().max(50_000) },
+    },
+    async (input) => {
+      if ((await runKind(ctx)) !== 'spec')
+        return reply('save_spec belongs to a spec run; this run delivers an approved spec.', true)
+      const phase = await runningPhase(ctx)
+      if (phase === undefined)
+        return reply('No phase of this run is running; nothing was saved.', true)
+      const saved = await ctx.db
+        .transaction()
+        .execute((trx) =>
+          new SpecRepository(ctx.db).saveForRun(trx, ctx.taskId, ctx.runId, input.body_md),
+        )
+      await publish(ctx.db, { topic: 'run.event', runId: ctx.runId, taskId: ctx.taskId })
+      return reply(lintReply(saved.version, parseSpec(input.body_md)))
+    },
   )
 
   server.registerTool(

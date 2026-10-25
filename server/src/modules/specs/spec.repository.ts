@@ -66,6 +66,24 @@ export class SpecRepository {
       .executeTakeFirstOrThrow()
   }
 
+  /**
+   * A spec run's save (slice 3 spec, §7): its first inserts the next version, superseding
+   * earlier drafts as a hand save does; each later save rewrites that version.
+   */
+  async saveForRun(db: Db, taskId: string, runId: string, body: string): Promise<SpecRow> {
+    const own = await db
+      .updateTable('specs')
+      .set({ body_md: body })
+      .where('run_id', '=', runId)
+      .where('status', '=', 'draft')
+      .returning(COLUMNS)
+      .executeTakeFirst()
+    if (own !== undefined) return own
+    const row = await this.insertVersion(db, taskId, body)
+    await db.updateTable('specs').set({ run_id: runId }).where('id', '=', row.id).execute()
+    return row
+  }
+
   async approve(db: Db, id: string, criteria: SpecCriterion[], at: Date): Promise<void> {
     await db
       .updateTable('specs')

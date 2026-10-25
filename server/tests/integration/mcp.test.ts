@@ -4,7 +4,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { buildTestApp, closeTestDb, getTestDb, resetDb, TEST_RUNNER_KEY } from './helpers.js'
-import { seedQueuedRun } from './fixtures.js'
+import { GOOD_SPEC, seedProject, seedQueuedRun, seedTask } from './fixtures.js'
 
 let app: FastifyInstance
 let base: string
@@ -86,7 +86,7 @@ describe('the board MCP server', () => {
     expect(response.status).toBe(401)
   })
 
-  it('offers the six tools', async () => {
+  it('offers the seven tools', async () => {
     const { client } = await session()
     const { tools } = await client.listTools()
     expect(tools.map((t) => t.name).sort()).toEqual([
@@ -96,6 +96,7 @@ describe('the board MCP server', () => {
       'request_approval',
       'save_plan',
       'save_report',
+      'save_spec',
     ])
   })
 
@@ -259,5 +260,131 @@ describe('request_approval', () => {
     const result = await client.callTool({ name: 'request_approval', arguments: ask })
     expect(result.isError).toBe(true)
     expect(text(result)).toBe('No phase of this run is running; nothing was asked.')
+  })
+})
+
+/** An MCP client holding a token for a running spec run in its Spec phase, the card drafting. */
+async function specSession(options: { versions?: number; phase?: 'running' | 'paused' } = {}) {
+  const db = getTestDb()
+  const { id: projectId } = await seedProject(db)
+  const { id: taskId } = await seedTask(db, projectId, { state: 'spec_draft' })
+  const versions = options.versions ?? 0
+  for (let version = 1; version <= versions; version++)
+    await db
+      .insertInto('specs')
+      .values({ task_id: taskId, version, body_md: `v${version}`, status: 'draft', criteria: null })
+      .execute()
+  const { id: runId } = await db
+    .insertInto('runs')
+    .values({
+      task_id: taskId,
+      kind: 'spec',
+      number: 1,
+      spec_version: versions === 0 ? null : versions,
+      status: 'running',
+      started_at: new Date(),
+    })
+    .returning('id')
+    .executeTakeFirstOrThrow()
+  await db
+    .insertInto('phases')
+    .values({
+      id: crypto.randomUUID(),
+      run_id: runId,
+      name: 'spec',
+      attempt: 1,
+      agent: 'spec-writer',
+      model: 'opus',
+      status: options.phase ?? 'running',
+      started_at: new Date(),
+    })
+    .execute()
+  const token = (
+    await app.inject({ method: 'POST', url: `/api/runner/runs/${runId}/tokens`, headers: auth })
+  ).json().token as string
+  const client = new Client({ name: 'test', version: '0.0.0' })
+  const transport = new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
+    requestInit: { headers: { authorization: `Bearer ${token}` } },
+  })
+  await client.connect(transport as Transport)
+  return { taskId, runId, client }
+}
+
+const versions = (taskId: string) =>
+  getTestDb()
+    .selectFrom('specs')
+    .select(['version', 'body_md', 'status', 'run_id'])
+    .where('task_id', '=', taskId)
+    .orderBy('version')
+    .execute()
+const saveSpec = (client: Client, body_md: string) =>
+  client.callTool({ name: 'save_spec', arguments: { body_md } })
+
+// Slice 3 spec §7: one version per draft, the lint in the reply, and no move of the card.
+describe('save_spec', () => {
+  it('saves the draft as the next version, supersedes the earlier one, and answers the lint', async () => {
+    const { client, taskId, runId } = await specSession({ versions: 1 })
+    const result = await saveSpec(client, GOOD_SPEC)
+    expect(result.isError).toBeFalsy()
+    expect(text(result)).toBe('Saved v2. Lint: clean.')
+    expect(await versions(taskId)).toEqual([
+      { version: 1, body_md: 'v1', status: 'superseded', run_id: null },
+      { version: 2, body_md: GOOD_SPEC, status: 'draft', run_id: runId },
+    ])
+    const task = await getTestDb()
+      .selectFrom('tasks')
+      .select('state')
+      .where('id', '=', taskId)
+      .executeTakeFirstOrThrow()
+    expect(task.state).toBe('spec_draft')
+  })
+
+  it('rewrites its own version on a second save, and names what the lint found', async () => {
+    const { client, taskId } = await specSession()
+    await saveSpec(client, '## Requirements\n')
+    const result = await saveSpec(client, '## Requirements\n- It retries\n')
+    expect(text(result)).toContain('Saved v1. It cannot be approved yet:')
+    expect(text(result)).toContain('This requirement needs an id like R3: “It retries”.')
+    expect(await versions(taskId)).toEqual([
+      expect.objectContaining({ version: 1, body_md: '## Requirements\n- It retries\n' }),
+    ])
+  })
+
+  it('refuses a delivery run, and saves nothing', async () => {
+    const { client, taskId } = await session()
+    const result = await saveSpec(client, GOOD_SPEC)
+    expect(result.isError).toBe(true)
+    expect(text(result)).toMatch(/spec run/)
+    expect(await versions(taskId)).toHaveLength(1)
+  })
+
+  it('refuses a draft whose phase is not running', async () => {
+    const { client, taskId } = await specSession({ phase: 'paused' })
+    const result = await saveSpec(client, GOOD_SPEC)
+    expect(result.isError).toBe(true)
+    expect(await versions(taskId)).toEqual([])
+  })
+
+  it('refuses a spec over 50 000 characters', async () => {
+    const { client, taskId } = await specSession()
+    const result = await saveSpec(client, 'x'.repeat(50_001))
+    expect(result.isError).toBe(true)
+    expect(await versions(taskId)).toEqual([])
+  })
+})
+
+describe('get_spec, in a spec run', () => {
+  it('returns the latest version, the one a redraft starts from', async () => {
+    const { client } = await specSession({ versions: 2 })
+    expect(
+      JSON.parse(text(await client.callTool({ name: 'get_spec', arguments: {} }))),
+    ).toMatchObject({ version: 2, body_md: 'v2' })
+  })
+
+  it('says so when the task has no spec yet', async () => {
+    const { client } = await specSession()
+    expect(text(await client.callTool({ name: 'get_spec', arguments: {} }))).toBe(
+      'This task has no spec yet.',
+    )
   })
 })
