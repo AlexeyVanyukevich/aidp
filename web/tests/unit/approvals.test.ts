@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import {
+  answerFieldHint,
+  answerFieldLabel,
   answerSummary,
+  batchAnswer,
+  batchAnswerLines,
+  batchHeading,
   currentApproval,
   fieldLabel,
   headingFor,
   optionName,
+  unanswered,
 } from '../../src/card/approvals'
 import { keysFor } from '../../src/stream'
 import type { ApprovalView } from '../../src/types'
@@ -24,6 +30,8 @@ const base: ApprovalView = {
   files: null,
   status: 'open',
   answer: null,
+  questions: null,
+  question_count: 1,
   created_at: '2026-10-20T10:00:00Z',
   answered_at: null,
 }
@@ -101,4 +109,81 @@ describe('keysFor approval notices', () => {
       ])
     },
   )
+})
+
+// Slice 3 spec §11: a batch, answered whole in one form.
+const BATCH: ApprovalView = {
+  ...base,
+  kind: 'questions',
+  question: '2 questions about the spec',
+  options: [],
+  recommendation: null,
+  question_count: 2,
+  questions: [
+    {
+      id: 'q1',
+      question: 'How often?',
+      options: [
+        { id: 'three', label: 'Three times' },
+        { id: 'five', label: 'Five times', impact: 'Slower' },
+      ],
+      recommendation: 'five',
+      context_md: null,
+    },
+    { id: 'q2', question: 'Which errors?', options: [], recommendation: null, context_md: null },
+  ],
+}
+const QUESTIONS = BATCH.questions ?? []
+
+describe('a batch', () => {
+  it.each([
+    ['open', 'Open questions'],
+    ['expired', 'Unanswered questions'],
+  ] as const)('is headed, when %s, "%s"', (status, heading) => {
+    expect(batchHeading(status)).toBe(heading)
+  })
+
+  it('names each answer field by its question’s number, and says when it is optional', () => {
+    expect(answerFieldLabel(2)).toBe('Your answer to question 2')
+    expect(answerFieldHint(true)).toBe('Optional when you choose an option.')
+    expect(answerFieldHint(false)).toBe('Write your answer.')
+  })
+
+  it.each<[string, Record<string, { option?: string; text: string }>, number[]]>([
+    ['nothing answered', {}, [0, 1]],
+    ['an option for the first', { q1: { option: 'five', text: '' } }, [1]],
+    ['blank words are no answer', { q1: { option: 'five', text: '' }, q2: { text: '  ' } }, [1]],
+    ['both answered', { q1: { text: 'Four' }, q2: { text: 'Only 5xx' } }, []],
+  ])('lists what is unanswered: %s', (_name, choices, gaps) => {
+    expect(unanswered(QUESTIONS, choices)).toEqual(gaps)
+  })
+
+  it('sends each question’s option and words, trimmed, leaving out what is empty', () => {
+    expect(
+      batchAnswer(QUESTIONS, { q1: { option: 'five', text: ' ' }, q2: { text: ' Only 5xx ' } }),
+    ).toEqual({
+      answers: [
+        { question_id: 'q1', option_id: 'five' },
+        { question_id: 'q2', text: 'Only 5xx' },
+      ],
+    })
+  })
+
+  it('lists, once answered, each question with the answer given', () => {
+    expect(
+      batchAnswerLines({
+        ...BATCH,
+        status: 'answered',
+        answer: {
+          answers: [
+            { question_id: 'q1', option_id: 'five', text: 'and log it' },
+            { question_id: 'q2', text: 'Only 5xx' },
+          ],
+        },
+      }),
+    ).toEqual([
+      { question: 'How often?', answer: 'Five times — and log it' },
+      { question: 'Which errors?', answer: 'Only 5xx' },
+    ])
+  })
 })
