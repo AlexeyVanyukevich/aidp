@@ -161,5 +161,19 @@ for (const step of steps) {
   }
 }
 
-// The recorded stream that matches what the call did: a pause, a resumed process, or neither.
-replay(paused ? 'pause-1' : resumed ? 'pause-2' : 'plain')
+// The recorded stream that matches what the call did: a pause, a resumed process, or neither —
+// Opus's own for the spec-writer, the others' for every other model.
+const opus = flag('--model') === 'opus'
+replay(
+  paused
+    ? opus
+      ? 'spec-1'
+      : 'pause-1'
+    : resumed
+      ? opus
+        ? 'spec-2'
+        : 'pause-2'
+      : opus
+        ? 'spec-plain'
+        : 'plain',
+)

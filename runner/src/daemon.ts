@@ -2,6 +2,7 @@ import { join } from 'node:path'
 import { BoardApi } from './api.js'
 import { loadRunnerConfig, type RunnerConfig } from './config.js'
 import { carryOut, cleanUp, type Outcome, type Phases } from './delivery.js'
+import { draftSpec } from './drafting.js'
 import { realExec } from './exec.js'
 import { Git } from './git.js'
 import { continuePhase, endPhase, restartPhase, startPhase } from './phases/phase.js'
@@ -39,7 +40,7 @@ export class Daemon {
    * that pauses or blocks is released: the daemon goes back to claiming, and the run comes back
    * as a resume (slice 2 spec, §6).
    */
-  async runOnce(shutdown?: AbortSignal): Promise<Outcome | 'cleaned' | false> {
+  async runOnce(shutdown?: AbortSignal): Promise<Outcome | 'drafted' | 'cleaned' | false> {
     const work = await this.api.claim(this.config.runnerId, this.config.claimWaitMs)
     if (work === null) return false
     if (work.kind === 'cleanup') {
@@ -60,7 +61,7 @@ export class Daemon {
     }, this.config.heartbeatMs)
     let token = ''
     try {
-      return await carryOut(work, {
+      const deps = {
         api: this.api,
         git: this.git,
         sink: new EventSink(
@@ -72,12 +73,15 @@ export class Daemon {
           token = next
         },
         phases: this.overrides.phases ?? PHASES,
-        runTests: this.overrides.runTests ?? runTestCommand,
         config: this.config,
         signal: controller.signal,
         ...(shutdown === undefined ? {} : { shutdown }),
         pauseRequested: () => pauseAsked,
-      })
+      }
+      // A draft or a delivery: the same machinery, different stages (slice 3 spec, §5).
+      return work.run.kind === 'spec'
+        ? await draftSpec(work, deps)
+        : await carryOut(work, { ...deps, runTests: this.overrides.runTests ?? runTestCommand })
     } finally {
       clearInterval(heartbeat)
     }
