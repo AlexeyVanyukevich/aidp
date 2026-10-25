@@ -1,3 +1,4 @@
+import { LABELS } from '../board/columns'
 import type { Block, Stage, TaskState, TaskView } from '../types'
 
 const DURING: Record<Stage, string> = {
@@ -30,7 +31,7 @@ export function actionsFor(
     markDone: state === 'review',
     // An expired question is answered in Approvals, not resumed past (spec §2).
     resume: state === 'blocked' && block?.cause !== 'approval_expired',
-    cancel: ['ready', 'running', 'needs_approval', 'blocked'].includes(state),
+    cancel: ['spec_draft', 'ready', 'running', 'needs_approval', 'blocked'].includes(state),
     rerun: state === 'failed',
   }
 }
@@ -41,4 +42,27 @@ export function initialTab(task: Pick<TaskView, 'state' | 'block'>): string {
     (task.state === 'blocked' && task.block?.cause === 'approval_expired')
     ? 'approvals'
     : 'spec'
+}
+
+/**
+ * What the card announces when its state changes, whoever changed it: the new state, then what
+ * the move means — a question waiting, a draft ready to review, or why a draft did not finish.
+ */
+export function stateAnnouncement(change: {
+  key: string
+  from: TaskState
+  to: TaskState
+  /** The task's newest spec version, read after the move. */
+  latestVersion: number | null
+  draftFailure: string | null
+}): string {
+  const { key, from, to } = change
+  const moved = `${key} is now in ${LABELS[to]}.`
+  if (to === 'needs_approval') return `${moved} ${key} has a question waiting in Approvals.`
+  if (from !== 'spec_draft') return moved
+  if (change.draftFailure !== null)
+    return `${moved} The last draft did not finish: ${change.draftFailure}.`
+  if (to === 'spec_review' && change.latestVersion !== null)
+    return `${moved} v${change.latestVersion} is ready to review.`
+  return moved
 }
