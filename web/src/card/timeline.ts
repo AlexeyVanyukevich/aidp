@@ -40,6 +40,11 @@ function withPauses(steps: EventView[]): (EventView | Pause)[] {
 }
 
 /** A step's line, in words: a failure says so rather than only turning red. */
+/** A run's name: drafts and delivery runs are numbered apart (slice 3 spec, §2). */
+export function runLabel(run: { kind: string; number: number }): string {
+  return `${run.kind === 'spec' ? 'Draft' : 'Run'} ${run.number}`
+}
+
 export function stepLabel(event: EventView): string {
   if (event.type === 'approval_requested') {
     const question = event.payload.question

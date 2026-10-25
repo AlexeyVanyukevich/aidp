@@ -5,7 +5,7 @@ import { api } from '../api'
 import { Loaded } from '../Loaded'
 import type { EventView, RunView, TaskView } from '../types'
 import { formatDuration, formatTokens } from './format'
-import { stepLabel, timelineModel, type Band } from './timeline'
+import { runLabel, stepLabel, timelineModel, type Band } from './timeline'
 
 const tokensOf = (event: EventView) =>
   event.usage.input + event.usage.output + event.usage.cache_read + event.usage.cache_write
@@ -71,7 +71,7 @@ function RunTimeline({ runs }: { runs: RunView[] }) {
           <Select value={run.id} onChange={(e) => setChosen(e.target.value)}>
             {runs.map((r) => (
               <option key={r.id} value={r.id}>
-                Run {r.number} · {r.status}
+                {runLabel(r)} · {r.status}
               </option>
             ))}
           </Select>
