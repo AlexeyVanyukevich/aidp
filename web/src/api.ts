@@ -65,8 +65,10 @@ export const api = {
     id: string,
     patch: { title?: string; description_md?: string; position?: number; state?: 'done' },
   ) => request<TaskView>('PATCH', `/api/tasks/${id}`, patch),
-  action: (id: string, action: 'cancel' | 'rerun' | 'resume') =>
+  action: (id: string, action: 'cancel' | 'rerun' | 'resume' | 'draft-spec') =>
     request<TaskView>('POST', `/api/tasks/${id}/actions/${action}`),
+  redraft: (id: string, note: string) =>
+    request<TaskView>('POST', `/api/tasks/${id}/actions/redraft`, { note }),
   specs: (taskId: string) => request<SpecView[]>('GET', `/api/tasks/${taskId}/specs`),
   saveSpec: (taskId: string, body_md: string) =>
     request<SpecView>('POST', `/api/tasks/${taskId}/specs`, { body_md }),

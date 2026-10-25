@@ -2,6 +2,7 @@ import type { Block, Stage, TaskState, TaskView } from '../types'
 
 const DURING: Record<Stage, string> = {
   prepare: 'during preparation',
+  spec: 'during the draft',
   plan: 'during Plan',
   build: 'during Build',
   tests: 'during the tests',

@@ -43,14 +43,16 @@ export interface TaskView {
   position: number
   budget_usd: number | null
   project: { key: string; name: string; github_repo: string }
-  /** The question the card waits on: open, or expired and blocking it. */
-  approval: { id: string; kind: ApprovalKind; status: ApprovalStatus } | null
+  /** The question the card waits on: open, or expired and blocking it; a batch's count. */
+  approval: { id: string; kind: ApprovalKind; status: ApprovalStatus; questions: number } | null
   /** Why a Blocked card is blocked; null in any other state. */
   block: Block | null
+  /** Why the latest run, a draft, failed; null otherwise. */
+  draft_failure: string | null
 }
-export type ApprovalKind = 'question' | 'out_of_plan' | 'plan'
+export type ApprovalKind = 'question' | 'out_of_plan' | 'plan' | 'questions'
 export type ApprovalStatus = 'open' | 'answered' | 'expired' | 'withdrawn'
-export type Stage = 'prepare' | 'plan' | 'build' | 'tests' | 'verify' | 'push' | 'pr'
+export type Stage = 'prepare' | 'spec' | 'plan' | 'build' | 'tests' | 'verify' | 'push' | 'pr'
 export interface Block {
   cause: 'runner_lost' | 'step_failed' | 'runner_stopped' | 'approval_expired'
   stage: Stage | null

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   editable,
+  specControls,
   lintMessage,
   lintSummary,
   plural,
@@ -79,4 +80,18 @@ it('offers the platform design’s template, which lints clean once filled', () 
   expect(SPEC_TEMPLATE).toContain('## Requirements')
   expect(SPEC_TEMPLATE).toContain('## Acceptance criteria')
   expect(SPEC_TEMPLATE).toContain('## Open questions')
+})
+
+// Slice 3 spec §11: what the Spec tab offers in each state.
+describe('specControls', () => {
+  it.each([
+    ['backlog', { describe: true, draft: true, redraft: false, drafting: false }],
+    ['spec_draft', { describe: false, draft: false, redraft: false, drafting: true }],
+    ['spec_review', { describe: true, draft: false, redraft: true, drafting: false }],
+    ['ready', { describe: false, draft: false, redraft: false, drafting: false }],
+    ['needs_approval', { describe: false, draft: false, redraft: false, drafting: false }],
+    ['failed', { describe: false, draft: false, redraft: false, drafting: false }],
+  ] as const)('in %s: %o', (state, controls) => {
+    expect(specControls(state)).toEqual(controls)
+  })
 })

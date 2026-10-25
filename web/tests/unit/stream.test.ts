@@ -16,7 +16,8 @@ describe('keysFor', () => {
     ],
     [
       { topic: 'run.event', runId: 'r', taskId: 't' },
-      [['board'], ['runs', 't'], ['costs', 't'], ['events', 'r']],
+      // A spec run's save arrives as a run event: the Spec tab shows each version it saves.
+      [['board'], ['runs', 't'], ['costs', 't'], ['events', 'r'], ['specs', 't']],
     ],
     // Notices sent while the server's connection was down are lost: everything is refetched.
     [{ topic: 'resync' }, [[]]],
