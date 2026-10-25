@@ -439,3 +439,60 @@ describe('Cancel, on a draft', () => {
     },
   )
 })
+
+// Slice 3 spec §5: a failed draft says why, until the next run; a batch says how many.
+describe('what a card says about its draft', () => {
+  const card = async (taskId: string) =>
+    (await app.inject({ method: 'GET', url: `/api/tasks/${taskId}` })).json()
+  const endRun = (runId: string, status: 'failed' | 'cancelled', reason: string) =>
+    db()
+      .updateTable('runs')
+      .set({ status, failure_reason: reason, ended_at: new Date() })
+      .where('id', '=', runId)
+      .execute()
+
+  it('names why the latest draft failed', async () => {
+    const { taskId, runId } = await pausedDraft(false)
+    await endRun(runId, 'failed', 'the spec-writer saved no spec')
+    expect((await card(taskId)).draft_failure).toBe('the spec-writer saved no spec')
+  })
+
+  it('says nothing of a draft the owner cancelled', async () => {
+    const { taskId, runId } = await pausedDraft(false)
+    await endRun(runId, 'cancelled', 'cancelled by the owner')
+    expect((await card(taskId)).draft_failure).toBeNull()
+  })
+
+  it('says nothing once a later run has started', async () => {
+    const { taskId, runId } = await pausedDraft(true)
+    await endRun(runId, 'failed', 'the spec phase failed')
+    await db()
+      .insertInto('runs')
+      .values({ task_id: taskId, kind: 'spec', number: 2, spec_version: 1, status: 'queued' })
+      .execute()
+    expect((await card(taskId)).draft_failure).toBeNull()
+  })
+
+  it('counts the questions of the batch it waits on', async () => {
+    const seeded = await seedRunningRun(db())
+    await db()
+      .transaction()
+      .execute((trx) =>
+        openApproval(
+          trx,
+          {
+            runId: seeded.runId,
+            taskId: seeded.taskId,
+            phaseId: seeded.phaseId,
+            kind: 'questions',
+            question: '',
+            options: [],
+            questions: [{ question: 'How often?' }, { question: 'Which?' }, { question: 'When?' }],
+          },
+          new Date(),
+          { recordEvent: true },
+        ),
+      )
+    expect((await card(seeded.taskId)).approval).toMatchObject({ kind: 'questions', questions: 3 })
+  })
+})
