@@ -41,9 +41,53 @@ const asking = (question: string, options: { id: string; label: string; impact?:
   ],
   verifier: [[PASS]],
 })
+/** The spec the spec-writer saves: the same that the other journeys approve. */
+const DRAFTED = `## Goal
+Failed deliveries back off.
+
+## Requirements
+1. R1 – Retries back off
+
+## Acceptance criteria
+- AC1 (R1): Given a failure Then it retries after 1, 2 and 4 seconds
+
+## Open questions
+`
+const SAVE = { tool: 'save_spec', args: { body_md: DRAFTED } }
+/** A spec-writer that asks a batch of two, then saves once answered. */
+const drafting = {
+  'spec-writer': [
+    [
+      {
+        tool: 'request_approval',
+        args: {
+          kind: 'questions',
+          questions: [
+            {
+              question: 'How many retries?',
+              options: [
+                { id: 'three', label: 'Three' },
+                { id: 'five', label: 'Five', impact: 'Slower, but surer' },
+              ],
+              recommendation: 'three',
+            },
+            { question: 'Which errors should retry?' },
+          ],
+        },
+      },
+    ],
+    [SAVE],
+  ],
+  planner: [[{ tool: 'save_plan', args: PLAN }]],
+  builder: [BUILD],
+  verifier: [[PASS]],
+}
 const SCRIPT = {
-  // Slice 2's journeys pick their script by the task's title.
+  // Slice 2's and slice 3's journeys pick their script by the task's title.
   byTitle: {
+    'Draft a retry spec': drafting,
+    'Answer by keyboard': drafting,
+    'Redraft a spec': { 'spec-writer': [[SAVE]] },
     'Ask about colours': asking('Which colour should the retry banner be?', [
       { id: 'red', label: 'red' },
       { id: 'blue', label: 'blue', impact: 'Matches the logo' },
@@ -103,14 +147,18 @@ function targetRepository(root: string, name: string): string {
 
 /** The model the recorded stream names, priced with fixture numbers so the Cost tab has dollars. */
 function fixtureModels(): string[] {
-  const lines = readFileSync(join(REPO, 'runner/tests/fixtures/stream/plain.ndjson'), 'utf8')
-    .split('\n')
-    .filter((l) => l !== '')
-  const result = lines
-    .map((l) => JSON.parse(l) as { type: string; modelUsage?: Record<string, unknown> })
-    .filter((l) => l.type === 'result')
-    .at(-1)
-  return Object.keys(result?.modelUsage ?? {})
+  // The planner's, builder's and verifier's streams, and the spec-writer's on Opus.
+  const models = ['plain', 'spec-plain'].flatMap((fixture) => {
+    const lines = readFileSync(join(REPO, `runner/tests/fixtures/stream/${fixture}.ndjson`), 'utf8')
+      .split('\n')
+      .filter((l) => l !== '')
+    const result = lines
+      .map((l) => JSON.parse(l) as { type: string; modelUsage?: Record<string, unknown> })
+      .filter((l) => l.type === 'result')
+      .at(-1)
+    return Object.keys(result?.modelUsage ?? {})
+  })
+  return [...new Set(models)]
 }
 
 async function waitForHealth(): Promise<void> {
@@ -140,6 +188,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   const opsPath = targetRepository(root, 'ops')
   const askPath = targetRepository(root, 'ask')
   const flakyPath = targetRepository(root, 'flaky')
+  const draftPath = targetRepository(root, 'draft')
   // This remote refuses the first push it receives, so a run blocks on it and resumes.
   const refuseOnce = join(root, 'flaky.git', 'hooks', 'pre-receive')
   writeFileSync(
@@ -209,7 +258,14 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
 
   writeFileSync(
     resolve(REPO, 'tests/ui/.runtime.json'),
-    JSON.stringify({ baseURL: `http://127.0.0.1:${PORT}`, repoPath, opsPath, askPath, flakyPath }),
+    JSON.stringify({
+      baseURL: `http://127.0.0.1:${PORT}`,
+      repoPath,
+      opsPath,
+      askPath,
+      flakyPath,
+      draftPath,
+    }),
   )
 
   // The database stops last: a server still listening on it when it goes would die of the

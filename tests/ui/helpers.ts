@@ -9,6 +9,7 @@ interface Runtime {
   opsPath: string
   askPath: string
   flakyPath: string
+  draftPath: string
 }
 
 let cached: Runtime | undefined
@@ -60,15 +61,18 @@ Failed deliveries back off.
 ## Open questions
 `
 
-/**
- * A project and an approved task, set up through the API: the journeys that use it are about
- * what happens after approval, which the first journey already drives through the page.
- */
-export async function approvedTask(
+export interface ProjectSetup {
+  key: string
+  name: string
+  path: string
+  repo: string
+}
+
+/** A target repository registered once, through the API; later calls find it there. */
+export async function registerProject(
   request: APIRequestContext,
-  project: { key: string; name: string; path: string; repo: string },
-  title: string,
-): Promise<string> {
+  project: ProjectSetup,
+): Promise<void> {
   const projects = (await (await request.get(appUrl('/api/projects'))).json()) as { key: string }[]
   if (!projects.some((p) => p.key === project.key)) {
     const registered = await request.post(appUrl('/api/projects'), {
@@ -83,6 +87,18 @@ export async function approvedTask(
     })
     expect(registered.ok()).toBe(true)
   }
+}
+
+/**
+ * A project and an approved task, set up through the API: the journeys that use it are about
+ * what happens after approval, which the first journey already drives through the page.
+ */
+export async function approvedTask(
+  request: APIRequestContext,
+  project: ProjectSetup,
+  title: string,
+): Promise<string> {
+  await registerProject(request, project)
   const task = (await (
     await request.post(appUrl(`/api/projects/${project.key}/tasks`), { data: { title } })
   ).json()) as { id: string; key: string }
