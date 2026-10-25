@@ -29,7 +29,14 @@ export function keysFor(message: BoardMessage): QueryKey[] {
       ['task', message.taskId],
       ['board'],
     ]
-  return [['board'], ['runs', message.taskId], ['costs', message.taskId], ['events', message.runId]]
+  // A spec run's save arrives as a run event: the Spec tab shows each version it saves.
+  return [
+    ['board'],
+    ['runs', message.taskId],
+    ['costs', message.taskId],
+    ['events', message.runId],
+    ['specs', message.taskId],
+  ]
 }
 
 export function useBoardStream(client: QueryClient): void {

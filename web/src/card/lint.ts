@@ -26,6 +26,25 @@ export function editable(state: TaskState): boolean {
   return state === 'backlog' || state === 'spec_review'
 }
 
+/** What the Spec tab offers in a state (slice 3 spec, §11). */
+export function specControls(state: TaskState): {
+  /** The description can be edited and saved. */
+  describe: boolean
+  /** Draft spec: the spec-writer drafts a first version. */
+  draft: boolean
+  /** Redraft: the latest version goes back with a note. */
+  redraft: boolean
+  /** The spec-writer is drafting; the editor waits. */
+  drafting: boolean
+} {
+  return {
+    describe: state === 'backlog' || state === 'spec_review',
+    draft: state === 'backlog',
+    redraft: state === 'spec_review',
+    drafting: state === 'spec_draft',
+  }
+}
+
 export function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`
 }

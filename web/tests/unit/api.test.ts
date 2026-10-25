@@ -38,6 +38,16 @@ describe('api', () => {
     expect(error).toMatchObject({ status, code, details })
   })
 
+  it('sends a redraft with its note', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: 't' }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await api.redraft('t', 'Say how long.')
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe('/api/tasks/t/actions/redraft')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(init.body as string)).toEqual({ note: 'Say how long.' })
+  })
+
   it('reads every page of a run’s events', async () => {
     const pages = [
       { events: [{ id: 'a' }], next: 'c1' },
