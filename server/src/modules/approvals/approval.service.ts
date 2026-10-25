@@ -6,11 +6,19 @@ import type { ApprovalKind, ApprovalStatus, Block } from '../../shared/vocabular
 import { moveTask } from '../tasks/task.moves.js'
 import {
   checkAnswer,
+  checkBatchAnswer,
   checkRequest,
+  leadLine,
+  numberQuestions,
   optionsFor,
+  questionCount,
   resumeMessage,
   type Answer,
   type ApprovalOption,
+  type BatchAnswer,
+  type BatchQuestion,
+  type BatchQuestionInput,
+  type Finding,
 } from './approval-rules.js'
 
 export interface OpenRequest {
@@ -25,6 +33,8 @@ export interface OpenRequest {
   recommendation?: string | null
   context_md?: string | null
   files?: string[] | null
+  /** A batch's questions, as the agent asked them (slice 3 spec, §6). */
+  questions?: BatchQuestionInput[] | null
 }
 
 export interface ApprovalView {
@@ -37,8 +47,11 @@ export interface ApprovalView {
   recommendation: string | null
   context_md: string | null
   files: string[] | null
+  questions: BatchQuestion[] | null
+  /** A batch's number of questions; one for every other kind. */
+  question_count: number
   status: ApprovalStatus
-  answer: Answer | null
+  answer: Answer | BatchAnswer | null
   created_at: Date
   answered_at: Date | null
 }
@@ -59,18 +72,28 @@ const COLUMNS = [
   'approval_requests.recommendation',
   'approval_requests.context_md',
   'approval_requests.files',
+  'approval_requests.questions',
   'approval_requests.status',
   'approval_requests.answer',
   'approval_requests.created_at',
   'approval_requests.answered_at',
 ] as const
 
-type Row = Omit<ApprovalView, 'options' | 'answer'> & { options: unknown[]; answer: unknown }
-const toView = <T extends Row>(row: T) => ({
-  ...row,
-  options: row.options as ApprovalOption[],
-  answer: (row.answer ?? null) as Answer | null,
-})
+type Row = Omit<ApprovalView, 'options' | 'answer' | 'questions' | 'question_count'> & {
+  options: unknown[]
+  questions: unknown[] | null
+  answer: unknown
+}
+const toView = <T extends Row>(row: T) => {
+  const questions = (row.questions ?? null) as BatchQuestion[] | null
+  return {
+    ...row,
+    options: row.options as ApprovalOption[],
+    questions,
+    question_count: questionCount({ kind: row.kind, questions }),
+    answer: (row.answer ?? null) as Answer | BatchAnswer | null,
+  }
+}
 
 /**
  * Opens a request and pauses everything it stops: the phase, the run and the card (spec §5).
@@ -113,6 +136,11 @@ export async function openApproval(
   if (phase?.status !== 'running')
     throw new ConflictError('No phase of this run is running', { reason: 'no_phase' })
 
+  const batch = request.kind === 'questions' ? numberQuestions(request.questions ?? []) : null
+  const question =
+    batch !== null && request.question.trim() === ''
+      ? leadLine(batch.length)
+      : request.question.trim()
   const { id } = await trx
     .insertInto('approval_requests')
     .values({
@@ -120,8 +148,9 @@ export async function openApproval(
       run_id: request.runId,
       phase_id: request.phaseId,
       kind: request.kind,
-      question: request.question.trim(),
+      question,
       options: JSON.stringify(optionsFor(request.kind, request.options)),
+      questions: batch === null ? null : JSON.stringify(batch),
       recommendation: request.recommendation ?? null,
       context_md: request.context_md ?? null,
       status: 'open',
@@ -160,7 +189,7 @@ export async function openApproval(
         payload: JSON.stringify({
           approval_id: id,
           kind: request.kind,
-          question: request.question.trim(),
+          question,
         }),
       })
       .execute()
@@ -183,7 +212,7 @@ export class ApprovalService {
   ) {}
 
   /** Answers a request and queues its run's resume, in one transaction (spec §5). */
-  async answer(id: string, body: Answer): Promise<ApprovalView> {
+  async answer(id: string, body: Answer | BatchAnswer): Promise<ApprovalView> {
     return this.db.transaction().execute(async (trx) => {
       const row = await trx
         .selectFrom('approval_requests')
@@ -207,7 +236,14 @@ export class ApprovalService {
         })
 
       const approval = toView(row)
-      const findings = checkAnswer(approval, body)
+      // The body's shape follows the kind: a batch is answered whole, anything else once.
+      const batch = approval.kind === 'questions'
+      const findings: Finding[] =
+        batch !== 'answers' in body
+          ? [{ field: 'answers', code: batch ? 'required' : 'unknown_question' }]
+          : 'answers' in body
+            ? checkBatchAnswer(approval.questions ?? [], body)
+            : checkAnswer(approval, body)
       const first = findings[0]
       if (first !== undefined)
         throw new ValidationError('The answer is not valid', { field: first.field, findings })

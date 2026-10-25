@@ -25,6 +25,14 @@ export interface ToolContext {
   clock: () => Date
 }
 
+const OPTION = z.object({ id: z.string(), label: z.string(), impact: z.string().optional() })
+/** An option as the rules hold it: an absent impact left out, not undefined. */
+const option = ({ id, label, impact }: z.infer<typeof OPTION>) => ({
+  id,
+  label,
+  ...(impact === undefined ? {} : { impact }),
+})
+
 const reply = (text: string, isError = false) => ({
   content: [{ type: 'text' as const, text }],
   ...(isError ? { isError } : {}),
@@ -125,16 +133,24 @@ export function registerBoardTools(server: McpServer, ctx: ToolContext): void {
     'request_approval',
     {
       description:
-        'Ask the owner a question you cannot settle yourself — an ambiguity, two approaches with real trade-offs, low confidence — or, with kind out_of_plan, permission to change files the plan does not list. Offer up to five options, recommend one if you can, and give the context the owner needs. The run pauses: end your turn when this answers, and the owner’s answer arrives as your next message.',
+        'Ask the owner what you cannot settle yourself — an ambiguity, two approaches with real trade-offs, low confidence. One question: `question` with up to five options, the one you recommend, and the context the owner needs. Several: kind questions, with each in `questions` (up to eight), asked together and answered together. With kind out_of_plan, ask permission to change files the plan does not list. The run pauses: end your turn when this answers, and the owner’s answer arrives as your next message.',
       inputSchema: {
-        kind: z.enum(['question', 'out_of_plan']).optional(),
-        question: z.string(),
-        options: z
-          .array(z.object({ id: z.string(), label: z.string(), impact: z.string().optional() }))
-          .optional(),
+        kind: z.enum(['question', 'out_of_plan', 'questions']).optional(),
+        question: z.string().optional(),
+        options: z.array(OPTION).optional(),
         recommendation: z.string().optional(),
         context_md: z.string().optional(),
         files: z.array(z.string()).optional(),
+        questions: z
+          .array(
+            z.object({
+              question: z.string(),
+              options: z.array(OPTION).optional(),
+              recommendation: z.string().optional(),
+              context_md: z.string().optional(),
+            }),
+          )
+          .optional(),
       },
     },
     async (input) => {
@@ -160,15 +176,17 @@ export function registerBoardTools(server: McpServer, ctx: ToolContext): void {
               taskId: ctx.taskId,
               phaseId: phase.id,
               kind: input.kind ?? 'question',
-              question: input.question,
-              options: (input.options ?? []).map(({ id, label, impact }) => ({
-                id,
-                label,
-                ...(impact === undefined ? {} : { impact }),
-              })),
+              question: input.question ?? '',
+              options: (input.options ?? []).map(option),
               recommendation: input.recommendation ?? null,
               context_md: input.context_md ?? null,
               files: input.files ?? null,
+              questions: (input.questions ?? []).map((asked) => ({
+                question: asked.question,
+                options: (asked.options ?? []).map(option),
+                recommendation: asked.recommendation ?? null,
+                context_md: asked.context_md ?? null,
+              })),
             },
             ctx.clock(),
             { recordEvent: true },
