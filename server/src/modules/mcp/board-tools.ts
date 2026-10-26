@@ -133,9 +133,9 @@ export function registerBoardTools(server: McpServer, ctx: ToolContext): void {
     'request_approval',
     {
       description:
-        'Ask the owner what you cannot settle yourself — an ambiguity, two approaches with real trade-offs, low confidence. One question: `question` with up to five options, the one you recommend, and the context the owner needs. Several: kind questions, with each in `questions` (up to eight), asked together and answered together. With kind out_of_plan, ask permission to change files the plan does not list. The run pauses: end your turn when this answers, and the owner’s answer arrives as your next message.',
+        'Ask the owner what you cannot settle yourself — an ambiguity, two approaches with real trade-offs, low confidence. One question: `question` with up to five options, the one you recommend, and the context the owner needs. Several: kind questions, with each in `questions` (up to eight), asked together and answered together. With kind out_of_plan, ask permission to change files the plan does not list. With kind migration, ask to create or change one migration: its path in `files`, a summary in `question`, the whole file in `context_md`. The run pauses: end your turn when this answers, and the owner’s answer arrives as your next message.',
       inputSchema: {
-        kind: z.enum(['question', 'out_of_plan', 'questions']).optional(),
+        kind: z.enum(['question', 'out_of_plan', 'migration', 'questions']).optional(),
         question: z.string().optional(),
         options: z.array(OPTION).optional(),
         recommendation: z.string().optional(),

@@ -523,6 +523,33 @@ describe('claiming resumes and cleanups', () => {
     expect((await claim()).json()).toEqual({ work: null })
   })
 
+  it('hands over the approved migrations, also as allowed files; a refused one is in neither', async () => {
+    const { runId, phaseId } = await queuedResume()
+    const ask = (path: string, option_id: string) =>
+      db()
+        .insertInto('approval_requests')
+        .values({
+          run_id: runId,
+          phase_id: phaseId,
+          kind: 'migration',
+          question: 'Adds a column.',
+          options: '[]',
+          recommendation: null,
+          context_md: 'code',
+          status: 'answered',
+          answer: JSON.stringify({ option_id }),
+          checkpoint: null,
+          files: JSON.stringify([path]),
+          answered_at: now,
+        })
+        .execute()
+    await ask('server/src/db/migrations/004_x.ts', 'allow')
+    await ask('server/src/db/migrations/005_y.ts', 'refuse')
+    const work = (await claim()).json().work
+    expect(work.approved_migrations).toEqual(['server/src/db/migrations/004_x.ts'])
+    expect(work.allowed_files).toEqual(['server/src/db/migrations/004_x.ts'])
+  })
+
   it('derives a checkpoint from the records when the runner never sent one', async () => {
     const { runId, phaseId, sessionId } = await queuedResume()
     await db().updateTable('runs').set({ checkpoint: null }).where('id', '=', runId).execute()

@@ -26,6 +26,16 @@ function deny(reason: string): Verdict {
   return { allow: false, reason }
 }
 
+/** A path with a `migrations` segment whose file name does not start with `index.` (a registry). */
+export function isMigration(relativePath: string): boolean {
+  const segments = relativePath.split('/')
+  return segments.includes('migrations') && !(segments.at(-1) ?? '').startsWith('index.')
+}
+
+function migrationReason(path: string, exists: boolean): string {
+  return `${exists ? 'changing' : 'creating'} the migration \`${path}\` needs the owner's approval. Call request_approval with kind migration, the path in files, a summary of what it changes and whether its down step undoes it in question, and the whole file in context_md. Then end your turn.`
+}
+
 export function decide(
   input: { tool_name: string; tool_input: Record<string, unknown> },
   ctx: {
@@ -34,6 +44,8 @@ export function decide(
     allowedFiles: string[] | null
     /** The board paused the run: nothing the agent does may change anything (spec §6). */
     paused: boolean
+    /** Migrations the owner approved for this run; the guard reads them from the run directory. */
+    approvedMigrations?: string[]
     cwd: string
     exists: (path: string) => boolean
   },
@@ -57,19 +69,22 @@ export function decide(
     return deny('this path is outside the worktree')
   if (/^\.env(\..*)?$/.test(basename(absolute)))
     return deny('.env files hold secrets and are off limits')
-  if (
-    input.tool_name === 'Write' &&
-    inside.split(sep).includes('migrations') &&
-    !ctx.exists(absolute)
-  ) {
-    return deny(
-      'a new migration needs a person; finish without it and say in your report that one is needed',
-    )
-  }
   const relativePath = inside.split(sep).join('/')
+  const approved = (ctx.approvedMigrations ?? []).includes(relativePath)
+  if (isMigration(relativePath) && !approved) {
+    const exists = ctx.exists(absolute)
+    if (ctx.phase === 'build') {
+      return deny(migrationReason(relativePath, exists))
+    } else if (input.tool_name === 'Write' && !exists) {
+      return deny(
+        'a new migration needs a person; finish without it and say in your report that one is needed',
+      )
+    }
+  }
   if (
     ctx.phase === 'build' &&
     ctx.allowedFiles !== null &&
+    !approved &&
     !ctx.allowedFiles.includes(relativePath)
   ) {
     return deny(

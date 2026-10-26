@@ -54,7 +54,7 @@ describe('the guard', () => {
     ['an env file', edit('.env'), false],
     ['a nested env file', edit('config/.env.production'), false],
     ['a new migration', edit('db/migrations/002_new.ts', 'Write'), false],
-    ['an existing migration, edited', edit('db/migrations/001_initial.ts'), true],
+    ['an existing migration, edited', edit('db/migrations/001_initial.ts'), false],
   ])('%s', (name, input, allowed) => {
     const phase = name.includes('in Plan') ? 'plan' : 'build'
     const planFiles = name.includes('migration')
@@ -63,6 +63,45 @@ describe('the guard', () => {
     expect(
       decide(input, ctx(phase, planFiles ?? ['src/retry.ts', 'src/retry.test.ts'])).allow,
     ).toBe(allowed)
+  })
+
+  describe('migrations', () => {
+    const NEW = 'server/src/db/migrations/004_x.ts'
+    const OLD = 'server/src/db/migrations/001_initial.ts'
+    const INDEX = 'server/src/db/migrations/index.ts'
+    const mctx = (phase: string, allowed: string[], approved: string[] = []) => ({
+      phase,
+      allowedFiles: allowed,
+      approvedMigrations: approved,
+      paused: false,
+      cwd: CWD,
+      exists: (path: string) => !path.endsWith('004_x.ts'),
+    })
+    const reason = (verdict: ReturnType<typeof decide>) =>
+      verdict.allow ? '' : verdict.reason
+
+    it('refuses a new migration the plan lists, naming the request', () => {
+      const verdict = decide(edit(NEW, 'Write'), mctx('build', [NEW]))
+      expect(verdict.allow).toBe(false)
+      expect(reason(verdict)).toContain('request_approval')
+      expect(reason(verdict)).toContain('kind migration')
+    })
+    it.each(['Edit', 'MultiEdit', 'Write'])('refuses %s of an existing migration', (tool) => {
+      const verdict = decide(edit(OLD, tool), mctx('build', [OLD]))
+      expect(verdict.allow).toBe(false)
+      expect(reason(verdict)).toContain('kind migration')
+    })
+    it('treats the registry by the plan alone', () => {
+      expect(decide(edit(INDEX), mctx('build', [INDEX]))).toEqual({ allow: true })
+      expect(reason(decide(edit(INDEX), mctx('build', [])))).toContain('out_of_plan')
+    })
+    it('lets an approved migration through, in every round', () => {
+      expect(decide(edit(NEW, 'Write'), mctx('build', [], [NEW]))).toEqual({ allow: true })
+      expect(decide(edit(OLD, 'Edit'), mctx('build', [], [OLD]))).toEqual({ allow: true })
+    })
+    it('refuses to create a migration outside Build', () => {
+      expect(decide(edit(NEW, 'Write'), mctx('plan', [NEW])).allow).toBe(false)
+    })
   })
 
   // Slice 3 spec §10: a command or agent left in the background is lost when the turn ends.

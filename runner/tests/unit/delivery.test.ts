@@ -383,6 +383,22 @@ describe('pausing and resuming', () => {
     expect(h.gitCalls).not.toContain(`worktree ${BRANCH}`)
   })
 
+  it('writes the approved migrations beside the allowed files on resume', async () => {
+    const h = withPlan(harness({}))
+    const M = 'server/src/db/migrations/004_x.ts'
+    const work = {
+      ...resume(checkpoint('build', 1, 'build-phase'), 'The owner allowed the migration.', [
+        'src/retry.ts',
+        M,
+      ]),
+      approved_migrations: [M],
+    } as Extract<Work, { kind: 'resume' }>
+    await carryOut(work, h.deps)
+    const dir = join(h.home, 'runs', RUN.id)
+    expect(JSON.parse(readFileSync(join(dir, 'approved-migrations.json'), 'utf8'))).toEqual([M])
+    expect(JSON.parse(readFileSync(join(dir, 'allowed-files.json'), 'utf8'))).toContain(M)
+  })
+
   it('stops at the plan gate when the planner is not confident', async () => {
     const h = harness({ confidence: ['medium'] })
     expect(await carryOut(START as Extract<Work, { kind: 'start' }>, h.deps)).toBe('released')

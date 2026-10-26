@@ -52,6 +52,7 @@ async function guard(): Promise<void> {
   const input = await readStdin()
   const runDir = env('BOARD_RUN_DIR')
   const allowedPath = join(runDir, 'allowed-files.json')
+  const approvedPath = join(runDir, 'approved-migrations.json')
   const verdict = decide(
     {
       tool_name: typeof input.tool_name === 'string' ? input.tool_name : '',
@@ -65,6 +66,9 @@ async function guard(): Promise<void> {
       allowedFiles: existsSync(allowedPath)
         ? (JSON.parse(readFileSync(allowedPath, 'utf8')) as string[])
         : null,
+      approvedMigrations: existsSync(approvedPath)
+        ? (JSON.parse(readFileSync(approvedPath, 'utf8')) as string[])
+        : [],
       paused: existsSync(join(runDir, PAUSED_MARKER)),
       cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(),
       exists: existsSync,

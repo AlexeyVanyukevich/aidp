@@ -1,15 +1,21 @@
 import { fileURLToPath } from 'node:url'
 import type { Kysely } from 'kysely'
-import { Migrator } from 'kysely/migration'
+import { Migrator, type Migration } from 'kysely/migration'
 import { createDb } from './client.js'
 import { migrations } from './migrations/index.js'
 import type { Database } from './schema.js'
 
-export async function runMigrations(db: Kysely<Database>): Promise<void> {
-  const migrator = new Migrator({ db, provider: { getMigrations: async () => migrations } })
+/** Applies every pending migration. A failure names the migration and carries the database's error. */
+export async function runMigrations(
+  db: Kysely<Database>,
+  available: Record<string, Migration> = migrations,
+): Promise<void> {
+  const migrator = new Migrator({ db, provider: { getMigrations: async () => available } })
   const { error, results } = await migrator.migrateToLatest()
-  for (const result of results ?? []) {
-    if (result.status === 'Error') throw new Error(`Migration "${result.migrationName}" failed`)
+  const failed = (results ?? []).find((result) => result.status === 'Error')
+  if (failed !== undefined) {
+    const reason = error instanceof Error ? error.message : String(error ?? 'unknown error')
+    throw new Error(`Migration "${failed.migrationName}" failed: ${reason}`, { cause: error })
   }
   if (error) throw error
 }

@@ -347,3 +347,23 @@ describe('the drafted-specs migration', () => {
     expect(await columns()).toEqual(before)
   })
 })
+
+describe('running migrations', () => {
+  it('names a failed migration and carries the database’s error', async () => {
+    const { runMigrations } = await import('../../src/db/migrate.js')
+    const failing = {
+      '999_broken': {
+        up: async (db: never) => {
+          await sql`select * from no_such_table`.execute(db)
+        },
+      },
+    }
+    await expect(runMigrations(getTestDb(), { ...migrations, ...failing })).rejects.toThrow(
+      /Migration "999_broken" failed: .*no_such_table/,
+    )
+    const row = await sql`select 1 from kysely_migration where name = '999_broken'`.execute(
+      getTestDb(),
+    )
+    expect(row.rows).toEqual([])
+  })
+})
