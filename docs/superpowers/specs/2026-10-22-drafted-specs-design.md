@@ -1,6 +1,6 @@
 # Slice 3 — drafted specs
 
-Status: **approved**, 2026-10-22; designed 2026-10-22. Builds on slices 1 and 2 as
+Status: **built**, 2026-10-26; approved and designed 2026-10-22. Builds on slices 1 and 2 as
 [docs/architecture.md](../../architecture.md) describes them on that date.
 
 > **This is a decision record, not a description of the system.**
