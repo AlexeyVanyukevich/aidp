@@ -13,7 +13,7 @@ describe('loadRunnerConfig', () => {
       runnerId: hostname(),
       claudeBin: 'claude',
       ghBin: 'gh',
-      home: join(homedir(), '.ai-task-board'),
+      home: join(homedir(), '.aidp'),
       testTimeoutMs: 900_000,
       claimWaitMs: 30_000,
       heartbeatMs: 30_000,

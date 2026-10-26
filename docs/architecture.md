@@ -61,8 +61,8 @@ spec-writer saved no spec". The card's view carries a failed draft's reason unti
 
 ## A delivery run
 
-The runner creates a worktree under `~/.ai-task-board/worktrees/<run>` on `board/<KEY>-r<n>` from
-`origin/<base>`, and a run directory under `~/.ai-task-board/runs/<run>` holding the agents, the
+The runner creates a worktree under `~/.aidp/worktrees/<run>` on `board/<KEY>-r<n>` from
+`origin/<base>`, and a run directory under `~/.aidp/runs/<run>` holding the agents, the
 hooks, the MCP configuration, the event buffer and the files Build may change. A run goes through
 stages — `prepare`, `plan`, `build`, `tests`, `verify`, `push`, `pr` — with up to three Build →
 tests → Verify rounds. All criteria passing pushes the branch and opens the pull request, or

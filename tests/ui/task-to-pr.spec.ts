@@ -5,7 +5,7 @@ test('a task goes from the board to a pull request, with its steps and costs on 
   page,
 }) => {
   await page.goto(appUrl('/'))
-  await expect(page).toHaveTitle('Projects · AI Task Board')
+  await expect(page).toHaveTitle('Projects · AI Delivery Platform')
   await expectAccessible(page)
 
   const fields: [string, string][] = [
@@ -33,7 +33,7 @@ test('a task goes from the board to a pull request, with its steps and costs on 
   await backlog.getByRole('link', { name: /^PAY-1 / }).click()
   const card = page.getByRole('dialog', { name: 'Back off retries' })
   await expect(card).toBeVisible()
-  await expect(page).toHaveTitle('PAY-1 Back off retries · AI Task Board')
+  await expect(page).toHaveTitle('PAY-1 Back off retries · AI Delivery Platform')
   await expectAccessible(page)
 
   await card.getByRole('textbox', { name: 'Spec' }).fill(SPEC)

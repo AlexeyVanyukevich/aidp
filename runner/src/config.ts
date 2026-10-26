@@ -39,7 +39,7 @@ export function loadRunnerConfig(env: NodeJS.ProcessEnv): RunnerConfig {
     runnerId: env.RUNNER_ID?.trim() || hostname(),
     claudeBin: env.CLAUDE_BIN?.trim() || 'claude',
     ghBin: env.GH_BIN?.trim() || 'gh',
-    home: env.BOARD_HOME?.trim() || join(homedir(), '.ai-task-board'),
+    home: env.BOARD_HOME?.trim() || join(homedir(), '.aidp'),
     testTimeoutMs: positiveInt(env, 'TEST_TIMEOUT_MS', 900_000),
     claimWaitMs: positiveInt(env, 'CLAIM_WAIT_MS', 30_000),
     heartbeatMs: positiveInt(env, 'HEARTBEAT_MS', 30_000),

@@ -1,4 +1,4 @@
-# AI Task Board
+# AI Delivery Platform
 
 A Jira-style board where Claude carries out each task through Spec → Plan → Build → Verify. The
 owner approves every spec, answers the questions a run cannot settle itself, and sees every step
