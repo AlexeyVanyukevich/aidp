@@ -50,7 +50,7 @@ export interface TaskView {
   /** Why the latest run, a draft, failed; null otherwise. */
   draft_failure: string | null
 }
-export type ApprovalKind = 'question' | 'out_of_plan' | 'plan' | 'questions'
+export type ApprovalKind = 'question' | 'out_of_plan' | 'migration' | 'plan' | 'questions'
 export type ApprovalStatus = 'open' | 'answered' | 'expired' | 'withdrawn'
 export type Stage = 'prepare' | 'spec' | 'plan' | 'build' | 'tests' | 'verify' | 'push' | 'pr'
 export interface Block {

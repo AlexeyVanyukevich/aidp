@@ -127,3 +127,71 @@ test('a question is answered from the keyboard alone, focus landing where it sho
   ).toBeVisible()
   await expectAccessible(page)
 })
+
+test('a migration request shows its path and code, in a block that scrolls at 320 px', async ({
+  page,
+  request,
+}) => {
+  const key = await approvedTask(request, ask(), 'Show a migration')
+  const path = 'server/src/db/migrations/004_x.ts'
+  const code = [
+    'export async function up(db: Kysely<any>) {',
+    '  await db.schema.alterTable("runs").addColumn("x", "text").execute()',
+    '}',
+    '',
+    'export async function down(db: Kysely<any>) {',
+    '  await db.schema.alterTable("runs").dropColumn("x").execute()',
+    '}',
+  ].join('\n')
+  // The board shows the request it would hold for a migration: the tab is given one to read.
+  await page.route('**/api/tasks/*/approvals', async (route) => {
+    await route.fulfill({
+      json: [
+        {
+          id: '00000000-0000-4000-8000-000000000001',
+          run_id: '00000000-0000-4000-8000-000000000002',
+          phase_id: null,
+          kind: 'migration',
+          question: 'Adds runs.x; its down step drops it.',
+          options: [
+            { id: 'allow', label: 'Allow the migration' },
+            { id: 'refuse', label: 'Keep to the plan' },
+          ],
+          recommendation: null,
+          context_md: `${code}\n// <b>not markup</b>`,
+          files: [path],
+          questions: null,
+          question_count: 1,
+          status: 'open',
+          answer: null,
+          created_at: '2026-10-20T10:00:00Z',
+          answered_at: null,
+        },
+      ],
+    })
+  })
+  await page.setViewportSize({ width: 320, height: 800 })
+  await page.goto(appUrl('/p/ASK'))
+  const link = page.getByRole('link', { name: new RegExp(`^${key} `) })
+  await expect(link).toBeVisible(RUN)
+  await link.click()
+  const card = page.getByRole('dialog', { name: 'Show a migration' })
+  await card.getByRole('tab', { name: 'Approvals' }).click()
+  const panel = card.getByRole('tabpanel', { name: 'Approvals' })
+  await expect(panel.getByText('Adds runs.x; its down step drops it.')).toBeVisible()
+  await expect(panel.getByText(path, { exact: true })).toBeVisible()
+  const block = panel.getByRole('region', { name: `Contents of ${path}` })
+  await expect(block).toContainText('// <b>not markup</b>')
+  expect(await block.evaluate((node) => node.textContent)).toContain(
+    `${code.split('\n')[1]}\n}\n\nexport`,
+  )
+  expect(await block.evaluate((node) => getComputedStyle(node).fontFamily)).toMatch(/mono/i)
+  expect(await block.evaluate((node) => getComputedStyle(node).whiteSpace)).toBe('pre')
+  expect(await block.evaluate((node) => node.scrollWidth > node.clientWidth)).toBe(true)
+  // The block scrolls within itself: it never reaches past the 320 px viewport.
+  const box = await block.boundingBox()
+  expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(320)
+  await expect(panel.getByRole('button', { name: 'Allow the migration' })).toBeVisible()
+  await expect(panel.getByRole('button', { name: 'Keep to the plan' })).toBeVisible()
+  await expectAccessible(page)
+})

@@ -8,7 +8,9 @@ import {
   batchHeading,
   currentApproval,
   fieldLabel,
+  codeLabel,
   headingFor,
+  migrationPath,
   optionName,
   unanswered,
 } from '../../src/card/approvals'
@@ -185,5 +187,20 @@ describe('a batch', () => {
       { question: 'How often?', answer: 'Five times — and log it' },
       { question: 'Which errors?', answer: 'Only 5xx' },
     ])
+  })
+})
+
+describe('a migration request', () => {
+  const migration: ApprovalView = {
+    ...base,
+    kind: 'migration',
+    files: ['server/src/db/migrations/004_x.ts'],
+  }
+  it('has its path, and other kinds have none', () => {
+    expect(migrationPath(migration)).toBe('server/src/db/migrations/004_x.ts')
+    expect(migrationPath({ ...base, kind: 'out_of_plan', files: ['a.ts'] })).toBeUndefined()
+  })
+  it('names the code block after the path', () => {
+    expect(codeLabel('a/b.ts')).toBe('Contents of a/b.ts')
   })
 })

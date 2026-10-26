@@ -14,6 +14,14 @@ export function optionName(option: ApprovalOption, recommendation: string | null
   return option.id === recommendation ? `${option.label} (recommended)` : option.label
 }
 
+/** The one path of a migration request, or undefined for any other kind. */
+export function migrationPath(approval: ApprovalView): string | undefined {
+  return approval.kind === 'migration' ? approval.files?.[0] : undefined
+}
+
+/** The name of the code block: what a screen reader announces for the scrollable region. */
+export const codeLabel = (path: string) => `Contents of ${path}`
+
 export function headingFor(status: ApprovalStatus): string {
   return status === 'expired' ? 'Unanswered question' : 'Open question'
 }
