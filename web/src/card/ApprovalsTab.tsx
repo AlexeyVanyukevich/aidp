@@ -11,7 +11,9 @@ import {
   batchHeading,
   currentApproval,
   fieldLabel,
+  codeLabel,
   headingFor,
+  migrationPath,
   optionName,
 } from './approvals'
 import { BatchForm } from './BatchForm'
@@ -112,19 +114,39 @@ export function ApprovalsTab({
                 <p id={questionId} className="question">
                   {current.question}
                 </p>
-                {current.context_md !== null && current.context_md !== '' && (
-                  <div className="context">{current.context_md}</div>
-                )}
-                {current.files !== null && current.files.length > 0 && (
+                {migrationPath(current) !== undefined ? (
                   <>
-                    <p id={filesId}>The files it asks to change:</p>
-                    <ul aria-labelledby={filesId} className="files">
-                      {current.files.map((file) => (
-                        <li key={file}>
-                          <code>{file}</code>
-                        </li>
-                      ))}
-                    </ul>
+                    <p id={filesId}>The migration it asks to write:</p>
+                    <p>
+                      <code>{migrationPath(current)}</code>
+                    </p>
+                    {/* Plain text, never markup: a migration is code the owner reads as written. */}
+                    <pre
+                      className="code"
+                      tabIndex={0}
+                      role="region"
+                      aria-label={codeLabel(migrationPath(current) ?? '')}
+                    >
+                      {current.context_md ?? ''}
+                    </pre>
+                  </>
+                ) : (
+                  <>
+                    {current.context_md !== null && current.context_md !== '' && (
+                      <div className="context">{current.context_md}</div>
+                    )}
+                    {current.files !== null && current.files.length > 0 && (
+                      <>
+                        <p id={filesId}>The files it asks to change:</p>
+                        <ul aria-labelledby={filesId} className="files">
+                          {current.files.map((file) => (
+                            <li key={file}>
+                              <code>{file}</code>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
                   </>
                 )}
                 {current.options.length > 0 && (

@@ -105,6 +105,24 @@ session, and its revised plan meets the gate again.
 the builder to ask with `request_approval` kind `out_of_plan`. Allowing the change adds the files
 to the allowed list for the rest of the run.
 
+**Migration approval.** A migration is a file under a `migrations/` directory whose name does not
+start with `index.`; the registry (`index.*`) is an ordinary file, held to the plan alone. In
+Build the guard refuses to create one, or to change one already in the worktree, even when the
+plan or an `out_of_plan` answer lists it, and tells the builder to ask with `request_approval`
+kind `migration`: the path in `files`, a summary in `question` (what it changes, and whether its
+down step undoes it), and the whole file in `context_md` (up to 20,000 characters, other kinds
+8,000). The request offers `allow` and `refuse` and pauses the run as an `out_of_plan` one does.
+The Approvals tab shows the summary, the path, and the file as plain text in a monospace block.
+Allowing adds the path to the run's approved migrations and its allowed files for the rest of
+the run; the claim carries both, and the runner writes `approved-migrations.json` beside
+`allowed-files.json`, where the guard reads it. Outside Build the guard still refuses to create
+a migration.
+
+**Migrations on start.** `server/src/server.ts` applies every pending migration before it
+listens. A failed one is logged by name with the database's error, the server exits non-zero
+without listening, and the migration is not recorded as applied. `npm run migrate` (and
+`./run migrate`) applies them without starting the server and fails the same way.
+
 **Blocks.** The sweeper, every `SWEEP_MS`, blocks a running run with no heartbeat for 90 seconds
 (`runner_lost`, its phase marked interrupted) and a question open for 48 hours
 (`approval_expired`); a tick after a gap of more than two intervals — the machine slept —
@@ -141,12 +159,13 @@ Code misses part of it and which is not compared.
 
 ## Security
 
+New migrations, and changes to migrations from the base branch, need the owner's approval.
+
 No sign-in: the server binds 127.0.0.1, answers only to `ALLOWED_HOSTS`, and refuses writes
 from a foreign `Origin`. The runner authenticates with `RUNNER_KEY`; each `claude` process gets
 a run token limited to its run, retired five minutes after the process exits. Runner credentials
 are checked before a request's body is read. The guard denies `rm -rf`, `git push`,
-`git reset --hard`, `.env` files, paths outside the worktree, new migrations, in Build any file
-the run has not allowed, `Bash` or `Agent` sent to the background (`run_in_background: true`,
+`git reset --hard`, `.env` files, paths outside the worktree, in Build any file the run has not allowed, `Bash` or `Agent` sent to the background (`run_in_background: true`,
 which a `-p` process loses when its turn ends), and — once the run is paused — every tool.
 
 ## Error translation

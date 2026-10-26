@@ -120,6 +120,28 @@ td {
   white-space: pre-wrap;
   color: var(--zl-ink-soft);
 }
+/* A wide code block scrolls inside itself rather than widening the card. */
+.card-body,
+.card-body .zl-tabs,
+.approvals-tab,
+.approval {
+  grid-template-columns: minmax(0, 1fr);
+}
+.approval .code {
+  margin: 0;
+  padding: var(--zl-space-3);
+  overflow: auto;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  max-block-size: 28rem;
+  font-family: var(--zl-font-mono);
+  font-size: var(--zl-text-sm);
+  white-space: pre;
+  background: var(--zl-surface-sunk);
+  color: var(--zl-ink);
+  border: 1px solid var(--zl-line);
+  border-radius: var(--zl-radius);
+}
 .options {
   display: grid;
   gap: var(--zl-space-2);
