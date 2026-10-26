@@ -1,5 +1,9 @@
 // One real task, end to end, against a throwaway repository: real claude, real gh, real
 // tokens. Prints the pull request and what it cost. Run through `./run smoke`.
+//
+// With `--draft` (slice 3), the spec is not written here: the task carries a description that
+// leaves two questions open, the spec-writer drafts it, and the owner answers, reviews and
+// approves on the board while this waits.
 const board = (process.env.BOARD_URL ?? 'http://127.0.0.1:4100').replace(/\/+$/, '')
 const repoPath = process.env.SMOKE_REPO_PATH
 const githubRepo = process.env.SMOKE_GITHUB_REPO
@@ -46,26 +50,49 @@ if (!projects.some((p) => p.key === 'SMOKE')) {
     test_command: 'test -f SMOKE.md',
   })
 }
+const drafted = process.argv.includes('--draft')
+// Two things a spec has to settle are left open on purpose: the file's line, and its format.
+const DESCRIPTION = `Record in the repository that the board's smoke run of ${today} reached it, in a file at the root. Which file, and what its line says, are not decided.`
 const task = await call<{ id: string; key: string }>('POST', '/api/projects/SMOKE/tasks', {
-  title: `Smoke ${today}`,
+  title: drafted ? `Drafted smoke ${today}` : `Smoke ${today}`,
   budget_usd: 2,
+  ...(drafted ? { description_md: DESCRIPTION } : {}),
 })
-const spec = await call<{ id: string }>('POST', `/api/tasks/${task.id}/specs`, { body_md: SPEC })
-await call('POST', `/api/specs/${spec.id}/approve`)
-console.log(`${task.key} approved; waiting for the runner (up to 30 minutes)…`)
-
-const deadline = Date.now() + 30 * 60_000
-let state = 'ready'
-while (Date.now() < deadline && !['review', 'failed', 'done'].includes(state)) {
-  await new Promise((done) => setTimeout(done, 10_000))
-  state = (await call<{ state: string }>('GET', `/api/tasks/${task.id}`)).state
-  process.stdout.write(`  ${state}\n`)
+if (drafted) {
+  await call('POST', `/api/tasks/${task.id}/actions/draft-spec`)
+  console.log(`${task.key} is drafting. Answer its questions, review and approve the spec at:`)
+  console.log(`  ${board}/p/SMOKE/${task.id}`)
+  console.log('Waiting for a pull request (up to 60 minutes)…')
+} else {
+  const spec = await call<{ id: string }>('POST', `/api/tasks/${task.id}/specs`, { body_md: SPEC })
+  await call('POST', `/api/specs/${spec.id}/approve`)
+  console.log(`${task.key} approved; waiting for the runner (up to 30 minutes)…`)
 }
 
-const [run] = await call<{ pr_url: string | null; failure_reason: string | null }[]>(
-  'GET',
-  `/api/tasks/${task.id}/runs`,
-)
+const deadline = Date.now() + (drafted ? 60 : 30) * 60_000
+let state = drafted ? 'spec_draft' : 'ready'
+while (Date.now() < deadline && !['review', 'failed', 'done'].includes(state)) {
+  await new Promise((done) => setTimeout(done, 10_000))
+  const next = (await call<{ state: string }>('GET', `/api/tasks/${task.id}`)).state
+  if (next !== state) process.stdout.write(`  ${next}\n`)
+  state = next
+}
+
+// Newest first: the delivery run, then its drafts.
+const runs = await call<
+  { kind: string; number: number; pr_url: string | null; failure_reason: string | null }[]
+>('GET', `/api/tasks/${task.id}/runs`)
+const run = runs.find((r) => r.kind === 'delivery')
+if (drafted)
+  console.log(
+    `drafts: ${runs.filter((r) => r.kind === 'spec').length}, versions saved by hand or by the spec-writer:`,
+  )
+if (drafted)
+  for (const version of await call<{ version: number; status: string }[]>(
+    'GET',
+    `/api/tasks/${task.id}/specs`,
+  ))
+    console.log(`  v${version.version} ${version.status}`)
 const costs = await call<{
   totals: { usd: number }
   byPhase: { name: string; usd: number; reportedUsd: number | null; flagged: boolean }[]
