@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 
-const APP = 'AI Task Board'
+const APP = 'AI Delivery Platform'
 
 /** Names the document while mounted, and gives back the name it found when unmounted. */
 export function useDocumentTitle(title: string | undefined): void {

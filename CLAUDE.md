@@ -1,4 +1,4 @@
-# ai-task-board
+# aidp
 
 A board where Claude carries out each task through Spec → Plan → Build → Verify, for one owner
 on their own machine.

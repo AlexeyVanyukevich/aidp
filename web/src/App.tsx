@@ -12,7 +12,7 @@ export function App({ client }: { client: QueryClient }) {
     <BrowserRouter>
       <header className="top">
         <Link to="/" className="brand">
-          AI Task Board
+          AI Delivery Platform
         </Link>
         <QuestionsWaiting />
       </header>
