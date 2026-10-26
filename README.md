@@ -9,10 +9,11 @@ that drives Claude Code in git worktrees of the owner's repositories.
 
 ## Status
 
-**Slices 1 and 2 built:** one task from the board to a pull request, and runs that pause on a
-question, wait in Blocked when interrupted, and resume. Drafted specs are slice 3 — see §13 of
-the [MVP spec](docs/superpowers/specs/2026-10-10-mvp-design.md). What the board does today is in
-[docs/architecture.md](docs/architecture.md).
+**The MVP's three slices are built:** one task from the board to a pull request; runs that pause
+on a question, wait in Blocked when interrupted, and resume; and specs drafted by a spec-writer
+from the task's description, its questions answered on the board. The MVP's exit gate — §1 of
+the [MVP spec](docs/superpowers/specs/2026-10-10-mvp-design.md) — is being measured. What the
+board does today is in [docs/architecture.md](docs/architecture.md).
 
 ## Running it
 
@@ -22,11 +23,16 @@ Needs Node 24, Docker, Claude Code signed in, and the GitHub CLI signed in (`gh 
     open http://127.0.0.1:5174
 
 Register a repository on the Projects page, then record the price of each model the phases
-use, from Anthropic's price list, in USD per million tokens:
+use, from Anthropic's price list, in USD per million tokens — the spec-writer runs on Opus
+(`claude-opus-5-5`), the other phases on Sonnet, Claude Code's own calls on Haiku:
 
     ./run price:set <model id> <input> <output> <cache read> <cache write>
 
-The Cost tab names any model that still has no price.
+The Cost tab names any model that still has no price. Cache writes take the one-hour rate.
+
+On a card, write the task's description and press **Draft spec**: the spec-writer reads it and
+the code, asks its questions in the card's Approvals tab, and leaves a spec in Spec review. Or
+write the spec yourself in the Spec tab. Either way, Approve starts the run.
 
 Stopping the runner's daemon mid-run — SIGINT or SIGTERM, as Ctrl-C at its terminal sends —
 blocks the run it was carrying out rather than failing it: start the runner again and press
@@ -43,6 +49,7 @@ pauses and blocks have defaults, and can be set in `.env`:
     ./run check          # types, formatting, lint, every suite (needs Docker)
     ./run test:ui        # the browser journeys, with a fake claude
     ./run smoke          # one real task against a throwaway repository; spends tokens
+    ./run smoke --draft  # the same, its spec drafted: you answer and approve on the board
 
 The smoke run needs a GitHub repository you can throw away, cloned locally with `main` pushed,
 and the board running (`./run dev --bg`). Name both in `.env`:

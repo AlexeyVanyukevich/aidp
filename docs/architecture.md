@@ -5,30 +5,61 @@ What the board does today. This document is authoritative; the specs in
 
 ## The parts
 
-| Part     | Where         | What it does                                                                                                                                                                        |
-| -------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Server   | `server/`     | One Fastify process on 127.0.0.1: the REST API under `/api`, the board MCP server at `/mcp`, server-sent events at `/api/stream`, the PR poller, the sweeper, and the built web app |
-| Runner   | `runner/`     | `board-cli daemon` claims work and carries a run out in stages, each phase one Claude Code session; `board-cli event` and `board-cli guard` are the hooks its processes run         |
-| Web      | `web/`        | The board, the card and its tabs, on the zellige component kit; built into `server/public/`                                                                                         |
-| Database | PostgreSQL 16 | Every record; `LISTEN/NOTIFY` on channel `board` carries change notices                                                                                                             |
+| Part     | Where         | What it does                                                                                                                                                                                                    |
+| -------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Server   | `server/`     | One Fastify process on 127.0.0.1: the REST API under `/api`, the board MCP server at `/mcp`, server-sent events at `/api/stream`, the PR poller, the sweeper, and the built web app                             |
+| Runner   | `runner/`     | `board-cli daemon` claims work and carries a run out in stages — a spec run's or a delivery run's — each phase one Claude Code session; `board-cli event` and `board-cli guard` are the hooks its processes run |
+| Web      | `web/`        | The board, the card and its tabs, on the zellige component kit; built into `server/public/`                                                                                                                     |
+| Database | PostgreSQL 16 | Every record; `LISTEN/NOTIFY` on channel `board` carries change notices                                                                                                                                         |
 
 ## A task's life
 
-Backlog → (the owner saves a spec) → Spec review → (Approve) → Ready → (the runner claims) →
-Running → Review → (the pull request merges, or the owner marks it done) → Done.
+Backlog → (Draft spec, or the owner saves a spec) → Spec draft → Spec review → (Approve) → Ready
+→ (the runner claims) → Running → Review → (the pull request merges, or the owner marks it done)
+→ Done.
 
-- Running → Needs approval when an agent asks, or the plan gate stops a plan its planner was
-  not confident of; Needs approval → Running when the owner answers.
-- Running → Blocked when the runner is lost, a `git` or `gh` step fails, or the daemon is
-  stopped; Needs approval → Blocked when a question waits 48 hours. Blocked → Running on Resume,
-  or — for an expired question — on its answer.
+- Backlog → Spec draft on **Draft spec**, which needs a description; Spec review → Spec draft on
+  **Redraft**, which needs a note. Spec draft → Spec review when the spec run ends having saved a
+  version. A spec run that fails, saves nothing or is cancelled sends its card back where it came
+  from: Spec review if the task has a version, Backlog if not.
+- Running or Spec draft → Needs approval when an agent asks, or the plan gate stops a plan its
+  planner was not confident of; Needs approval → Running, or Spec draft for a spec run, when the
+  owner answers.
+- Running or Spec draft → Blocked when the runner is lost, a `git` or `gh` step fails, or the
+  daemon is stopped; Needs approval → Blocked when a question waits 48 hours. Blocked → Running,
+  or Spec draft, on Resume, or — for an expired question — on its answer.
 - Running → Failed when a phase fails, Verify fails three times, or the owner cancels; Ready,
-  Needs approval and Blocked → Failed on Cancel. Failed → Ready on Re-run.
+  Needs approval and Blocked → Failed on Cancel of a delivery run. Failed → Ready on Re-run.
 
-Every move goes through `server/src/modules/tasks/transitions.ts`; nothing else writes
-`tasks.state`.
+Every move goes through `server/src/modules/tasks/transitions.ts`, a pure table; nothing else
+writes `tasks.state`. Where a destination depends on the latest run's kind or on whether the task
+has a spec, the caller reads those facts (`moveFacts`) and the table picks the state. The
+description can change only in Backlog and Spec review.
 
-## A run
+## A spec run
+
+**Draft spec** queues a spec run; **Redraft** queues one carrying the latest version and the
+owner's note. Spec runs and delivery runs are numbered apart: "Draft 2", "Run 1", and the
+delivery branch `board/<KEY>-r<n>` counts delivery runs only. Claiming a spec run moves no card,
+and one whose card has left Spec draft is cancelled at claim.
+
+The runner (`runner/src/drafting.ts`) checks out a detached worktree of `origin/<base>` — no
+branch, nothing is pushed — then runs one phase, `spec`: the spec-writer on Opus at high effort,
+with Read, Grep, Glob and the board's `get_task`, `get_spec`, `save_spec`, `log_step` and
+`request_approval`. Its handoff carries the task's description, and for a redraft the version and
+the note. Its instructions carry the Spec tab's template word for word and tell it to ask every
+open question in one batch. The phase pauses, blocks and resumes like any other.
+
+`save_spec` is refused outside a spec run. A run's first save inserts the next version, linked
+to the run and superseding earlier drafts; its later saves rewrite that version. It answers with
+the lint in the Spec tab's words (`server/src/modules/specs/spec-lint-text.ts`), and moves no
+card. `get_spec` in a spec run returns the latest version.
+
+The runner ends a spec run whose phase succeeded with `run_end` `drafted`; the server moves the
+card to Spec review if the run saved a version, and otherwise fails the run with "the
+spec-writer saved no spec". The card's view carries a failed draft's reason until the next run.
+
+## A delivery run
 
 The runner creates a worktree under `~/.ai-task-board/worktrees/<run>` on `board/<KEY>-r<n>` from
 `origin/<base>`, and a run directory under `~/.ai-task-board/runs/<run>` holding the agents, the
@@ -36,6 +67,9 @@ hooks, the MCP configuration, the event buffer and the files Build may change. A
 stages — `prepare`, `plan`, `build`, `tests`, `verify`, `push`, `pr` — with up to three Build →
 tests → Verify rounds. All criteria passing pushes the branch and opens the pull request, or
 takes one already open for the branch. The worktree is removed when the run ends.
+
+The stage machinery — checkpoints, blocks, one process of a phase, the end of a run — is shared
+by both kinds of run, in `runner/src/run-steps.ts`.
 
 **A phase is one Claude Code session**, carried by one or more `claude -p` processes: the first
 with `--session-id`, later ones with `--resume` and every other flag repeated. Each process has
@@ -55,6 +89,12 @@ runner gives the process 60 seconds to end its turn, then stops it; the heartbea
 is the backstop for a marker never written. The runner then releases the run — no `phase_end`, no
 `run_end`, the worktree kept — and goes back to claiming. An answer queues a resume, which the
 runner claims: the phase's session continues with the answer as its next message.
+
+**A batch.** `request_approval` with kind `questions` asks up to eight questions together, each
+with up to five options and a recommendation; the server numbers them `q1` … `qn` and writes a
+lead line when the agent gave none. It is answered whole: every question needs an option, words,
+or both, or the answer is refused naming `answers[<i>]`. The resume message lists each question
+with its answer. The header counts a batch's questions, not the batch.
 
 **The plan gate.** A plan not marked `confidence: high` stops at the end of the planner's process:
 the runner raises a `plan` approval with the plan as its context, inside the still-open Plan
@@ -106,7 +146,8 @@ from a foreign `Origin`. The runner authenticates with `RUNNER_KEY`; each `claud
 a run token limited to its run, retired five minutes after the process exits. Runner credentials
 are checked before a request's body is read. The guard denies `rm -rf`, `git push`,
 `git reset --hard`, `.env` files, paths outside the worktree, new migrations, in Build any file
-the run has not allowed, and — once the run is paused — every tool.
+the run has not allowed, `Bash` or `Agent` sent to the background (`run_in_background: true`,
+which a `-p` process loses when its turn ends), and — once the run is paused — every tool.
 
 ## Error translation
 
@@ -135,5 +176,18 @@ a `fieldset` named by the question — the recommended one's name ends "(recomme
 impact is its description — and a field for an answer in words. Answering, Resume and Cancel move
 focus to the card's state line before their controls go; an empty answer marks its field invalid
 and focuses it. A question's context is shown as plain text. The header's count of waiting
-questions is text, not announced. `tests/ui/` scans every state it reaches with axe-core and
-drives the board, the card and an answer by keyboard alone.
+questions is text, not announced.
+
+A batch is one form: per question a `section` under an `h4`, "Question <i> of <n>", holding the
+kit's `RadioGroup` named by the question when it has options, and a field "Your answer to
+question <i>"; then one Send answers. Choosing sends nothing. A send with questions unanswered
+marks each — the radio group when it has options, so the radio that takes focus is described by
+the error, else the field — and focuses the first: its first radio, or its field.
+
+The Spec tab opens on the task's Description, with Save description, in Backlog and Spec review;
+Draft spec sits beside Approve in Backlog, and What to change with Redraft below the editor in
+Spec review; in Spec draft the editor is read-only and says so. An empty description or note
+marks its field invalid and focuses it. The card announces a draft ready to review with its
+version, read afresh, and a draft that did not finish with its reason, which also stands under
+its state line. `tests/ui/` scans every state it reaches with axe-core and drives the board, the
+card, an answer and a batch by keyboard alone.

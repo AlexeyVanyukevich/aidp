@@ -1,7 +1,8 @@
 # AI Task Board — MVP
 
-Status: **designed**, 2026-10-10. Slices 1 (one task, start to pull request) and 2 (pause and
-resume) built; slice 3 not built. Read §13 for the build order.
+Status: **designed**, 2026-10-10. Slices 1 (one task, start to pull request), 2 (pause and
+resume) and 3 (drafted specs) built, the last on 2026-10-26; the exit gate in §1 is being
+measured. Read §13 for the build order.
 
 > **This is a decision record, not a description of the system.**
 >
