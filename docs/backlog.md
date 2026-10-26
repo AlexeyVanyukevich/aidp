@@ -14,16 +14,21 @@ What is known to be wrong and not yet fixed, newest first. The rule for this fil
 - Impact: small: the Timeline shows a paused band on a run that is over, and that phase has no
   reported cost to compare. The effect could mark any open phase of an ended run `failed`.
 
-## `./run dev --bg` starts a runner beside one already running
+## `./run dev --bg` starts beside a board already running
 
 - Where: `run`, `scenario_dev`
-- Found: 2026-10-26, the slice 3 smoke run
-- Problem: `--bg` writes the new daemon's pid to `.run/runner.pid` without checking for one
-  already running. A daemon started on 2026-10-21, still running slice 2's code, claimed the
-  smoke run's resume beside the new one and failed it: "spec runs arrive in slice 3". Any runner
-  left running across a code change claims work with the code it loaded.
-- Impact: work handed to stale code fails, or worse, runs it. `./run dev` could refuse to start
-  while a pid file names a live daemon, or `./run stop` could find daemons by their command line.
+- Found: 2026-10-26, the slice 3 smoke run; again the same day, after the rename
+- Problem: `--bg` writes each new pid to `.run/*.pid` without checking for one already running,
+  so the earlier processes drop out of reach of `./run stop`. A daemon started on 2026-10-21,
+  still running slice 2's code, claimed the smoke run's resume beside the new one and failed it:
+  "spec runs arrive in slice 3". The same leftover board, started from the directory's old name,
+  still held ports 4100 and 5174 after the rename: the new server died on `EADDRINUSE`, Vite moved
+  to 5175, and the script printed "Running in the background" anyway, its runner talking to the
+  stale server.
+- Impact: work handed to stale code fails, or worse, runs it, and a failed start reads as a
+  success. `./run dev` could refuse to start while a pid file names a live process or a port is
+  taken, wait for `/api/health` before reporting success, and `./run stop` could find the
+  processes by their command line.
 
 ## Interrupted test runs leave runner daemons behind
 
