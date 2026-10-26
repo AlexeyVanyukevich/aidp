@@ -3,6 +3,39 @@
 What is known to be wrong and not yet fixed, newest first. The rule for this file is the kit's
 `core/rules/backlog.md`: one entry per finding, deleted by the commit that fixes it.
 
+## A run that fails before its paused phase resumes leaves the phase paused
+
+- Where: `server/src/modules/runner/runner.service.ts`, the `run_end` effect
+- Found: 2026-10-26, the slice 3 smoke run
+- Problem: `run_end` sets the run's status and moves the card, but closes none of its phases. A
+  run that ends while one of its phases is `paused` — a resume that fails before the phase's
+  `phase_start`, as when the worktree is gone — leaves that phase `paused` on a finished run. In
+  the smoke run, Draft 1 of SMOKE-5 shows it: failed, its Spec phase still paused.
+- Impact: small: the Timeline shows a paused band on a run that is over, and that phase has no
+  reported cost to compare. The effect could mark any open phase of an ended run `failed`.
+
+## `./run dev --bg` starts a runner beside one already running
+
+- Where: `run`, `scenario_dev`
+- Found: 2026-10-26, the slice 3 smoke run
+- Problem: `--bg` writes the new daemon's pid to `.run/runner.pid` without checking for one
+  already running. A daemon started on 2026-10-21, still running slice 2's code, claimed the
+  smoke run's resume beside the new one and failed it: "spec runs arrive in slice 3". Any runner
+  left running across a code change claims work with the code it loaded.
+- Impact: work handed to stale code fails, or worse, runs it. `./run dev` could refuse to start
+  while a pid file names a live daemon, or `./run stop` could find daemons by their command line.
+
+## Interrupted test runs leave runner daemons behind
+
+- Where: `runner/tests/integration/scenarios.test.ts`, `fleet().child()`
+- Found: 2026-10-26, closing slice 3
+- Problem: the scenarios start daemons as their own process groups and stop them in the test.
+  A run killed partway — here, by the machine sleeping through `./run check` — skips that, and
+  the daemons keep polling a test server that no longer exists. Two were found, from 2026-10-23
+  and 2026-10-25.
+- Impact: small: they retry forever against dead ports and claim nothing. They cost a process
+  each until found. An `afterAll` that stops every child the fleet started would bound it.
+
 ## Stopping the runner through `./run` is not tested to block its run
 
 - Where: `run`, `scenario_stop` and `scenario_dev`; `runner/src/daemon.ts`, `main()`
@@ -28,14 +61,18 @@ What is known to be wrong and not yet fixed, newest first. The rule for this fil
 - Impact: small while the injected-clock tests pass. A debug line when the sweeper re-arms,
   and one more sleep during a run, would show the rule doing its work.
 
-## The Approvals tab is untried with a screen reader, at 200% zoom and at 320 px
+## The Approvals tab and the Spec tab are untried with a screen reader, at 200% zoom and at 320 px
 
-- Where: `web/src/card/ApprovalsTab.tsx`, `web/src/card/CardDrawer.tsx`
-- Found: 2026-10-21, closing slice 2
-- Problem: the browser journeys scan the tab with axe-core and answer by keyboard alone, but
-  no one has listened to it: whether the options' fieldset is announced by the question, an
-  option's impact as its description, and the answer and resume announcements in order. Nor has
-  it been looked at zoomed to 200% or 320 px wide with a long question and five options.
+- Where: `web/src/card/ApprovalsTab.tsx`, `web/src/card/BatchForm.tsx`,
+  `web/src/card/SpecTab.tsx`, `web/src/card/CardDrawer.tsx`
+- Found: 2026-10-21, closing slice 2; widened 2026-10-26, closing slice 3
+- Problem: the browser journeys scan both tabs with axe-core and drive them by keyboard alone,
+  but no one has listened to them: whether the options' fieldset is announced by the question, an
+  option's impact as its description, and the answer and resume announcements in order; in a
+  batch, whether each radio group is read with its question and the error with its first radio;
+  in the Spec tab, the Description and What to change fields and the draft's announcements. Nor
+  has either been looked at zoomed to 200% or 320 px wide — a batch of eight questions with five
+  options each among them.
 - Impact: a WCAG 2.2 AA failure there — reflow, name or announcement — would be unknown. The
   MVP design asks for these to be tried by hand or named as untried; this entry names them.
 
