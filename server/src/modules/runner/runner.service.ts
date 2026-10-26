@@ -5,7 +5,7 @@ import { publish } from '../../shared/bus.js'
 import { ConflictError, UnauthorizedError } from '../../shared/errors.js'
 import { hashToken, newToken } from '../../shared/tokens.js'
 import type { Checkpoint, SpecCriterion } from '../../shared/vocabulary.js'
-import { allowedFiles, type Answer } from '../approvals/approval-rules.js'
+import { allowedFiles, approvedMigrations, type Answer } from '../approvals/approval-rules.js'
 import { openApproval } from '../approvals/approval.service.js'
 import { moveFacts, moveTask } from '../tasks/task.moves.js'
 import { effectOf, type Effect } from './event-effects.js'
@@ -46,6 +46,7 @@ export type Work =
       checkpoint: Checkpoint
       message: string | null
       allowed_files: string[]
+      approved_migrations: string[]
     }
   | { kind: 'cleanup'; run: { id: string; repo_path: string; worktree_path: string | null } }
 
@@ -119,6 +120,7 @@ export class RunnerService {
             checkpoint: await this.checkpointFor(trx, run.id),
             message: run.resume_message,
             allowed_files: await this.allowedFilesFor(trx, run.id),
+            approved_migrations: await this.approvedMigrationsFor(trx, run.id),
           }
         }
 
@@ -207,6 +209,24 @@ export class RunnerService {
       .execute()
     return allowedFiles(
       steps.flatMap((step) => step.files ?? []),
+      answered.map((row) => ({ ...row, answer: (row.answer ?? {}) as Answer })),
+    )
+  }
+
+  /** The migrations the owner allowed for this run. */
+  private async approvedMigrationsFor(
+    trx: Transaction<Database>,
+    runId: string,
+  ): Promise<string[]> {
+    const answered = await trx
+      .selectFrom('approval_requests')
+      .select(['kind', 'files', 'answer'])
+      .where('run_id', '=', runId)
+      .where('status', '=', 'answered')
+      .where('kind', '=', 'migration')
+      .orderBy('answered_at')
+      .execute()
+    return approvedMigrations(
       answered.map((row) => ({ ...row, answer: (row.answer ?? {}) as Answer })),
     )
   }

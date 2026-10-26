@@ -160,7 +160,10 @@ export async function openApproval(
         attempt: phase.attempt,
         session_id: phase.session_id,
       }),
-      files: request.kind === 'out_of_plan' ? JSON.stringify(request.files ?? []) : null,
+      files:
+        request.kind === 'out_of_plan' || request.kind === 'migration'
+          ? JSON.stringify(request.files ?? [])
+          : null,
       created_at: now,
       answered_at: null,
     })

@@ -69,6 +69,7 @@ export const LIMITS = {
   label: 200,
   impact: 500,
   context: 8_000,
+  migrationContext: 20_000,
   questionContext: 2_000,
   options: 5,
   questions: 8,
@@ -79,6 +80,10 @@ export const LIMITS = {
 const FIXED: Partial<Record<ApprovalKind, ApprovalOption[]>> = {
   out_of_plan: [
     { id: 'allow', label: 'Allow the change' },
+    { id: 'refuse', label: 'Keep to the plan' },
+  ],
+  migration: [
+    { id: 'allow', label: 'Allow the migration' },
     { id: 'refuse', label: 'Keep to the plan' },
   ],
   plan: [{ id: 'approve', label: 'Approve plan' }],
@@ -156,7 +161,16 @@ export function checkRequest(input: RequestInput): Finding[] {
 
   findings.push(...checkOptions('', optionsFor(input.kind, input.options), input.recommendation))
 
-  if ((input.context_md ?? '').length > LIMITS.context)
+  if (input.kind === 'migration') {
+    if (blank(input.context_md)) findings.push({ field: 'context_md', code: 'required' })
+    else if ((input.context_md ?? '').length > LIMITS.migrationContext)
+      findings.push({ field: 'context_md', code: 'too_long' })
+    const files = input.files ?? []
+    if (files.length === 0) findings.push({ field: 'files', code: 'required' })
+    else if (files.length > 1) findings.push({ field: 'files', code: 'too_many' })
+    else if (!insideWorktree(files[0] ?? ''))
+      findings.push({ field: 'files[0]', code: 'not_relative' })
+  } else if ((input.context_md ?? '').length > LIMITS.context)
     findings.push({ field: 'context_md', code: 'too_long' })
 
   if (input.kind === 'out_of_plan') {
@@ -289,6 +303,18 @@ export function resumeMessage(
       if (chosen?.id === 'refuse')
         return withText(`The owner kept to the plan. Do not change: ${code(files)}.`, answer.text)
       return withText(`The owner answered your request to change ${code(files)}:`, answer.text)
+    case 'migration':
+      if (chosen?.id === 'allow')
+        return withText(`The owner allowed the migration ${code(files)}.`, answer.text)
+      if (chosen?.id === 'refuse')
+        return withText(
+          `The owner kept to the plan. Do not create or change ${code(files)}. Finish without it, and say in your report that the migration is needed.`,
+          answer.text,
+        )
+      return withText(
+        `The owner answered your request for the migration ${code(files)}:`,
+        answer.text,
+      )
     case 'questions':
       // A batch answered without its answers: say so, rather than resume with nothing.
       return batchMessage(approval.questions ?? [], { answers: [] })
@@ -308,7 +334,26 @@ export function allowedFiles(
   answered: { kind: ApprovalKind; files: string[] | null; answer: Answer }[],
 ): string[] {
   const allowed = answered
-    .filter((approval) => approval.kind === 'out_of_plan' && approval.answer.option_id === 'allow')
+    .filter(
+      (approval) =>
+        (approval.kind === 'out_of_plan' || approval.kind === 'migration') &&
+        approval.answer.option_id === 'allow',
+    )
     .flatMap((approval) => approval.files ?? [])
   return [...new Set([...planFiles, ...allowed])]
+}
+
+/** Paths of migrations the owner allowed: the guard lets these through for the rest of the run. */
+export function approvedMigrations(
+  answered: { kind: ApprovalKind; files: string[] | null; answer: Answer }[],
+): string[] {
+  return [
+    ...new Set(
+      answered
+        .filter(
+          (approval) => approval.kind === 'migration' && approval.answer.option_id === 'allow',
+        )
+        .flatMap((approval) => approval.files ?? []),
+    ),
+  ]
 }

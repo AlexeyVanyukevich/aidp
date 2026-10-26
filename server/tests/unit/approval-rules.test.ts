@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   allowedFiles,
+  approvedMigrations,
   checkAnswer,
   checkBatchAnswer,
   checkRequest,
@@ -94,6 +95,64 @@ describe('checkRequest', () => {
     ],
   ])('%s', (_name, change, findings) => {
     expect(checkRequest({ ...valid, ...change })).toEqual(findings)
+  })
+
+  describe('a migration request', () => {
+    const M = 'server/src/db/migrations/004_x.ts'
+    const ok = { kind: 'migration' as const, options: [], files: [M], context_md: 'code' }
+    it.each<[string, Record<string, unknown>, unknown[]]>([
+      ['valid', {}, []],
+      ['with 20,000 characters of code', { context_md: 'x'.repeat(20_000) }, []],
+      ['no files', { files: undefined }, [{ field: 'files', code: 'required' }]],
+      ['two files', { files: [M, 'a/migrations/b.ts'] }, [{ field: 'files', code: 'too_many' }]],
+      ['an absolute path', { files: ['/etc/x'] }, [{ field: 'files[0]', code: 'not_relative' }]],
+      ['a blank question', { question: '  ' }, [{ field: 'question', code: 'required' }]],
+      [
+        'a question over 1,000',
+        { question: 'q'.repeat(1_001) },
+        [{ field: 'question', code: 'too_long' }],
+      ],
+      ['blank code', { context_md: ' \n' }, [{ field: 'context_md', code: 'required' }]],
+      ['no code', { context_md: undefined }, [{ field: 'context_md', code: 'required' }]],
+      [
+        'code over 20,000',
+        { context_md: 'x'.repeat(20_001) },
+        [{ field: 'context_md', code: 'too_long' }],
+      ],
+    ])('%s', (_name, change, findings) => {
+      expect(checkRequest({ ...valid, ...ok, ...change })).toEqual(findings)
+    })
+    it('keeps 8,000 for another kind', () => {
+      expect(checkRequest({ ...valid, context_md: 'x'.repeat(8_001) })).toEqual([
+        { field: 'context_md', code: 'too_long' },
+      ])
+    })
+    it('offers fixed options and writes its resume messages', () => {
+      const options = optionsFor('migration', [A])
+      expect(options).toEqual([
+        { id: 'allow', label: 'Allow the migration' },
+        { id: 'refuse', label: 'Keep to the plan' },
+      ])
+      const approval = { kind: 'migration' as const, options, files: [M] }
+      expect(resumeMessage(approval, { option_id: 'allow', text: 'Go.' })).toBe(
+        `The owner allowed the migration \`${M}\`.\n\nGo.`,
+      )
+      expect(resumeMessage(approval, { option_id: 'refuse' })).toMatch(
+        /Do not create or change `[^`]+`\. Finish without it, and say in your report that the migration is needed\.$/,
+      )
+      expect(resumeMessage(approval, { text: 'Wait.' })).toBe(
+        `The owner answered your request for the migration \`${M}\`:\n\nWait.`,
+      )
+    })
+    it('lists approved migrations, only the allowed ones', () => {
+      expect(
+        approvedMigrations([
+          { kind: 'migration', files: [M], answer: { option_id: 'allow' } },
+          { kind: 'migration', files: ['b/migrations/x.ts'], answer: { option_id: 'refuse' } },
+          { kind: 'out_of_plan', files: ['c.ts'], answer: { option_id: 'allow' } },
+        ]),
+      ).toEqual([M])
+    })
   })
 })
 

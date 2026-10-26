@@ -108,6 +108,36 @@ describe('opening an approval request', () => {
     ])
   })
 
+  it('gives a migration request fixed options, and pauses like an out-of-plan one', async () => {
+    const { approvalId, runId, taskId } = await open({
+      kind: 'migration',
+      files: ['server/src/db/migrations/004_x.ts'],
+      context_md: 'export async function up() {}',
+      recommendation: null,
+    })
+    expect((await row(approvalId)).options).toEqual([
+      { id: 'allow', label: 'Allow the migration' },
+      { id: 'refuse', label: 'Keep to the plan' },
+    ])
+    expect((await row(approvalId)).files).toEqual(['server/src/db/migrations/004_x.ts'])
+    expect((await runRow(runId)).status).toBe('paused')
+    expect(await taskState(taskId)).toBe('needs_approval')
+  })
+
+  it('resumes the builder with the migration message when the owner allows it', async () => {
+    const path = 'server/src/db/migrations/004_x.ts'
+    const { approvalId, runId } = await open({
+      kind: 'migration',
+      files: [path],
+      context_md: 'code',
+      recommendation: null,
+    })
+    expect((await answer(approvalId, { option_id: 'allow' })).statusCode).toBe(200)
+    expect((await runRow(runId)).resume_message).toBe(
+      `The owner allowed the migration \`${path}\`.`,
+    )
+  })
+
   it('refuses a second request while one is open', async () => {
     const first = await open()
     await expect(

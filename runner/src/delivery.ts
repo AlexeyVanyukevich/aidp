@@ -4,7 +4,7 @@ import type { PlanData, ReportData, RunView, Work } from './contract.js'
 import type { RunnerConfig } from './config.js'
 import type { Git } from './git.js'
 import { buildHandoff, type HandoffInput } from './phases/handoff.js'
-import { prepareRunDir, writeAllowedFiles } from './phases/run-dir.js'
+import { prepareRunDir, writeAllowedFiles, writeApprovedMigrations } from './phases/run-dir.js'
 import { End, Release, runPaths, runSteps, type Outcome, type RunDeps } from './run-steps.js'
 import { newEvent } from './sink.js'
 import type { runTestCommand } from './test-command.js'
@@ -132,6 +132,11 @@ export async function carryOut(
     const files = (plan?.data as PlanData | undefined)?.steps.flatMap((s) => s.files) ?? []
     const allowed = work.kind === 'resume' ? work.allowed_files : []
     writeAllowedFiles(runDir, [...new Set([...files, ...allowed])])
+    writeApproved()
+  }
+  const writeApproved = () => {
+    const approved = work.kind === 'resume' ? (work.approved_migrations ?? []) : []
+    if (approved.length > 0) writeApprovedMigrations(runDir, approved)
   }
 
   return steps.carry({ repo: project.repo_path, branch }, async () => {
@@ -139,6 +144,7 @@ export async function carryOut(
     prepareRunDir(runDir)
     if (work.kind === 'resume') {
       if (work.allowed_files.length > 0) writeAllowedFiles(runDir, work.allowed_files)
+      writeApproved()
       if (state.stage !== 'prepare') {
         const there =
           existsSync(worktree) &&

@@ -46,5 +46,10 @@ export function writeAllowedFiles(dir: string, files: string[]): void {
   writeFileSync(join(dir, 'allowed-files.json'), JSON.stringify(files))
 }
 
+/** The migrations the owner approved: the guard lets these through (and only these). */
+export function writeApprovedMigrations(dir: string, files: string[]): void {
+  writeFileSync(join(dir, 'approved-migrations.json'), JSON.stringify(files))
+}
+
 /** Written by the event hook when the board pauses the run; the guard refuses everything after. */
 export const PAUSED_MARKER = 'paused'

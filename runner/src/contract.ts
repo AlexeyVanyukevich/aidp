@@ -107,6 +107,8 @@ export type Work =
       checkpoint: Checkpoint
       message: string | null
       allowed_files: string[]
+      /** Migrations the owner approved for this run; absent from an older board. */
+      approved_migrations?: string[]
     }
   | { kind: 'cleanup'; run: { id: string; repo_path: string; worktree_path: string | null } }
 

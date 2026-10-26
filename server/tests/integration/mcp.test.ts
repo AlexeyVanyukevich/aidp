@@ -232,6 +232,56 @@ describe('request_approval', () => {
     })
   })
 
+  it('accepts a migration request with 20,000 characters of code', async () => {
+    const { client, runId } = await session()
+    const result = await client.callTool({
+      name: 'request_approval',
+      arguments: {
+        kind: 'migration',
+        question: 'Adds a column; down drops it.',
+        files: ['server/src/db/migrations/004_x.ts'],
+        context_md: 'x'.repeat(20_000),
+        options: [{ id: 'x', label: 'Let me' }],
+      },
+    })
+    expect(text(result)).toBe(PAUSED)
+    const approval = await getTestDb()
+      .selectFrom('approval_requests')
+      .select(['options', 'files'])
+      .where('run_id', '=', runId)
+      .executeTakeFirstOrThrow()
+    expect(approval.options).toEqual([
+      { id: 'allow', label: 'Allow the migration' },
+      { id: 'refuse', label: 'Keep to the plan' },
+    ])
+  })
+
+  const MIGRATION = {
+    kind: 'migration',
+    question: 'Adds a column.',
+    files: ['server/src/db/migrations/004_x.ts'],
+    context_md: 'code',
+  }
+  it.each([
+    ['no files', { ...MIGRATION, files: undefined }, /files/],
+    ['two files', { ...MIGRATION, files: ['a/migrations/x.ts', 'a/migrations/y.ts'] }, /files/],
+    ['an absolute path', { ...MIGRATION, files: ['/etc/x'] }, /files/],
+    ['a blank question', { ...MIGRATION, question: ' ' }, /question/],
+    ['blank code', { ...MIGRATION, context_md: ' ' }, /context_md/],
+    ['too much code', { ...MIGRATION, context_md: 'x'.repeat(20_001) }, /context_md/],
+  ])('refuses a migration request with %s, pausing nothing', async (_name, args, finding) => {
+    const { client, runId } = await session()
+    const result = await client.callTool({ name: 'request_approval', arguments: args })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toMatch(finding)
+    const open = await getTestDb()
+      .selectFrom('approval_requests')
+      .select('id')
+      .where('run_id', '=', runId)
+      .execute()
+    expect(open).toEqual([])
+  })
+
   it.each([
     ['a recommendation naming no option', { ...ask, recommendation: 'z' }, /recommendation/],
     ['an out-of-plan request without files', { kind: 'out_of_plan', question: 'Can I?' }, /files/],

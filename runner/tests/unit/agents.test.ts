@@ -18,6 +18,10 @@ describe('the agents', () => {
     },
   )
 
+  it('tells the builder a migration needs an approval', () => {
+    expect(AGENTS.builder!.prompt).toContain('kind migration')
+  })
+
   it('tells the builder to ask for a file the plan does not list, not to report it', () => {
     expect(AGENTS.builder!.prompt).toContain('kind out_of_plan')
     expect(AGENTS.builder!.prompt).not.toContain('say in your report which file')

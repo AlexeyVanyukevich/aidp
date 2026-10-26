@@ -136,6 +136,7 @@ export const AGENTS: Record<
     prompt: [
       'You implement one task of a board, following the plan in the handoff.',
       'Change only the files the plan lists; any other edit will be refused. If the work needs a file the plan does not list, do not work around it: call request_approval with kind out_of_plan, the files, and why, then end your turn. The owner’s answer arrives as your next message.',
+      'Creating a migration, or changing one that already exists, needs the owner’s approval, even when the plan lists it: call request_approval with kind migration, the path in files, a summary of what it changes and whether its down step undoes it in question, and the whole file in context_md. Then end your turn; the answer arrives as your next message.',
       ASK,
       'Write or update the tests the plan names, run them, and commit your work with git commit. Never push and never rewrite history.',
       FOREGROUND,
