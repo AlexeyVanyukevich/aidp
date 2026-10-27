@@ -37,6 +37,44 @@ writes `tasks.state`. Where a destination depends on the latest run's kind or on
 has a spec, the caller reads those facts (`moveFacts`) and the table picks the state. The
 description can change only in Backlog and Spec review.
 
+## Linked projects
+
+A project can link to the projects it references, so the agents of its runs can read their code.
+A link goes one way: AIDP → ZLC says nothing about ZLC → AIDP. It lives in `project_links`
+(`project_id`, `linked_project_id`, `note`, `created_at`; primary key the pair; a check refuses a
+project linking to itself; both keys cascade on delete, so deleting a project removes every link
+from or to it and nothing else). `GET /api/projects` returns each project with `links`, ordered by
+key, each carrying `key`, `name` and `note`. `POST /api/projects/:key/links` with
+`{ target, note }` answers 201, or `400 validation_error` on `target` (itself, unknown, already
+linked) or on `note` (blank, over 500 characters); an unknown `:key` is 404.
+`DELETE /api/projects/:key/links/:target` answers 204, or 404 for a link that does not exist. A
+note is changed by removing the link and adding it again.
+
+The Projects page lists each project's links — key, name, note, and a "Remove link to <KEY>"
+button — above an Add a link form: a `Select` of every other project not yet linked, a required
+Note field, and Add link. An empty or too-long note, or a refused target, marks its field invalid
+and focuses it; the page's status region announces "<KEY> now links to <TARGET>." and "<KEY> no
+longer links to <TARGET>.". After a removal focus moves to the form's `Select`.
+
+A claim's work, for a start or a resume of either kind of run, carries `links`: the projects the
+task's project links to, with `key`, `name`, `note`, `repo_path`, `github_repo` and `base_branch`.
+In `prepare`, both kinds of run run `git fetch origin <base>` in each linked `repo_path` and make
+a detached worktree of `origin/<base>` at `~/.aidp/worktrees/<run>-linked/<KEY>`, outside the run's
+own worktree, so it never shows in its status or diff. The checkouts, with the note and the
+checkout path, are written to `linked.json` in the run directory; the run's links are fixed
+there, and a failed fetch or worktree blocks the run as `step_failed`. A run that ends with any
+outcome but `released` removes each checkout and then the `<run>-linked` directory, and so does a
+cleanup claimed after a Cancel; a paused run keeps them. A resume past `prepare` makes any
+checkout that is missing again, fetching only for that (`runner/src/linked.ts`).
+
+Every `claude` process of every phase, first or resumed, gets one `--add-dir <checkout>` per
+checkout in `linked.json`, which is how Claude Code lets it read outside its worktree. The handoff
+then carries a `<linked_projects>` element, ordered by key, with one `<project key name
+github_repo base_branch path>` per checkout and the escaped note as its text, and its
+`<constraints>` line says the linked checkouts may be read and never changed. With no links the
+handoff is as before. Pushing and the pull request use only the task's own project; nothing
+commits, pushes or opens a pull request in a linked repository.
+
 ## A spec run
 
 **Draft spec** queues a spec run; **Redraft** queues one carrying the latest version and the
@@ -230,6 +268,14 @@ which a `-p` process loses when its turn ends), and — once the run is paused �
 commit`, with a reason saying the commit-msg hook must not be skipped; text inside a `-m` value
 never matches.
 
+The guard reads `linked.json`. Edit, Write, MultiEdit and NotebookEdit on a path inside a linked
+checkout or a linked project's `repo_path` are refused, naming the project's key and saying linked
+repositories are read-only. Read, Grep and Glob are allowed inside a checkout; on a linked
+`repo_path` they are refused with a reason pointing to the checkout, as is a `Bash` command that
+contains a linked `repo_path`. A `Bash` command naming only the checkout is allowed: a write
+through `Bash` into a checkout is not caught, and the checkout is thrown away when the run ends.
+Other paths outside the worktree are refused by the file tools as before.
+
 ## Error translation
 
 The kit's error shape and codes. A move the table refuses, or a stale one, is `409 conflict`;
@@ -249,7 +295,8 @@ discards the connections it lost. The server stays up.
 The web app targets WCAG 2.2 AA. Its widgets are the zellige kit's: the card is a modal side
 `Dialog`, its sections are `Tabs`. Every drag has a button in the card's dialog — Move up, Move
 down, Mark done. Each page and the open card keep a status region mounted and write outcomes into
-it; the card announces its own changes of state, the board nothing the runner does. Route changes
+it; the card announces its own changes of state, the board nothing the runner does. The Projects page
+writes link changes into its status region. Route changes
 focus the new page's `h1`; closing a card returns focus to its link.
 
 The Approvals tab, which a card waiting on a question opens on, holds the question, its options as
