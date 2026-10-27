@@ -38,6 +38,9 @@ export async function draftSpec(
     if (work.kind === 'resume' && state.stage !== 'prepare' && !existsSync(worktree))
       throw new End('failed', "the run's worktree is gone")
 
+    // Checkouts deleted while the run was paused come back before its phase goes on.
+    if (work.kind === 'resume' && state.stage !== 'prepare') await steps.restoreLinkedCheckouts()
+
     for (;;) {
       await steps.stopIfShuttingDown()
       switch (state.stage) {
@@ -47,6 +50,7 @@ export async function draftSpec(
           if (work.kind === 'resume')
             await deps.git.removeWorktree(project.repo_path, worktree).catch(() => undefined)
           await deps.git.prepareDetachedWorktree(project.repo_path, project.base_branch, worktree)
+          await steps.prepareLinkedCheckouts()
           await steps.runSetup(project.setup_command)
           state.stage = 'spec'
           state.attempt = 1

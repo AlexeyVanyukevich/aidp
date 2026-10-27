@@ -125,4 +125,9 @@ export class Git {
   async removeWorktree(repo: string, dir: string): Promise<void> {
     await this.run('git', ['-C', repo, 'worktree', 'remove', '--force', dir])
   }
+
+  /** Forgets worktrees whose directory is gone, so one can be made again at the same path. */
+  async pruneWorktrees(repo: string): Promise<void> {
+    await this.run('git', ['-C', repo, 'worktree', 'prune'])
+  }
 }

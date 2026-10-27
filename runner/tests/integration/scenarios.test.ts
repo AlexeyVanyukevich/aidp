@@ -675,6 +675,39 @@ describe('a spec run end to end', () => {
     expect(existsSync(join(f.home, 'worktrees', run!.id))).toBe(false)
   })
 
+  it('checks out a linked project for the spec-writer, and removes it when the run ends', async () => {
+    const zlc = targetRepository()
+    const [pay] = await db.selectFrom('projects').select('id').where('key', '=', 'PAY').execute()
+    const linked = await db
+      .insertInto('projects')
+      .values({
+        key: 'ZLC',
+        name: 'Zellige',
+        repo_path: zlc.repo,
+        github_repo: 'owner/zellige',
+        base_branch: 'main',
+        test_command: 'true',
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow()
+    await db
+      .insertInto('project_links')
+      .values({ project_id: pay!.id, linked_project_id: linked.id, note: 'the component kit' })
+      .execute()
+    const taskId = await draftingTask()
+    const f = fleet({ 'spec-writer': [[SAVE]] })
+
+    expect(await f.daemon().runOnce()).toBe('drafted')
+
+    const [run] = await runs(taskId)
+    const checkout = join(f.home, 'worktrees', `${run!.id}-linked`, 'ZLC')
+    expect(existsSync(checkout)).toBe(false)
+    expect(existsSync(join(f.home, 'worktrees', `${run!.id}-linked`))).toBe(false)
+    expect(
+      execFileSync('git', ['-C', zlc.repo, 'worktree', 'list'], { encoding: 'utf8' }),
+    ).not.toContain(checkout)
+  })
+
   it('redrafts the latest version with the owner’s note', async () => {
     const created = await api<{ id: string }>('POST', '/api/projects/PAY/tasks', {
       title: 'Back off retries',

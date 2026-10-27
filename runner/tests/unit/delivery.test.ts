@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -64,6 +64,8 @@ function harness(script: Script) {
   const artifacts: ArtifactView[] = []
   const calls: string[] = []
   const gitCalls: string[] = []
+  /** Where each push and pull request was made. */
+  const writes: string[] = []
   const used: Record<string, number> = {}
   let plans = 0
   let verifies = 0
@@ -164,7 +166,8 @@ function harness(script: Script) {
     deleteBranch: async () => {
       gitCalls.push('delete branch')
     },
-    push: async (_d: string, branch: string) => {
+    push: async (dir: string, branch: string) => {
+      writes.push(`push in ${dir}`)
       const what = script.push?.[pushes++] ?? 'ok'
       if (what === 'fails') throw new GitError(`git push -u origin ${branch}`, 'rejected')
       gitCalls.push(`push ${branch}`)
@@ -175,13 +178,18 @@ function harness(script: Script) {
         ? { number: 5, url: 'https://github.com/owner/pay/pull/5' }
         : null
     },
-    createPr: async () => {
+    createPr: async (dir: string, pr: { githubRepo: string; base: string }) => {
+      writes.push(`create pr in ${dir} for ${pr.githubRepo} on ${pr.base}`)
       gitCalls.push('create pr')
       return { number: 9, url: 'https://github.com/owner/pay/pull/9' }
     },
-    removeWorktree: async () => {
-      gitCalls.push('remove')
+    removeWorktree: async (repo: string) => {
+      gitCalls.push(repo === '/repo' ? 'remove' : `remove linked ${repo}`)
     },
+    prepareDetachedWorktree: async (repo: string, base: string, dir: string) => {
+      gitCalls.push(`linked ${repo} ${base} ${dir}`)
+    },
+    pruneWorktrees: async () => undefined,
   } as unknown as Git
 
   const home = mkdtempSync(join(tmpdir(), 'home-'))
@@ -223,6 +231,7 @@ function harness(script: Script) {
     artifacts,
     calls,
     gitCalls,
+    writes,
     handoffs,
     home,
     of: (type: string) => sent.filter((e) => e.type === type),
@@ -627,5 +636,54 @@ describe('cleaning up', () => {
       h.deps,
     )
     expect(h.gitCalls).toEqual(['remove'])
+  })
+})
+
+describe('a delivery run of a project that links another', () => {
+  const ZLC = {
+    key: 'ZLC',
+    name: 'Zellige',
+    note: 'the kit',
+    repo_path: '/zlc',
+    github_repo: 'owner/zellige',
+    base_branch: 'main',
+  }
+  const LINKED: Work = { kind: 'start', run: { ...RUN, links: [ZLC] } }
+
+  it('AC19: pushes and opens its pull request only for its own project', async () => {
+    const h = harness({})
+    expect(await carryOut(LINKED, h.deps)).toBe('review')
+    const linkedPath = join(h.home, 'worktrees', `${RUN.id}-linked`, 'ZLC')
+    expect(h.gitCalls).toContain(`linked /zlc main ${linkedPath}`)
+    const worktree = join(h.home, 'worktrees', RUN.id)
+    expect(h.writes).toEqual([
+      `push in ${worktree}`,
+      `create pr in ${worktree} for owner/pay on main`,
+    ])
+    expect(h.gitCalls).toContain('remove linked /zlc')
+  })
+
+  it('makes the checkout in prepare, before any phase, and makes none without links', async () => {
+    const withLinks = harness({})
+    await carryOut(LINKED, withLinks.deps)
+    expect(withLinks.gitCalls.findIndex((c) => c.startsWith('linked'))).toBe(1)
+    const without = harness({})
+    await carryOut(START, without.deps)
+    expect(without.gitCalls.some((c) => c.startsWith('linked'))).toBe(false)
+  })
+
+  it('AC12: a cleanup claimed after a Cancel removes the linked checkouts too', async () => {
+    const h = harness({})
+    const runDir = join(h.home, 'runs', RUN.id)
+    mkdirSync(runDir, { recursive: true })
+    const path = join(h.home, 'worktrees', `${RUN.id}-linked`, 'ZLC')
+    mkdirSync(path, { recursive: true })
+    writeFileSync(join(runDir, 'linked.json'), JSON.stringify([{ ...ZLC, path }]))
+    await cleanUp(
+      { kind: 'cleanup', run: { id: RUN.id, repo_path: '/repo', worktree_path: null } },
+      h.deps,
+    )
+    expect(h.gitCalls).toEqual(['remove linked /zlc', 'remove'])
+    expect(existsSync(path)).toBe(false)
   })
 })

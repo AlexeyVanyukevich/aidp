@@ -5,6 +5,7 @@ import type { BoardApi } from './api.js'
 import type { Checkpoint, PhaseName, Stage, Work } from './contract.js'
 import type { RunnerConfig } from './config.js'
 import { GitError, type Git } from './git.js'
+import { prepareLinked, removeLinked, restoreLinked } from './linked.js'
 import type { PhaseDeps, PhaseInput, PhaseRecord, StepResult } from './phases/phase.js'
 import { newEvent, type EventSink } from './sink.js'
 import { runTestCommand } from './test-command.js'
@@ -132,6 +133,8 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
     setToken: deps.setToken,
   }
 
+  const linkedDir = runPaths(deps.config.home, run.id).linked
+
   const send = (type: 'checkpoint' | 'error' | 'tool_call', fields: object) =>
     deps.sink.send([newEvent({ runId: run.id, phaseId: null, type }, fields)])
 
@@ -192,6 +195,16 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
     })
     if (!ok) await block('step_failed', { command, output: result.output.slice(-4_096) })
   }
+
+  /**
+   * A checkout of each project this one links to, made once, in `prepare`: the run's links are
+   * fixed there. A failed fetch or worktree is a `GitError`, which blocks the run.
+   */
+  const prepareLinkedCheckouts = () =>
+    prepareLinked(deps.git, run.links ?? [], linkedDir, io.runDir)
+
+  /** A resume past `prepare`: checkouts deleted while the run was paused are made again. */
+  const restoreLinkedCheckouts = () => restoreLinked(deps.git, io.runDir)
 
   /** The daemon is stopping: between steps, the run is blocked where it stands. */
   const stopIfShuttingDown = async () => {
@@ -293,6 +306,7 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
     } finally {
       if (outcome !== 'released') {
         await deps.git.removeWorktree(where.repo, io.worktree).catch(() => undefined)
+        await removeLinked(deps.git, linkedDir, io.runDir).catch(() => undefined)
         await deps.sink.send([
           newEvent(
             { runId: run.id, phaseId: null, type: 'run_end' },
@@ -316,6 +330,8 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
     checkpoint,
     block,
     runSetup,
+    prepareLinkedCheckouts,
+    restoreLinkedCheckouts,
     stopIfShuttingDown,
     phaseStep,
     endPhase,
@@ -325,6 +341,13 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
 }
 
 /** The run's directories, by the runner's own convention. */
-export function runPaths(home: string, runId: string): { worktree: string; runDir: string } {
-  return { worktree: join(home, 'worktrees', runId), runDir: join(home, 'runs', runId) }
+export function runPaths(
+  home: string,
+  runId: string,
+): { worktree: string; runDir: string; linked: string } {
+  return {
+    worktree: join(home, 'worktrees', runId),
+    runDir: join(home, 'runs', runId),
+    linked: join(home, 'worktrees', `${runId}-linked`),
+  }
 }

@@ -1,6 +1,10 @@
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Checkpoint, RunWork } from '../../src/contract.js'
-import { stateOf } from '../../src/run-steps.js'
+import type { Git } from '../../src/git.js'
+import { End, Release, runPaths, runSteps, stateOf, type RunDeps } from '../../src/run-steps.js'
 
 const RUN = { id: 'run-1' } as RunWork
 const at = (stage: Checkpoint['stage'], session: Checkpoint['session']): Checkpoint => ({
@@ -33,5 +37,54 @@ describe('stateOf', () => {
     expect(state.phase?.phase ?? null).toBe(phase)
     expect(state.stage).toBe(checkpoint.stage)
     expect(state.message).toBe('answers')
+  })
+})
+
+// A run's linked checkouts go with its worktree when it ends, and stay when it is released.
+describe('carry and the linked checkouts', () => {
+  async function ended(how: () => Promise<{ outcome: string; extra: Record<string, unknown> }>) {
+    const home = mkdtempSync(join(tmpdir(), 'home-'))
+    const { worktree, runDir, linked } = runPaths(home, RUN.id)
+    const path = join(linked, 'ZLC')
+    mkdirSync(path, { recursive: true })
+    mkdirSync(runDir, { recursive: true })
+    writeFileSync(
+      join(runDir, 'linked.json'),
+      JSON.stringify([{ key: 'ZLC', repo_path: '/zlc', path }]),
+    )
+    const removed: string[] = []
+    const deps = {
+      api: { issueToken: async () => 't' },
+      git: {
+        removeWorktree: async (repo: string, dir: string) => {
+          removed.push(`${repo} ${dir}`)
+        },
+        pruneWorktrees: async () => undefined,
+      } as unknown as Git,
+      sink: { send: async () => undefined },
+      setToken: () => undefined,
+      config: { home },
+    } as unknown as RunDeps
+    const steps = runSteps({ kind: 'start', run: RUN }, deps, { worktree, runDir, budgetUsd: null })
+    const outcome = await steps.carry({ repo: '/repo', branch: null }, how as never)
+    return { outcome, removed, worktree, path, linked }
+  }
+
+  it.each<[string, () => Promise<{ outcome: string; extra: Record<string, unknown> }>, string]>([
+    ['succeeds', async () => ({ outcome: 'review', extra: {} }), 'review'],
+    ['fails', async () => Promise.reject(new End('failed', 'x')), 'failed'],
+    ['is cancelled', async () => Promise.reject(new End('cancelled', 'x')), 'cancelled'],
+  ])('removes the checkout and its directory when the run %s', async (_name, how, outcome) => {
+    const result = await ended(how)
+    expect(result.outcome).toBe(outcome)
+    expect(result.removed).toContain(`/zlc ${result.path}`)
+    expect(existsSync(result.linked)).toBe(false)
+  })
+
+  it('keeps the checkout when the run is released', async () => {
+    const result = await ended(async () => Promise.reject(new Release()))
+    expect(result.outcome).toBe('released')
+    expect(result.removed).toEqual([])
+    expect(existsSync(result.path)).toBe(true)
   })
 })
