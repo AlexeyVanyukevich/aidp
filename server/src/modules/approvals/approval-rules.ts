@@ -70,6 +70,8 @@ export const LIMITS = {
   impact: 500,
   context: 8_000,
   migrationContext: 20_000,
+  /** A plan approval's `context_md`, and the longest rendered plan `save_plan` accepts. */
+  planContext: 20_000,
   questionContext: 2_000,
   options: 5,
   questions: 8,
@@ -170,7 +172,9 @@ export function checkRequest(input: RequestInput): Finding[] {
     else if (files.length > 1) findings.push({ field: 'files', code: 'too_many' })
     else if (!insideWorktree(files[0] ?? ''))
       findings.push({ field: 'files[0]', code: 'not_relative' })
-  } else if ((input.context_md ?? '').length > LIMITS.context)
+  } else if (
+    (input.context_md ?? '').length > (input.kind === 'plan' ? LIMITS.planContext : LIMITS.context)
+  )
     findings.push({ field: 'context_md', code: 'too_long' })
 
   if (input.kind === 'out_of_plan') {

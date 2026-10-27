@@ -5,6 +5,7 @@ import {
   checkAnswer,
   checkBatchAnswer,
   checkRequest,
+  LIMITS,
   leadLine,
   numberQuestions,
   optionsFor,
@@ -153,6 +154,34 @@ describe('checkRequest', () => {
         ]),
       ).toEqual([M])
     })
+  })
+})
+
+describe('checkRequest for a plan', () => {
+  const plan = (length: number): RequestInput => ({
+    kind: 'plan',
+    question: 'Approve this plan?',
+    options: [],
+    context_md: 'c'.repeat(length),
+  })
+
+  it('shares one limit of 20 000 characters', () => {
+    expect(LIMITS.planContext).toBe(20_000)
+  })
+  it('accepts 20 000 characters of context', () => {
+    expect(checkRequest(plan(20_000))).toEqual([])
+  })
+  it('refuses 20 001 characters of context', () => {
+    expect(checkRequest(plan(20_001))).toEqual([{ field: 'context_md', code: 'too_long' }])
+  })
+  it.each(['question', 'out_of_plan'] as const)('keeps %s at 8 000 characters', (kind) => {
+    const request: RequestInput = {
+      ...valid,
+      kind,
+      files: ['a.ts'],
+      context_md: 'c'.repeat(8001),
+    }
+    expect(checkRequest(request)).toEqual([{ field: 'context_md', code: 'too_long' }])
   })
 })
 
