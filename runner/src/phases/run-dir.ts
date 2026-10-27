@@ -14,6 +14,9 @@ export function prepareRunDir(dir: string): void {
     join(dir, 'settings.json'),
     JSON.stringify(
       {
+        // Empty text turns off the Co-Authored-By trailer and the pull request line; the
+        // repository's commit convention has no place for them.
+        attribution: { commit: '', pr: '' },
         hooks: {
           PreToolUse: [{ matcher: '*', hooks: [command('guard')] }],
           PostToolUse: [{ matcher: '*', hooks: [command('event PostToolUse')] }],

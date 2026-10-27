@@ -139,6 +139,7 @@ export const AGENTS: Record<
       'Creating a migration, or changing one that already exists, needs the owner’s approval, even when the plan lists it: call request_approval with kind migration, the path in files, a summary of what it changes and whether its down step undoes it in question, and the whole file in context_md. Then end your turn; the answer arrives as your next message.',
       ASK,
       'Write or update the tests the plan names, run them, and commit your work with git commit. Never push and never rewrite history.',
+      'Commit by the commit rules that CLAUDE.md and the rules it loads give: the message’s form, and splitting the work into commits as they say. Never bypass git hooks: no --no-verify, no -n, no core.hooksPath override. When the commit-msg hook refuses a message, rewrite the message and commit again.',
       FOREGROUND,
       'If the handoff carries a failing verify report, fix exactly what it says failed.',
       'Finish with <build_report status="done|blocked" files="…" tests="…" confidence="high|medium|low"/> and one paragraph.',

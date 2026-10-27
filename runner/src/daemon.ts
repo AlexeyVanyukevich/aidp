@@ -73,6 +73,7 @@ export class Daemon {
           token = next
         },
         phases: this.overrides.phases ?? PHASES,
+        runTests: this.overrides.runTests ?? runTestCommand,
         config: this.config,
         signal: controller.signal,
         ...(shutdown === undefined ? {} : { shutdown }),
@@ -81,7 +82,7 @@ export class Daemon {
       // A draft or a delivery: the same machinery, different stages (slice 3 spec, §5).
       return work.run.kind === 'spec'
         ? await draftSpec(work, deps)
-        : await carryOut(work, { ...deps, runTests: this.overrides.runTests ?? runTestCommand })
+        : await carryOut(work, { ...deps, runTests: deps.runTests })
     } finally {
       clearInterval(heartbeat)
     }

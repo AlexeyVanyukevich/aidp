@@ -165,6 +165,7 @@ export async function carryOut(
             await deps.git.deleteBranch(project.repo_path, branch).catch(() => undefined)
           }
           await deps.git.prepareWorktree(project.repo_path, project.base_branch, branch, worktree)
+          await steps.runSetup(project.setup_command)
           state.stage = 'plan'
           state.attempt = 1
           break
