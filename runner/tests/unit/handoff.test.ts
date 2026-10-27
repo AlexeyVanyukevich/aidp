@@ -128,3 +128,45 @@ describe('buildHandoff with previous plans', () => {
     expect(text).toContain('[previous plan cut: 5000 more characters]')
   })
 })
+
+// A run's linked projects: read-only checkouts, listed for every phase.
+describe('buildHandoff with linked projects', () => {
+  const LINKED = [
+    {
+      key: 'ZLC',
+      name: 'Zellige <kit>',
+      github_repo: 'owner/zellige',
+      base_branch: 'main',
+      path: '/home/worktrees/run-linked/ZLC',
+      note: 'the kit, for <Button> & co',
+    },
+    {
+      key: 'ABC',
+      name: 'Alpha',
+      github_repo: 'owner/alpha',
+      base_branch: 'trunk',
+      path: '/home/worktrees/run-linked/ABC',
+      note: 'first',
+    },
+  ]
+  const PHASES = ['spec', 'plan', 'build', 'verify'] as const
+
+  it.each(PHASES)('AC18: lists the checkouts by key in the %s handoff, escaped', (phase) => {
+    const text = buildHandoff({ ...BASE, phase, linked: LINKED })
+    expect(text).toContain(
+      '<project key="ZLC" name="Zellige &lt;kit&gt;" github_repo="owner/zellige" base_branch="main" path="/home/worktrees/run-linked/ZLC">the kit, for &lt;Button&gt; &amp; co</project>',
+    )
+    expect(text.indexOf('<project key="ABC"')).toBeLessThan(text.indexOf('<project key="ZLC"'))
+    expect(text).toContain('<linked_projects>')
+    expect(text).toContain('may be read and never changed')
+  })
+
+  it.each(PHASES)('AC18: is unchanged from before in the %s handoff without links', (phase) => {
+    const without = buildHandoff({ ...BASE, phase })
+    expect(buildHandoff({ ...BASE, phase, linked: [] })).toBe(without)
+    expect(without).not.toContain('linked_projects')
+    expect(without).toContain(
+      '<constraints>Work only inside this worktree. Never push. Stop and say so in your reply if the spec cannot be met as written.</constraints>',
+    )
+  })
+})

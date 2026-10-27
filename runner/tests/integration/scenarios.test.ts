@@ -701,6 +701,9 @@ describe('a spec run end to end', () => {
 
     const [run] = await runs(taskId)
     const checkout = join(f.home, 'worktrees', `${run!.id}-linked`, 'ZLC')
+    const [call] = f.calls().filter((c) => c.agent === 'spec-writer')
+    expect(call?.prompt).toContain('<linked_projects>')
+    expect(call?.prompt).toContain(checkout)
     expect(existsSync(checkout)).toBe(false)
     expect(existsSync(join(f.home, 'worktrees', `${run!.id}-linked`))).toBe(false)
     expect(

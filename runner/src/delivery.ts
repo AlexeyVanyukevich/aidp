@@ -7,7 +7,7 @@ import { buildHandoff, type HandoffInput } from './phases/handoff.js'
 import { prepareRunDir, writeAllowedFiles, writeApprovedMigrations } from './phases/run-dir.js'
 import { End, Release, runPaths, runSteps, type Outcome, type RunDeps } from './run-steps.js'
 import { ApiError } from './api.js'
-import { removeLinked } from './linked.js'
+import { linkedForHandoff, removeLinked } from './linked.js'
 import { newEvent } from './sink.js'
 import type { runTestCommand } from './test-command.js'
 
@@ -96,6 +96,7 @@ export async function carryOut(
       phase: name,
       attempt: state.attempt,
       summaries: await summaries(),
+      linked: linkedForHandoff(runDir),
     }
     if (name === 'plan')
       return buildHandoff({
