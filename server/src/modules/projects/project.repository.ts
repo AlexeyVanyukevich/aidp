@@ -9,6 +9,7 @@ export interface ProjectView {
   github_repo: string
   base_branch: string
   test_command: string
+  setup_command: string | null
 }
 
 const COLUMNS = [
@@ -19,6 +20,7 @@ const COLUMNS = [
   'github_repo',
   'base_branch',
   'test_command',
+  'setup_command',
 ] as const
 
 export class ProjectRepository {
@@ -40,6 +42,15 @@ export class ProjectRepository {
       .executeTakeFirst()
     if (row === undefined) return undefined
     return row.key === key ? 'key' : 'repo_path'
+  }
+
+  updateSetupCommand(key: string, setupCommand: string | null): Promise<ProjectView | undefined> {
+    return this.db
+      .updateTable('projects')
+      .set({ setup_command: setupCommand })
+      .where('key', '=', key)
+      .returning(COLUMNS)
+      .executeTakeFirst()
   }
 
   insert(input: Omit<ProjectView, 'id'>): Promise<ProjectView> {

@@ -33,6 +33,7 @@ const RUN: RunWork = {
     github_repo: 'owner/pay',
     base_branch: 'main',
     test_command: 'npm test',
+    setup_command: null,
   },
 }
 const START: Work = { kind: 'start', run: RUN }
