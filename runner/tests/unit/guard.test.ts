@@ -18,6 +18,29 @@ const edit = (file_path: string, tool_name = 'Edit') => ({ tool_name, tool_input
 
 describe('the guard', () => {
   it.each([
+    'git commit --no-verify -m "x"',
+    'git commit -n -m "x"',
+    'git commit -anm "x"',
+    'git -c core.hooksPath=/dev/null commit -m "x"',
+    'git -c core.HooksPath=x commit -m "x"',
+    'git add . && git commit -m "x" --no-verify',
+  ])('denies skipping the commit-msg hook: %s', (command) => {
+    const verdict = decide(bash(command), ctx())
+    expect(verdict.allow).toBe(false)
+    expect(!verdict.allow && verdict.reason).toContain('commit-msg hook')
+  })
+
+  it.each([
+    'git commit -m "add -n flag"',
+    'git commit -m "docs: explain --no-verify"',
+    'git commit -m "set core.hooksPath"',
+    'git commit -am "x"',
+    'git log -n 3',
+  ])('allows the commit %s', (command) => {
+    expect(decide(bash(command), ctx())).toEqual({ allow: true })
+  })
+
+  it.each([
     'npm test',
     'git status',
     'git commit -m "x"',
@@ -77,8 +100,7 @@ describe('the guard', () => {
       cwd: CWD,
       exists: (path: string) => !path.endsWith('004_x.ts'),
     })
-    const reason = (verdict: ReturnType<typeof decide>) =>
-      verdict.allow ? '' : verdict.reason
+    const reason = (verdict: ReturnType<typeof decide>) => (verdict.allow ? '' : verdict.reason)
 
     it('refuses a new migration the plan lists, naming the request', () => {
       const verdict = decide(edit(NEW, 'Write'), mctx('build', [NEW]))

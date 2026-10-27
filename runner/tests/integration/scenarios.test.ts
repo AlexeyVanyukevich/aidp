@@ -10,6 +10,7 @@ import { buildApp } from '../../../server/src/app.js'
 import { createDb } from '../../../server/src/db/client.js'
 import { runMigrations } from '../../../server/src/db/migrate.js'
 import type { Database } from '../../../server/src/db/schema.js'
+import { BoardApi } from '../../src/api.js'
 import { Daemon } from '../../src/daemon.js'
 import { Sweeper } from '../../../server/src/modules/runs/sweeper.js'
 import { loadRunnerConfig } from '../../src/config.js'
@@ -725,5 +726,109 @@ describe('a spec run end to end', () => {
     expect(await state(taskId)).toBe('spec_review')
     expect((await runs(taskId))[0]!.phases).toHaveLength(1)
     f.stopAll()
+  })
+})
+
+// ── The project's setup command ─────────────────────────────────────────────────────────────
+
+const setSetup = (command: string | null) =>
+  db.updateTable('projects').set({ setup_command: command }).execute()
+/** What the run sent as events of one kind. */
+const eventsOf = async (type: string) =>
+  db
+    .selectFrom('events')
+    .select(['tool', 'status', 'payload'])
+    .where('type', '=', type as 'error')
+    .orderBy('ts')
+    .execute()
+/** Writes a marker, and notes in the claude log that it was there: whatever claude logs after. */
+const WRITES_MARKER = 'touch setup.marker && echo "setup $(ls setup.marker)" >> "$FAKE_CLAUDE_LOG"'
+const rawLog = (f: { home: string }) => readFileSync(join(f.home, '..', 'claude.log'), 'utf8')
+
+describe('the setup command', () => {
+  it('reaches the runner in the claim', async () => {
+    await setSetup(WRITES_MARKER)
+    await approvedTask()
+    const work = await new BoardApi(base, RUNNER_KEY).claim('probe', 1)
+    expect(work).toMatchObject({ run: { project: { setup_command: WRITES_MARKER } } })
+  })
+
+  it('runs before the first phase of a delivery run, and sends its event', async () => {
+    await setSetup(WRITES_MARKER)
+    const taskId = await approvedTask()
+    const f = fleet({
+      planner: [[{ tool: 'save_plan', args: PLAN }]],
+      builder: [builds('export const delays = [1, 2, 4]\n')],
+      verifier: [[report('pass')]],
+    })
+    expect(await f.daemon().runOnce()).toBe('review')
+    expect(rawLog(f).split('\n')[0]).toBe('setup setup.marker')
+    const sent = (await eventsOf('tool_call')).filter((e) => e.tool === 'setup_command')
+    expect(sent).toEqual([expect.objectContaining({ status: 'ok' })])
+    expect(await state(taskId)).toBe('review')
+  })
+
+  it('runs before the spec-writer of a spec run', async () => {
+    await setSetup(WRITES_MARKER)
+    await draftingTask()
+    const f = fleet({ 'spec-writer': [[SAVE]] })
+    expect(await f.daemon().runOnce()).toBe('drafted')
+    expect(rawLog(f).split('\n')[0]).toBe('setup setup.marker')
+    const sent = (await eventsOf('tool_call')).filter((e) => e.tool === 'setup_command')
+    expect(sent).toEqual([expect.objectContaining({ status: 'ok' })])
+  })
+
+  it('does not run, and sends nothing, when the project has none', async () => {
+    await approvedTask()
+    const f = fleet({
+      planner: [[{ tool: 'save_plan', args: PLAN }]],
+      builder: [builds('export const delays = [1, 2, 4]\n')],
+      verifier: [[report('pass')]],
+    })
+    expect(await f.daemon().runOnce()).toBe('review')
+    expect((await eventsOf('tool_call')).some((e) => e.tool === 'setup_command')).toBe(false)
+  })
+
+  it('blocks the run in prepare when it fails, and runs again on Resume', async () => {
+    const flag = join(mkdtempSync(join(tmpdir(), 'flag-')), 'fixed')
+    await setSetup(`[ -f ${flag} ] && exit 0; echo boom-line; exit 1`)
+    const taskId = await approvedTask()
+    const f = fleet({
+      planner: [[{ tool: 'save_plan', args: PLAN }]],
+      builder: [builds('export const delays = [1, 2, 4]\n')],
+      verifier: [[report('pass')]],
+    })
+    expect(await f.daemon().runOnce()).toBe('released')
+    expect(await task(taskId)).toMatchObject({
+      state: 'blocked',
+      block: { cause: 'step_failed', stage: 'prepare', command: expect.stringContaining('boom') },
+    })
+    const errors = await eventsOf('error')
+    expect(errors.at(-1)!.payload).toMatchObject({
+      cause: 'step_failed',
+      output: expect.stringContaining('boom-line'),
+    })
+    expect(f.calls()).toHaveLength(0)
+    const checkpoints = await eventsOf('checkpoint')
+    expect(checkpoints.at(-1)!.payload).toMatchObject({ stage: 'prepare' })
+
+    writeFileSync(flag, '')
+    await api('POST', `/api/tasks/${taskId}/actions/resume`)
+    expect(await f.daemon().runOnce()).toBe('review')
+    expect(f.calls().length).toBeGreaterThan(0)
+  })
+
+  it('kills a setup command that outlives the timeout, and blocks the run', async () => {
+    await setSetup('echo started; sleep 30')
+    const taskId = await approvedTask()
+    const f = fleet({ planner: [[{ tool: 'save_plan', args: PLAN }]] }, { TEST_TIMEOUT_MS: '500' })
+    expect(await f.daemon().runOnce()).toBe('released')
+    expect(await task(taskId)).toMatchObject({
+      state: 'blocked',
+      block: { cause: 'step_failed', stage: 'prepare' },
+    })
+    const sent = (await eventsOf('tool_call')).find((e) => e.tool === 'setup_command')
+    expect(sent).toMatchObject({ status: 'error', payload: { timed_out: true } })
+    expect(f.calls()).toHaveLength(0)
   })
 })

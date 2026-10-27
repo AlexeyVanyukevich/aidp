@@ -65,6 +65,15 @@ async function phase(extra = '') {
   return { result, events, runDir }
 }
 
+describe('prepareRunDir', () => {
+  it('turns off Claude Code’s commit and pull request attribution', () => {
+    const runDir = mkdtempSync(join(tmpdir(), 'rundir-'))
+    prepareRunDir(runDir)
+    const settings = JSON.parse(readFileSync(join(runDir, 'settings.json'), 'utf8'))
+    expect(settings.attribution).toEqual({ commit: '', pr: '' })
+  })
+})
+
 describe('runPhase', () => {
   it('reports the phase’s start, its usage and its end with Claude Code’s own cost', async () => {
     const { result, events } = await phase()

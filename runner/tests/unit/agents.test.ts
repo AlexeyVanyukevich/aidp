@@ -22,6 +22,14 @@ describe('the agents', () => {
     expect(AGENTS.planner!.prompt).toContain('20,000')
   })
 
+  it('tells the builder to follow the commit rules and never bypass hooks', () => {
+    const prompt = AGENTS.builder!.prompt
+    expect(prompt).toContain('CLAUDE.md')
+    expect(prompt).toContain('splitting the work into commits')
+    expect(prompt).toContain('Never bypass git hooks')
+    expect(prompt).toContain('rewrite the message and commit again')
+  })
+
   it('tells the builder a migration needs an approval', () => {
     expect(AGENTS.builder!.prompt).toContain('kind migration')
   })

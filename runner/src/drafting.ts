@@ -47,6 +47,7 @@ export async function draftSpec(
           if (work.kind === 'resume')
             await deps.git.removeWorktree(project.repo_path, worktree).catch(() => undefined)
           await deps.git.prepareDetachedWorktree(project.repo_path, project.base_branch, worktree)
+          await steps.runSetup(project.setup_command)
           state.stage = 'spec'
           state.attempt = 1
           break

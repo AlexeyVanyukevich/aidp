@@ -7,6 +7,7 @@ import type { RunnerConfig } from './config.js'
 import { GitError, type Git } from './git.js'
 import type { PhaseDeps, PhaseInput, PhaseRecord, StepResult } from './phases/phase.js'
 import { newEvent, type EventSink } from './sink.js'
+import { runTestCommand } from './test-command.js'
 
 export type Io = Pick<PhaseInput, 'worktree' | 'runDir' | 'budgetUsd'>
 type PhaseOf = PhaseRecord['phase']
@@ -30,6 +31,8 @@ export interface RunDeps {
   sink: EventSink
   setToken(token: string): void
   phases: Phases
+  /** Runs a project command; the real one when absent. */
+  runTests?: typeof runTestCommand
   config: RunnerConfig
   /** The owner cancelled the run. */
   signal: AbortSignal
@@ -129,7 +132,7 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
     setToken: deps.setToken,
   }
 
-  const send = (type: 'checkpoint' | 'error', fields: object) =>
+  const send = (type: 'checkpoint' | 'error' | 'tool_call', fields: object) =>
     deps.sink.send([newEvent({ runId: run.id, phaseId: null, type }, fields)])
 
   const checkpoint = async () => {
@@ -162,6 +165,32 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
     await checkpoint()
     await send('error', { payload: { blocks: true, cause, stage: state.stage, ...detail } })
     throw new Release()
+  }
+
+  /**
+   * The project's setup command, run in the fresh worktree before any phase starts, so the
+   * repository's own rules (its dependencies) are there when the agents' sessions begin. A
+   * failure or a timeout blocks the run in `prepare`; Resume runs the stage again.
+   */
+  const runSetup = async (command: string | null) => {
+    if (command === null) return
+    const result = await (deps.runTests ?? runTestCommand)(command, io.worktree, {
+      timeoutMs: deps.config.testTimeoutMs,
+    })
+    const ok = result.exitCode === 0
+    await send('tool_call', {
+      tool: 'setup_command',
+      target: command,
+      status: ok ? 'ok' : 'error',
+      duration_ms: result.durationMs,
+      payload: {
+        exit_code: result.exitCode,
+        timed_out: result.timedOut,
+        truncated: result.truncated,
+        output_tail: result.output.slice(-4_096),
+      },
+    })
+    if (!ok) await block('step_failed', { command, output: result.output.slice(-4_096) })
   }
 
   /** The daemon is stopping: between steps, the run is blocked where it stands. */
@@ -286,6 +315,7 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
     state,
     checkpoint,
     block,
+    runSetup,
     stopIfShuttingDown,
     phaseStep,
     endPhase,

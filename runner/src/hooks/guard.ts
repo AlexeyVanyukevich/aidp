@@ -15,6 +15,73 @@ const COMMAND_RULES: [RegExp, string][] = [
   ],
 ]
 
+const HOOK_REASON =
+  'git hooks are not to be skipped: the commit-msg hook must not be skipped. Fix the message and commit again.'
+
+/** Splits a shell command into words, quotes removed, so text inside a message is one word. */
+function words(command: string): string[] {
+  const out: string[] = []
+  const pattern = /"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/g
+  let current = ''
+  let last = 0
+  for (const match of command.matchAll(pattern)) {
+    const start = match.index ?? 0
+    if (start > last && /\s/.test(command.slice(last, start))) {
+      if (current !== '') out.push(current)
+      current = ''
+    }
+    current += match[1] ?? match[2] ?? match[3] ?? ''
+    last = start + match[0].length
+  }
+  if (current !== '') out.push(current)
+  return out
+}
+
+/** `git commit` that skips the hooks: with --no-verify or -n, or under -c core.hooksPath. */
+export function skipsCommitHook(command: string): boolean {
+  // Each simple command on its own: a `;`, `&&` or `|` outside quotes ends one.
+  const segments: string[][] = [[]]
+  for (const word of words(command.replace(/(&&|\|\||;|\|)/g, ' $1 '))) {
+    if (/^(?:&&|\|\||;|\|)$/.test(word)) segments.push([])
+    else segments.at(-1)?.push(word)
+  }
+  return segments.some((segment) => {
+    const git = segment.findIndex((w) => w === 'git' || w.endsWith('/git'))
+    if (git === -1) return false
+    const rest = segment.slice(git + 1)
+    const commit = rest.indexOf('commit')
+    if (commit === -1) return false
+    for (let i = 0; i < commit; i++) {
+      const w = rest[i] ?? ''
+      const config = w === '-c' ? (rest[i + 1] ?? '') : w.startsWith('-c') ? w.slice(2) : ''
+      if (/^core\.hookspath(?:=|$)/i.test(config)) return true
+    }
+    const options = rest.slice(commit + 1)
+    for (let i = 0; i < options.length; i++) {
+      const w = options[i] ?? ''
+      if (w === '--') break
+      // The value of a message option is text, never an option.
+      if (w === '-m' || w === '--message' || w === '-F' || w === '-C' || w === '-c') {
+        i += 1
+        continue
+      }
+      if (w.startsWith('--')) {
+        if (w === '--no-verify') return true
+        continue
+      }
+      if (w.startsWith('-') && w.length > 1) {
+        // A cluster: letters up to a message option, whose rest or next word is its value.
+        for (const letter of w.slice(1)) {
+          if (letter === 'n') return true
+          if ('mFCc'.includes(letter)) break
+        }
+        if (/^-[a-zA-Z]*[mFCc]$/.test(w)) i += 1
+      }
+    }
+    return false
+  })
+}
+
 const FILE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
 
 /** The tools a model can send to the background, where `-p` loses them when its turn ends. */
@@ -57,6 +124,7 @@ export function decide(
   if (input.tool_name === 'Bash') {
     const command = typeof input.tool_input.command === 'string' ? input.tool_input.command : ''
     for (const [pattern, reason] of COMMAND_RULES) if (pattern.test(command)) return deny(reason)
+    if (skipsCommitHook(command)) return deny(HOOK_REASON)
     return { allow: true }
   }
 
