@@ -68,8 +68,11 @@ export const api = {
     id: string,
     patch: { title?: string; description_md?: string; position?: number; state?: 'done' },
   ) => request<TaskView>('PATCH', `/api/tasks/${id}`, patch),
-  action: (id: string, action: 'cancel' | 'rerun' | 'resume' | 'draft-spec') =>
+  action: (id: string, action: 'cancel' | 'resume' | 'draft-spec') =>
     request<TaskView>('POST', `/api/tasks/${id}/actions/${action}`),
+  /** Re-run a Failed card: keep the accepted plan, or plan again. */
+  rerun: (id: string, plan: 'keep' | 'again') =>
+    request<TaskView>('POST', `/api/tasks/${id}/actions/rerun`, { plan }),
   redraft: (id: string, note: string) =>
     request<TaskView>('POST', `/api/tasks/${id}/actions/redraft`, { note }),
   specs: (taskId: string) => request<SpecView[]>('GET', `/api/tasks/${taskId}/specs`),

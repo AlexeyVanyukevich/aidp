@@ -27,6 +27,9 @@ export function PlanTab({ task }: { task: TaskView }) {
                 <strong>Waiting for your approval in Approvals.</strong>
               </p>
             )}
+            {artifact.copied_from_run !== null && (
+              <p className="muted">Kept from run {artifact.copied_from_run}</p>
+            )}
             <p>{plan.summary}</p>
             <p className="muted">Confidence: {plan.confidence}</p>
             <section aria-labelledby={stepsId}>
