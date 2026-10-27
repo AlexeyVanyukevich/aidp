@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Empty, Field, Input, Notice } from '@zellige/react'
+import { Button, Empty, Field, Input, Notice, Select } from '@zellige/react'
 import { api } from '../api'
 import { invalidField } from '../errors'
 import { Loaded } from '../Loaded'
 import { usePage } from '../page'
-import type { ProjectView } from '../types'
+import type { ProjectView, ProjectWithLinks } from '../types'
 
 type FieldName = Exclude<keyof ProjectView, 'id'>
 
@@ -53,6 +53,9 @@ const FIELDS: readonly { name: FieldName; label: string; hint: string; problem: 
   },
 ]
 
+const TARGET_PROBLEM = 'Pick a project this one does not already link to.'
+const NOTE_PROBLEM = 'Enter a note of up to 500 characters.'
+
 const BLANK: Record<FieldName, string> = {
   key: '',
   name: '',
@@ -79,6 +82,7 @@ export function Projects() {
   const named = FIELDS.some((f) => f.name === field)
   const inputs = useRef(new Map<string, HTMLInputElement>())
   const summary = useRef<HTMLDivElement>(null)
+  const [announcement, setAnnouncement] = useState('')
 
   // A refusal moves focus to the field it names, which now carries the reason, or else to the
   // summary. Both are rendered by the time this runs, so the reason is read with the focus.
@@ -115,12 +119,14 @@ export function Projects() {
                     </Link>
                     <span className="muted">{project.github_repo}</span>
                     <SetupCommand project={project} />
+                    <Links project={project} all={list} announce={setAnnouncement} />
                   </li>
                 ))}
               </ul>
             )
           }
         </Loaded>
+        <Notice className="announce">{announcement}</Notice>
       </section>
 
       <section aria-labelledby="register">
@@ -235,5 +241,119 @@ function SetupCommand({ project }: { project: ProjectView }) {
         Cancel
       </Button>
     </form>
+  )
+}
+
+/** The projects a project links to, each removable, and the form that adds one. */
+function Links({
+  project,
+  all,
+  announce,
+}: {
+  project: ProjectWithLinks
+  all: ProjectWithLinks[]
+  announce: (text: string) => void
+}) {
+  const client = useQueryClient()
+  const [target, setTarget] = useState('')
+  const [note, setNote] = useState('')
+  const select = useRef<HTMLSelectElement>(null)
+  const noteInput = useRef<HTMLInputElement>(null)
+  const linked = new Set(project.links.map((link) => link.key))
+  const offered = all.filter((other) => other.key !== project.key && !linked.has(other.key))
+
+  const add = useMutation({
+    mutationFn: () => api.addLink(project.key, { target, note }),
+    onSuccess: async () => {
+      announce(`${project.key} now links to ${target}.`)
+      setTarget('')
+      setNote('')
+      await client.invalidateQueries({ queryKey: ['projects'] })
+    },
+  })
+  const remove = useMutation({
+    mutationFn: (key: string) => api.removeLink(project.key, key),
+    onSuccess: async (_data, key) => {
+      announce(`${project.key} no longer links to ${key}.`)
+      await client.invalidateQueries({ queryKey: ['projects'] })
+      // The Remove button that had focus is gone: the form is the next place to work.
+      select.current?.focus()
+    },
+  })
+  const field = invalidField(add.error)
+  const named = field === 'target' || field === 'note'
+
+  useEffect(() => {
+    if (add.error === null) return
+    if (field === 'note') noteInput.current?.focus()
+    else if (field === 'target') select.current?.focus()
+  }, [add.error, field])
+
+  return (
+    <div className="links">
+      {project.links.length > 0 && (
+        <ul aria-label={`Links of ${project.key}`}>
+          {project.links.map((link) => (
+            <li key={link.key}>
+              <span>
+                {link.key} {link.name}
+              </span>
+              <span className="muted">{link.note}</span>
+              <Button
+                type="button"
+                busy={remove.isPending && remove.variables === link.key}
+                onClick={() => remove.mutate(link.key)}
+              >
+                {`Remove link to ${link.key}`}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <Notice tone="danger" className="announce">
+        {remove.isError ? 'The link could not be removed. Try again.' : ''}
+      </Notice>
+      <form
+        aria-label={`Add a link from ${project.key}`}
+        noValidate
+        onSubmit={(event) => {
+          event.preventDefault()
+          add.mutate()
+        }}
+      >
+        <Field
+          label={`Link ${project.key} to`}
+          error={field === 'target' ? TARGET_PROBLEM : undefined}
+        >
+          <Select ref={select} value={target} onChange={(e) => setTarget(e.target.value)}>
+            <option value="">Choose a project</option>
+            {offered.map((other) => (
+              <option key={other.key} value={other.key}>
+                {other.key} – {other.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field
+          label={`Note on the link from ${project.key}`}
+          hint="Required. Says what the project is for."
+          error={field === 'note' ? NOTE_PROBLEM : undefined}
+        >
+          <Input
+            ref={noteInput}
+            required
+            value={note}
+            autoComplete="off"
+            onChange={(e) => setNote(e.target.value)}
+          />
+        </Field>
+        <Notice tone="danger" className="announce">
+          {add.isError && !named ? 'The link could not be added. Try again.' : ''}
+        </Notice>
+        <Button type="submit" variant="primary" busy={add.isPending}>
+          Add link
+        </Button>
+      </form>
+    </div>
   )
 }

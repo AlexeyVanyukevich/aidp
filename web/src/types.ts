@@ -20,6 +20,15 @@ export interface ProjectView {
   test_command: string
   setup_command: string | null
 }
+export interface ProjectLink {
+  key: string
+  name: string
+  note: string
+}
+/** What the list returns: a project with the projects it links to, ordered by key. */
+export interface ProjectWithLinks extends ProjectView {
+  links: ProjectLink[]
+}
 export interface TaskCard {
   id: string
   key: string
