@@ -99,7 +99,10 @@ with its answer. The header counts a batch's questions, not the batch.
 **The plan gate.** A plan not marked `confidence: high` stops at the end of the planner's process:
 the runner raises a `plan` approval with the plan as its context, inside the still-open Plan
 phase. Approve plan ends the phase and starts Build; an answer in words resumes the planner's
-session, and its revised plan meets the gate again.
+session, and its revised plan meets the gate again. A plan's rendered text is limited to 20,000
+characters, the most a `plan` approval's `context_md` holds: `save_plan` refuses a longer plan,
+whatever its confidence, and asks the planner to shorten it. If the board refuses the gate's
+request with a 4xx answer, the run fails with a sentence naming the field and the problem.
 
 **Out-of-plan edits.** In Build the guard refuses a file outside the run's allowed list and tells
 the builder to ask with `request_approval` kind `out_of_plan`. Allowing the change adds the files
@@ -110,8 +113,8 @@ start with `index.`; the registry (`index.*`) is an ordinary file, held to the p
 Build the guard refuses to create one, or to change one already in the worktree, even when the
 plan or an `out_of_plan` answer lists it, and tells the builder to ask with `request_approval`
 kind `migration`: the path in `files`, a summary in `question` (what it changes, and whether its
-down step undoes it), and the whole file in `context_md` (up to 20,000 characters, other kinds
-8,000). The request offers `allow` and `refuse` and pauses the run as an `out_of_plan` one does.
+down step undoes it), and the whole file in `context_md` (up to 20,000 characters; `plan` approvals hold 20,000 too, `question`, `out_of_plan` and
+`questions` 8,000). The request offers `allow` and `refuse` and pauses the run as an `out_of_plan` one does.
 The Approvals tab shows the summary, the path, and the file as plain text in a monospace block.
 Allowing adds the path to the run's approved migrations and its allowed files for the rest of
 the run; the claim carries both, and the runner writes `approved-migrations.json` beside
