@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import type { TypeBoxTypeProvider } from '@fastify/type-provider-typebox'
 import { Type } from 'typebox'
+import { ValidationError } from '../../shared/errors.js'
 import { Uuid } from '../../shared/schemas.js'
 import { CostService } from '../costs/cost.service.js'
 import { ProjectRepository } from '../projects/project.repository.js'
@@ -61,6 +62,19 @@ export function registerTasks(instance: FastifyInstance): void {
       return service.get(request.params.id)
     },
   )
+
+  // Re-run takes an optional body, checked by hand: a missing one means "plan again".
+  app.post('/api/tasks/:id/actions/rerun', { schema: { params: TaskParams } }, async (request) => {
+    const body = request.body as { plan?: unknown } | null | undefined
+    const plan = body?.plan ?? 'again'
+    if (
+      (body !== null && body !== undefined && typeof body !== 'object') ||
+      (plan !== 'keep' && plan !== 'again')
+    )
+      throw new ValidationError('plan must be "keep" or "again"', { field: 'plan' })
+    await performAction(app.db, request.params.id, 'rerun', app.clock(), plan)
+    return service.get(request.params.id)
+  })
 
   // The one action with a body; a static path, so it wins over `:action` (slice 3 spec, §8).
   app.post(
