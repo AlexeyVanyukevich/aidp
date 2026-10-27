@@ -68,6 +68,23 @@ stages — `prepare`, `plan`, `build`, `tests`, `verify`, `push`, `pr` — with 
 tests → Verify rounds. All criteria passing pushes the branch and opens the pull request, or
 takes one already open for the branch. The worktree is removed when the run ends.
 
+**The setup command.** A project may carry a `setup_command` (at most 500 characters), set when
+it is registered or later with `PATCH /api/projects/:key`, whose body is exactly
+`{ "setup_command": string | null }`: any other field is refused with 400, a null or blank value
+clears it, and an unknown key answers 404. Like the test command, a command whose first word does
+not resolve in `repo_path` is refused with `validation_error` on the field. In the `prepare`
+stage of every spec run and delivery run, once the worktree is checked out, the runner runs it
+with `sh -c` in the worktree, bounded by `TEST_TIMEOUT_MS`, before any phase starts: it is how
+the repository's dependencies — and so the `charter` rules `CLAUDE.md` imports — are there when
+the agents' sessions begin. It is reported as a `tool_call` event named `setup_command`, with the
+test command's payload (exit code, timeout, the end of the output). A null command runs nothing.
+One that exits non-zero or times out blocks the run as `step_failed`, carrying the command and
+the last 4,096 characters of its output; the checkpoint stays in `prepare`, and Resume recreates
+the worktree and runs the command again.
+
+The run's `settings.json` sets Claude Code's `attribution` to `{ "commit": "", "pr": "" }`, so
+the runs' commits and pull requests carry no `Co-Authored-By` trailer or generated-by line.
+
 The stage machinery — checkpoints, blocks, one process of a phase, the end of a run — is shared
 by both kinds of run, in `runner/src/run-steps.ts`.
 
@@ -169,7 +186,10 @@ from a foreign `Origin`. The runner authenticates with `RUNNER_KEY`; each `claud
 a run token limited to its run, retired five minutes after the process exits. Runner credentials
 are checked before a request's body is read. The guard denies `rm -rf`, `git push`,
 `git reset --hard`, `.env` files, paths outside the worktree, in Build any file the run has not allowed, `Bash` or `Agent` sent to the background (`run_in_background: true`,
-which a `-p` process loses when its turn ends), and — once the run is paused — every tool.
+which a `-p` process loses when its turn ends), and — once the run is paused — every tool. In every phase it also denies `git commit` with
+`--no-verify` or `-n` (alone or inside a cluster such as `-an`), and `git -c core.hooksPath=…
+commit`, with a reason saying the commit-msg hook must not be skipped; text inside a `-m` value
+never matches.
 
 ## Error translation
 

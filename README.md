@@ -22,7 +22,8 @@ Needs Node 24, Docker, Claude Code signed in, and the GitHub CLI signed in (`gh 
     ./run dev            # PostgreSQL, the server, the web app and the runner
     open http://127.0.0.1:5174
 
-Register a repository on the Projects page, then record the price of each model the phases
+Register a repository on the Projects page (give it a setup command, such as `npm ci`, if the
+repository needs its dependencies installed in each run's fresh checkout), then record the price of each model the phases
 use, from Anthropic's price list, in USD per million tokens — the spec-writer runs on Opus
 (`claude-opus-5-5`), the other phases on Sonnet, Claude Code's own calls on Haiku:
 
