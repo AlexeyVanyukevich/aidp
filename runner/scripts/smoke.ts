@@ -4,6 +4,9 @@
 // With `--draft` (slice 3), the spec is not written here: the task carries a description that
 // leaves two questions open, the spec-writer drafts it, and the owner answers, reviews and
 // approves on the board while this waits.
+import { execFileSync } from 'node:child_process'
+import { coAuthored, LOG_FORMAT } from './smoke-trailers.js'
+
 const board = (process.env.BOARD_URL ?? 'http://127.0.0.1:4100').replace(/\/+$/, '')
 const repoPath = process.env.SMOKE_REPO_PATH
 const githubRepo = process.env.SMOKE_GITHUB_REPO
@@ -80,7 +83,13 @@ while (Date.now() < deadline && !['review', 'failed', 'done'].includes(state)) {
 
 // Newest first: the delivery run, then its drafts.
 const runs = await call<
-  { kind: string; number: number; pr_url: string | null; failure_reason: string | null }[]
+  {
+    kind: string
+    number: number
+    branch: string | null
+    pr_url: string | null
+    failure_reason: string | null
+  }[]
 >('GET', `/api/tasks/${task.id}/runs`)
 const run = runs.find((r) => r.kind === 'delivery')
 if (drafted)
@@ -110,4 +119,20 @@ for (const phase of costs.byPhase) {
 }
 if (costs.missingPrices.length > 0)
   console.log(`no price for: ${costs.missingPrices.join(', ')} — ./run price:set`)
-process.exit(state === 'review' ? 0 : 1)
+
+// Every commit the branch adds to the base, not only the last: a run's commits follow the
+// repository's convention, which has no Co-Authored-By trailer.
+let trailers = 0
+if (run?.branch != null) {
+  const git = (...args: string[]) =>
+    execFileSync('git', ['-C', repoPath, ...args], { encoding: 'utf8' })
+  git('fetch', 'origin', 'main', run.branch)
+  const log = git('log', `--format=${LOG_FORMAT}`, `origin/main..origin/${run.branch}`)
+  const flagged = coAuthored(log)
+  console.log(
+    `commits on ${run.branch}: ${log.split('\x1e').filter((r) => r.trim() !== '').length}`,
+  )
+  for (const sha of flagged) console.error(`commit ${sha} carries a Co-Authored-By trailer`)
+  trailers = flagged.length
+}
+process.exit(state === 'review' && trailers === 0 ? 0 : 1)
