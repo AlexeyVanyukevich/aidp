@@ -18,6 +18,7 @@ export interface ProjectView {
   github_repo: string
   base_branch: string
   test_command: string
+  setup_command: string | null
 }
 export interface TaskCard {
   id: string

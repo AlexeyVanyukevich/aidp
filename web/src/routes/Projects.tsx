@@ -10,6 +10,8 @@ import type { ProjectView } from '../types'
 
 type FieldName = Exclude<keyof ProjectView, 'id'>
 
+const SETUP_PROBLEM = 'This command does not run in that repository.'
+
 /** The page's own words for each field, and for what is wrong when the server refuses it. */
 const FIELDS: readonly { name: FieldName; label: string; hint: string; problem: string }[] = [
   {
@@ -43,6 +45,12 @@ const FIELDS: readonly { name: FieldName; label: string; hint: string; problem: 
     hint: 'Runs in the repository after every Build.',
     problem: 'This command does not run in that repository.',
   },
+  {
+    name: 'setup_command',
+    label: 'Setup command',
+    hint: 'Optional. Runs in each run’s fresh checkout before any agent starts, such as npm ci.',
+    problem: SETUP_PROBLEM,
+  },
 ]
 
 const BLANK: Record<FieldName, string> = {
@@ -52,6 +60,7 @@ const BLANK: Record<FieldName, string> = {
   github_repo: '',
   base_branch: 'main',
   test_command: 'npm test',
+  setup_command: '',
 }
 
 export function Projects() {
@@ -105,6 +114,7 @@ export function Projects() {
                       {project.key} {project.name}
                     </Link>
                     <span className="muted">{project.github_repo}</span>
+                    <SetupCommand project={project} />
                   </li>
                 ))}
               </ul>
@@ -147,5 +157,83 @@ export function Projects() {
         </form>
       </section>
     </main>
+  )
+}
+
+/** A project's setup command, and the control that sets or clears it. */
+function SetupCommand({ project }: { project: ProjectView }) {
+  const client = useQueryClient()
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState('')
+  const input = useRef<HTMLInputElement>(null)
+  const edit = useRef<HTMLButtonElement>(null)
+  const save = useMutation({
+    mutationFn: () => api.setSetupCommand(project.key, value.trim() === '' ? null : value),
+    onSuccess: async () => {
+      setEditing(false)
+      await client.invalidateQueries({ queryKey: ['projects'] })
+    },
+  })
+  const refused = invalidField(save.error) === 'setup_command'
+
+  useEffect(() => {
+    if (save.error !== null && refused) input.current?.focus()
+  }, [save.error, refused])
+  useEffect(() => {
+    if (editing) input.current?.focus()
+  }, [editing])
+
+  if (!editing) {
+    return (
+      <>
+        <span className="muted">
+          {project.setup_command === null
+            ? 'No setup command'
+            : `Setup command: ${project.setup_command}`}
+        </span>
+        <Button
+          ref={edit}
+          type="button"
+          onClick={() => {
+            setValue(project.setup_command ?? '')
+            save.reset()
+            setEditing(true)
+          }}
+        >
+          {`Edit setup command of ${project.key}`}
+        </Button>
+      </>
+    )
+  }
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault()
+        save.mutate()
+      }}
+    >
+      <Field
+        label={`Setup command of ${project.key}`}
+        hint="Leave it empty to clear it."
+        error={refused ? SETUP_PROBLEM : undefined}
+      >
+        <Input
+          ref={input}
+          name="setup_command"
+          value={value}
+          autoComplete="off"
+          onChange={(e) => setValue(e.target.value)}
+        />
+      </Field>
+      <Notice tone="danger" className="announce">
+        {save.isError && !refused ? 'The setup command could not be saved. Try again.' : ''}
+      </Notice>
+      <Button type="submit" variant="primary" busy={save.isPending}>
+        Save
+      </Button>
+      <Button type="button" onClick={() => setEditing(false)}>
+        Cancel
+      </Button>
+    </form>
   )
 }
