@@ -7,6 +7,7 @@ import { buildHandoff, type HandoffInput } from './phases/handoff.js'
 import { prepareRunDir, writeAllowedFiles, writeApprovedMigrations } from './phases/run-dir.js'
 import { End, Release, runPaths, runSteps, type Outcome, type RunDeps } from './run-steps.js'
 import { ApiError } from './api.js'
+import { removeLinked } from './linked.js'
 import { newEvent } from './sink.js'
 import type { runTestCommand } from './test-command.js'
 
@@ -164,6 +165,8 @@ export async function carryOut(
       }
     }
 
+    if (work.kind === 'resume' && state.stage !== 'prepare') await steps.restoreLinkedCheckouts()
+
     if (kept !== null) state.planId = kept.artifact_id
 
     for (;;) {
@@ -177,6 +180,7 @@ export async function carryOut(
             await deps.git.deleteBranch(project.repo_path, branch).catch(() => undefined)
           }
           await deps.git.prepareWorktree(project.repo_path, project.base_branch, branch, worktree)
+          await steps.prepareLinkedCheckouts()
           await steps.runSetup(project.setup_command)
           state.stage = kept === null ? 'plan' : 'build'
           if (kept !== null) await allowPlanFiles()
@@ -307,7 +311,9 @@ export async function cleanUp(
   work: Extract<Work, { kind: 'cleanup' }>,
   deps: { git: Git; config: RunnerConfig },
 ): Promise<void> {
-  const worktree = work.run.worktree_path ?? runPaths(deps.config.home, work.run.id).worktree
+  const paths = runPaths(deps.config.home, work.run.id)
+  await removeLinked(deps.git, paths.linked, paths.runDir).catch(() => undefined)
+  const worktree = work.run.worktree_path ?? paths.worktree
   if (!existsSync(worktree)) return
   await deps.git.removeWorktree(work.run.repo_path, worktree).catch(() => undefined)
 }
