@@ -21,6 +21,7 @@ export interface ArtifactView {
   body_md: string
   uri: string | null
   data: unknown
+  copied_from_run: number | null
 }
 export interface RunView {
   id: string
@@ -103,7 +104,7 @@ export class RunRepository {
       .execute()
     const artifacts = await this.db
       .selectFrom('artifacts')
-      .select(['id', 'run_id', 'kind', 'phase_id', 'body_md', 'uri', 'data'])
+      .select(['id', 'run_id', 'kind', 'phase_id', 'body_md', 'uri', 'data', 'copied_from_run'])
       .where('run_id', 'in', runIds)
       .orderBy('created_at')
       .execute()

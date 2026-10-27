@@ -171,6 +171,8 @@ export interface ArtifactsTable {
   body_md: string
   uri: string | null
   data: ColumnType<unknown, string | null, string | null>
+  /** The number of the run this plan was copied from by a Re-run that keeps the plan. */
+  copied_from_run: number | null
   created_at: Generated<Date>
 }
 
