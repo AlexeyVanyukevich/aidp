@@ -82,6 +82,60 @@ export function skipsCommitHook(command: string): boolean {
   })
 }
 
+/** A linked project: its read-only checkout, and the owner's working copy a run must not use. */
+export interface LinkedPath {
+  key: string
+  repo_path: string
+  path: string
+}
+
+const READ_TOOLS = new Set(['Read', 'Grep', 'Glob'])
+
+const within = (base: string, path: string) => path === base || path.startsWith(base + sep)
+
+/** Whether `command` names `base` as a whole path, not as the start of a longer name. */
+function mentions(command: string, base: string): boolean {
+  for (let at = command.indexOf(base); at !== -1; at = command.indexOf(base, at + 1)) {
+    if (!/[\w.-]/.test(command.charAt(at + base.length))) return true
+  }
+  return false
+}
+
+/** The linked rules for one tool call, or null when none applies. */
+function linkedVerdict(
+  input: { tool_name: string; tool_input: Record<string, unknown> },
+  linked: LinkedPath[],
+  cwd: string,
+): Verdict | null {
+  const pointer = (l: LinkedPath) =>
+    `${l.key}'s working copy is not for runs to use; read its checkout at ${l.path}`
+  if (input.tool_name === 'Bash') {
+    const command = typeof input.tool_input.command === 'string' ? input.tool_input.command : ''
+    const hit = linked.find((l) => mentions(command, l.repo_path))
+    return hit === undefined ? null : deny(pointer(hit))
+  }
+  const isRead = READ_TOOLS.has(input.tool_name)
+  if (!isRead && !FILE_TOOLS.has(input.tool_name)) return null
+  const candidates = isRead
+    ? [input.tool_input.file_path, input.tool_input.path, input.tool_input.pattern]
+    : [input.tool_input.file_path, input.tool_input.notebook_path]
+  for (const raw of candidates) {
+    if (typeof raw !== 'string' || (isRead && !isAbsolute(raw) && raw === input.tool_input.pattern))
+      continue
+    const absolute = isAbsolute(raw) ? resolve(raw) : resolve(cwd, raw)
+    for (const l of linked) {
+      if (isRead) {
+        if (within(l.repo_path, absolute)) return deny(pointer(l))
+      } else if (within(l.path, absolute) || within(l.repo_path, absolute)) {
+        return deny(
+          `${l.key} is a linked project: its repository is read-only, and a run never changes it`,
+        )
+      }
+    }
+  }
+  return null
+}
+
 const FILE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
 
 /** The tools a model can send to the background, where `-p` loses them when its turn ends. */
@@ -113,6 +167,8 @@ export function decide(
     paused: boolean
     /** Migrations the owner approved for this run; the guard reads them from the run directory. */
     approvedMigrations?: string[]
+    /** The run's linked projects, from `linked.json`; absent when it has none. */
+    linked?: LinkedPath[]
     cwd: string
     exists: (path: string) => boolean
   },
@@ -121,6 +177,8 @@ export function decide(
   // The model asks for the background itself (slice 3 spec, §3, fact 3).
   if (BACKGROUND_TOOLS.has(input.tool_name) && input.tool_input.run_in_background === true)
     return deny(BACKGROUND)
+  const linkedRefusal = linkedVerdict(input, ctx.linked ?? [], ctx.cwd)
+  if (linkedRefusal !== null) return linkedRefusal
   if (input.tool_name === 'Bash') {
     const command = typeof input.tool_input.command === 'string' ? input.tool_input.command : ''
     for (const [pattern, reason] of COMMAND_RULES) if (pattern.test(command)) return deny(reason)

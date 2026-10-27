@@ -200,3 +200,72 @@ describe('the guard', () => {
     })
   })
 })
+
+// A linked project's checkout is read-only, and its working copy is not the run's to touch.
+describe('the guard and linked projects', () => {
+  const ZLC = { key: 'ZLC', repo_path: '/repos/zellige', path: '/home/worktrees/run-1-linked/ZLC' }
+  const linkedCtx = (phase = 'build') => ({ ...ctx(phase), linked: [ZLC] })
+  const read = (tool_name: string, file_path: string) => ({
+    tool_name,
+    tool_input: tool_name === 'Read' ? { file_path } : { path: file_path },
+  })
+  const reasonOf = (verdict: ReturnType<typeof decide>) => (verdict.allow ? '' : verdict.reason)
+
+  it.each(['spec', 'plan', 'build', 'verify'])(
+    'AC15: refuses Edit and Write in the checkout and in the repo_path in %s, naming the project',
+    (phase) => {
+      for (const tool of ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
+        for (const file of [`${ZLC.path}/src/a.ts`, '/repos/zellige/src/a.ts']) {
+          const verdict = decide(edit(file, tool), linkedCtx(phase))
+          expect(verdict.allow).toBe(false)
+          expect(reasonOf(verdict)).toContain('ZLC')
+          expect(reasonOf(verdict)).toContain('read-only')
+        }
+    },
+  )
+
+  it.each(['Read', 'Grep', 'Glob'])('AC16: allows %s in the checkout', (tool) => {
+    expect(decide(read(tool, `${ZLC.path}/src`), linkedCtx())).toEqual({ allow: true })
+  })
+
+  it.each(['Read', 'Grep', 'Glob'])(
+    'AC16: refuses %s in the repo_path, pointing to the checkout',
+    (tool) => {
+      const verdict = decide(read(tool, '/repos/zellige/src'), linkedCtx())
+      expect(verdict.allow).toBe(false)
+      expect(reasonOf(verdict)).toContain(ZLC.path)
+    },
+  )
+
+  it('AC16: leaves a read of another path alone', () => {
+    expect(decide(read('Read', '/repos/zellige-other/x'), linkedCtx())).toEqual({ allow: true })
+    expect(decide(read('Grep', 'src'), linkedCtx())).toEqual({ allow: true })
+  })
+
+  it.each([
+    'git -C /repos/zellige log',
+    'cat /repos/zellige/package.json',
+    'cd /repos/zellige && ls',
+  ])('AC17: refuses the Bash command %s, pointing to the checkout', (command) => {
+    const verdict = decide(bash(command), linkedCtx())
+    expect(verdict.allow).toBe(false)
+    expect(reasonOf(verdict)).toContain(ZLC.path)
+  })
+
+  it.each([`grep -r Button ${ZLC.path}`, 'cat /repos/zellige-other/x', 'git log'])(
+    'AC17: allows the Bash command %s',
+    (command) => {
+      expect(decide(bash(command), linkedCtx())).toEqual({ allow: true })
+    },
+  )
+
+  it('AC17: still refuses an Edit outside the worktree that is not a linked path', () => {
+    const verdict = decide(edit('/etc/hosts'), linkedCtx())
+    expect(reasonOf(verdict)).toContain('outside the worktree')
+  })
+
+  it('does nothing different for a run without links', () => {
+    expect(decide(bash('cat /repos/zellige/package.json'), ctx())).toEqual({ allow: true })
+    expect(decide(read('Read', '/repos/zellige/a'), ctx())).toEqual({ allow: true })
+  })
+})
