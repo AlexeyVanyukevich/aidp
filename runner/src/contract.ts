@@ -96,6 +96,7 @@ export interface RunWork {
     github_repo: string
     base_branch: string
     test_command: string
+    setup_command: string | null
   }
 }
 

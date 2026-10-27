@@ -38,7 +38,7 @@ describe('POST /api/projects', () => {
   it('registers a target repository', async () => {
     const response = await app.inject({ method: 'POST', url: '/api/projects', payload: VALID })
     expect(response.statusCode).toBe(201)
-    expect(response.json()).toMatchObject(VALID)
+    expect(response.json()).toMatchObject({ ...VALID, setup_command: null })
 
     const list = await app.inject({ method: 'GET', url: '/api/projects' })
     expect(list.json()).toEqual([expect.objectContaining({ key: 'PAY' })])
@@ -79,5 +79,69 @@ describe('POST /api/projects', () => {
     const response = await app.inject({ method: 'POST', url: '/api/projects', payload: VALID })
     expect(response.statusCode).toBe(400)
     expect(response.json()).toMatchObject({ error: 'validation_error', details: { field: 'key' } })
+  })
+})
+
+describe('the setup command', () => {
+  const post = (payload: object) =>
+    app.inject({ method: 'POST', url: '/api/projects', payload: { ...VALID, ...payload } })
+  const list = async () => (await app.inject({ method: 'GET', url: '/api/projects' })).json()
+  const patch = (url: string, payload: unknown) =>
+    app.inject({ method: 'PATCH', url, payload: payload as object })
+
+  it('is stored when it resolves, and listed', async () => {
+    const response = await post({ setup_command: 'npm ci' })
+    expect(response.statusCode).toBe(201)
+    expect((await list())[0]).toMatchObject({ setup_command: 'npm ci' })
+  })
+
+  it.each([
+    ['omitted', {}],
+    ['blank', { setup_command: '  ' }],
+    ['null', { setup_command: null }],
+  ])('is null when %s', async (_name, change) => {
+    const response = await post(change)
+    expect(response.statusCode).toBe(201)
+    expect(response.json().setup_command).toBeNull()
+  })
+
+  it('is refused at creation when it does not resolve, and no project is made', async () => {
+    const response = await post({ setup_command: 'pnpm install' })
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({
+      error: 'validation_error',
+      details: { field: 'setup_command' },
+    })
+    expect(await list()).toEqual([])
+  })
+
+  it('is set and cleared by PATCH', async () => {
+    await post({})
+    const set = await patch('/api/projects/PAY', { setup_command: 'npm ci' })
+    expect(set.statusCode).toBe(200)
+    expect(set.json()).toMatchObject({ key: 'PAY', setup_command: 'npm ci' })
+    expect((await list())[0]).toMatchObject({ setup_command: 'npm ci' })
+    const cleared = await patch('/api/projects/PAY', { setup_command: null })
+    expect(cleared.json().setup_command).toBeNull()
+    await patch('/api/projects/PAY', { setup_command: 'npm ci' })
+    expect(
+      (await patch('/api/projects/PAY', { setup_command: ' ' })).json().setup_command,
+    ).toBeNull()
+  })
+
+  it('refuses PATCH of another field or of an unresolvable command, leaving the project', async () => {
+    await post({ setup_command: 'npm ci' })
+    expect((await patch('/api/projects/PAY', { name: 'New' })).statusCode).toBe(400)
+    expect(
+      (await patch('/api/projects/PAY', { setup_command: 'npm ci', name: 'New' })).statusCode,
+    ).toBe(400)
+    const bad = await patch('/api/projects/PAY', { setup_command: 'pnpm install' })
+    expect(bad.statusCode).toBe(400)
+    expect(bad.json()).toMatchObject({ details: { field: 'setup_command' } })
+    expect((await list())[0]).toMatchObject({ name: 'Payments', setup_command: 'npm ci' })
+  })
+
+  it('answers 404 for an unknown key', async () => {
+    expect((await patch('/api/projects/NOPE', { setup_command: null })).statusCode).toBe(404)
   })
 })

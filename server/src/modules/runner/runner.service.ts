@@ -34,6 +34,7 @@ export interface RunWork {
     github_repo: string
     base_branch: string
     test_command: string
+    setup_command: string | null
   }
 }
 
@@ -259,6 +260,7 @@ export class RunnerService {
         'projects.github_repo',
         'projects.base_branch',
         'projects.test_command',
+        'projects.setup_command',
         'specs.body_md',
         'specs.criteria',
       ])
@@ -287,6 +289,7 @@ export class RunnerService {
         github_repo: row.github_repo,
         base_branch: row.base_branch,
         test_command: row.test_command,
+        setup_command: row.setup_command,
       },
     }
   }

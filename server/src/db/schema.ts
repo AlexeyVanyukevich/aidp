@@ -31,6 +31,7 @@ export interface ProjectsTable {
   github_repo: string
   base_branch: string
   test_command: string
+  setup_command: string | null
   next_task_number: Generated<number>
   created_at: Generated<Date>
 }
