@@ -80,3 +80,51 @@ describe('buildHandoff for the spec phase', () => {
     expect(text).toContain('<note>\nSay &lt;how&gt; long\n</note>')
   })
 })
+
+// AIDP-25: a planner starting again is shown the plans of earlier runs, apart from <plan>.
+describe('buildHandoff with previous plans', () => {
+  const PLANNER = { ...BASE, phase: 'plan' as const, attempt: 1, summaries: [] }
+  interface Row {
+    name: string
+    previous: { run: number; accepted: boolean; text: string }[] | undefined
+    tags: string[]
+  }
+  const ROWS: Row[] = [
+    {
+      name: 'AC9: one accepted plan',
+      previous: [{ run: 1, accepted: true, text: 'plan <one>' }],
+      tags: ['<previous_plan run="1" accepted="yes">\nplan &lt;one&gt;\n</previous_plan>'],
+    },
+    {
+      name: 'AC10: an unaccepted newest and an accepted older one, in that order',
+      previous: [
+        { run: 2, accepted: false, text: 'two' },
+        { run: 1, accepted: true, text: 'one' },
+      ],
+      tags: [
+        '<previous_plan run="2" accepted="no">\ntwo\n</previous_plan>',
+        '<previous_plan run="1" accepted="yes">\none\n</previous_plan>',
+      ],
+    },
+  ]
+  it.each(ROWS)('$name', ({ previous, tags }) => {
+    const text = buildHandoff({ ...PLANNER, previousPlans: previous })
+    for (const tag of tags) expect(text).toContain(tag)
+    expect(text.indexOf(tags[0] ?? '')).toBeLessThan(text.indexOf('<constraints>'))
+    expect(text).not.toContain('<plan>')
+  })
+
+  it.each([undefined, []])('AC11: %j adds nothing', (previous) => {
+    const without = buildHandoff(PLANNER)
+    expect(buildHandoff({ ...PLANNER, previousPlans: previous })).toBe(without)
+    expect(without).not.toContain('previous_plan')
+  })
+
+  it('cuts a plan at 20,000 characters', () => {
+    const text = buildHandoff({
+      ...PLANNER,
+      previousPlans: [{ run: 1, accepted: true, text: 'p'.repeat(25_000) }],
+    })
+    expect(text).toContain('[previous plan cut: 5000 more characters]')
+  })
+})

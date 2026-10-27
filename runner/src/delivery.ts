@@ -43,6 +43,8 @@ export async function carryOut(
     if (run.spec === null) throw new End('failed', 'the run has no approved spec')
     return run.spec
   }
+  /** A plan a Re-run copied into this run: no planner starts, and Build works from it. */
+  const kept = run.kept_plan ?? null
   let testOutput: string | undefined
   let latestRun: RunView | undefined
 
@@ -94,7 +96,15 @@ export async function carryOut(
       attempt: state.attempt,
       summaries: await summaries(),
     }
-    if (name === 'plan') return buildHandoff(common)
+    if (name === 'plan')
+      return buildHandoff({
+        ...common,
+        previousPlans: (run.previous_plans ?? []).map((p) => ({
+          run: p.run,
+          accepted: p.accepted,
+          text: p.body_md,
+        })),
+      })
     const plan = state.planId === null ? undefined : await artifact('plan', { id: state.planId })
     if (plan === undefined) throw new End('failed', 'the run has no plan to work from')
     if (name === 'build') {
@@ -154,6 +164,8 @@ export async function carryOut(
       }
     }
 
+    if (kept !== null) state.planId = kept.artifact_id
+
     for (;;) {
       await steps.stopIfShuttingDown()
       switch (state.stage) {
@@ -166,11 +178,19 @@ export async function carryOut(
           }
           await deps.git.prepareWorktree(project.repo_path, project.base_branch, branch, worktree)
           await steps.runSetup(project.setup_command)
-          state.stage = 'plan'
+          state.stage = kept === null ? 'plan' : 'build'
+          if (kept !== null) await allowPlanFiles()
           state.attempt = 1
           break
         }
         case 'plan': {
+          // Only a checkpoint from before the plan was copied lands here: Build, no planner.
+          if (kept !== null) {
+            await allowPlanFiles()
+            state.stage = 'build'
+            state.attempt = 1
+            break
+          }
           // A plan the owner approved at the gate: the phase ends, and Build starts (spec §5).
           if (state.phase !== null && state.message === null && work.kind === 'resume') {
             await steps.endPhase(true)

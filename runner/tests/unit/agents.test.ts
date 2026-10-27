@@ -22,6 +22,15 @@ describe('the agents', () => {
     expect(AGENTS.planner!.prompt).toContain('20,000')
   })
 
+  it('tells the planner a previous plan is a starting point to revise, not to carry out', () => {
+    const prompt = AGENTS.planner!.prompt
+    expect(prompt).toContain('<previous_plan>')
+    expect(prompt).toContain('starting point')
+    expect(prompt).toContain('Never carry it out')
+    expect(prompt).toContain('accepted="no"')
+    expect(prompt).toContain('never approved by the owner')
+  })
+
   it('tells the builder to follow the commit rules and never bypass hooks', () => {
     const prompt = AGENTS.builder!.prompt
     expect(prompt).toContain('CLAUDE.md')

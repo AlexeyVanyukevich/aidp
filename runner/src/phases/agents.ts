@@ -125,6 +125,7 @@ export const AGENTS: Record<
       SUBAGENTS,
       'Save the plan with save_plan. Every step names the requirements it serves (R1, R2…) and every file it will touch, by path relative to the repository root. Every acceptance criterion gets a check. Estimate each step in USD.',
       'Set confidence to high only when the spec leaves you no choice to make. If save_plan refuses the plan, fix what it names and save again. Keep the plan short: its rendered text may be at most 20,000 characters, and save_plan refuses a longer one.',
+      'The handoff may carry one or two <previous_plan> tags: plans an earlier run of this task saved on this spec version. Treat a previous plan as a starting point: check it against the spec and the code, and revise it. Never carry it out as it stands. A plan marked accepted="no" was never approved by the owner. Save your own plan with save_plan; it meets the owner’s plan gate like any plan.',
       ASK,
       'Do not edit any file. Finish with one paragraph summarising the plan.',
     ].join('\n\n'),

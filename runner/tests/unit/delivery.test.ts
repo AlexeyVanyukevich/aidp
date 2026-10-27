@@ -357,6 +357,61 @@ describe('a run carried out from the start, as slice 1 did', () => {
   })
 })
 
+describe('a run holding a copied plan', () => {
+  const KEPT: RunWork = { ...RUN, kept_plan: { artifact_id: 'plan-1', from_run: 1 } }
+  const kept = (h: ReturnType<typeof harness>) => {
+    withPlan(h)
+    return { kind: 'start', run: KEPT } as Extract<Work, { kind: 'start' }>
+  }
+
+  it('AC6: starts no planner and raises no gate; Build follows prepare', async () => {
+    const h = harness({})
+    expect(await carryOut(kept(h), h.deps)).toBe('review')
+    expect(h.calls.filter((c) => c.startsWith('start'))).toEqual([
+      'start build-1',
+      'start verify-1',
+    ])
+    expect(h.calls.some((c) => c.includes('plan-'))).toBe(false)
+    expect(h.of('approval_requested')).toEqual([])
+    expect(h.handoffs['build-1']).toContain('<plan>')
+    expect(readFileSync(join(h.home, 'runs', RUN.id, 'allowed-files.json'), 'utf8')).toBe(
+      '["src/retry.ts"]',
+    )
+    expect(h.checkpoints().every((c) => c.plan_artifact_id === 'plan-1')).toBe(true)
+  })
+
+  it('AC7: a resume from before Build goes on in Build with the plan, no planner', async () => {
+    const h = harness({})
+    withPlan(h)
+    const work: Work = {
+      kind: 'resume',
+      run: KEPT,
+      checkpoint: { ...checkpoint('prepare', 1), plan_artifact_id: 'plan-1' },
+      message: INTERRUPTED,
+      allowed_files: ['src/retry.ts'],
+    }
+    expect(await carryOut(work as Extract<Work, { kind: 'resume' }>, h.deps)).toBe('review')
+    expect(h.calls.filter((c) => c.startsWith('start'))[0]).toBe('start build-1')
+    expect(h.of('approval_requested')).toEqual([])
+  })
+})
+
+describe('a re-planning run', () => {
+  it('AC9: hands the planner the previous plans, and a medium plan still meets the gate', async () => {
+    const h = harness({ confidence: ['medium'] })
+    const work = {
+      kind: 'start',
+      run: { ...RUN, previous_plans: [{ run: 1, accepted: true, body_md: 'old plan' }] },
+    } as Extract<Work, { kind: 'start' }>
+    await carryOut(work, h.deps)
+    expect(h.handoffs['plan-1']).toContain(
+      '<previous_plan run="1" accepted="yes">\nold plan\n</previous_plan>',
+    )
+    expect(h.handoffs['plan-1']).not.toContain('<plan>')
+    expect(h.of('approval_requested')).toHaveLength(1)
+  })
+})
+
 describe('pausing and resuming', () => {
   it('releases a run that pauses in Build: no phase end, no run end, the worktree kept', async () => {
     const h = harness({ acts: { 'build-1': ['paused'] } })
