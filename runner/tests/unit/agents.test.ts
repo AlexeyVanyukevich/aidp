@@ -18,6 +18,10 @@ describe('the agents', () => {
     },
   )
 
+  it('tells the planner the limit on a plan’s length', () => {
+    expect(AGENTS.planner!.prompt).toContain('20,000')
+  })
+
   it('tells the builder a migration needs an approval', () => {
     expect(AGENTS.builder!.prompt).toContain('kind migration')
   })
