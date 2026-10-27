@@ -95,8 +95,15 @@ export function CardDrawer() {
     onError: fail,
     onSettled: refresh,
   })
+  const rerun = useMutation({
+    mutationFn: (plan: 'keep' | 'again') => api.rerun(taskId, plan),
+    onMutate: () => setProblem(undefined),
+    onSuccess: leave,
+    onError: fail,
+    onSettled: refresh,
+  })
   const act = useMutation({
-    mutationFn: (action: 'cancel' | 'rerun' | 'resume') => api.action(taskId, action),
+    mutationFn: (action: 'cancel' | 'resume') => api.action(taskId, action),
     onMutate: () => setProblem(undefined),
     onSuccess: leave,
     onError: fail,
@@ -150,7 +157,7 @@ export function CardDrawer() {
     >
       <Loaded query={task} failure="This card could not be loaded.">
         {(t) => {
-          const offered = actionsFor(t.state, t.block)
+          const offered = actionsFor(t.state, t.block, t.plan_to_keep)
           return (
             <div className="card-body">
               <p className="state-line" ref={stateLine} tabIndex={-1}>
@@ -198,9 +205,33 @@ export function CardDrawer() {
                     Cancel run
                   </Button>
                 )}
+                {offered.rerunKeep && t.plan_to_keep !== null && (
+                  <Button
+                    variant="primary"
+                    busy={rerun.isPending}
+                    onClick={() =>
+                      rerun.mutate('keep', {
+                        onSuccess: () =>
+                          announce(
+                            `${t.key} re-run with the plan from run ${t.plan_to_keep?.run ?? ''}.`,
+                          ),
+                      })
+                    }
+                  >
+                    Re-run with this plan
+                  </Button>
+                )}
                 {offered.rerun && (
-                  <Button variant="primary" onClick={() => act.mutate('rerun')}>
-                    Re-run
+                  <Button
+                    variant={offered.rerunKeep ? 'secondary' : 'primary'}
+                    busy={rerun.isPending}
+                    onClick={() =>
+                      rerun.mutate('again', {
+                        onSuccess: () => announce(`${t.key} re-run; the planner plans again.`),
+                      })
+                    }
+                  >
+                    Re-run and plan again
                   </Button>
                 )}
               </div>

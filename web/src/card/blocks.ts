@@ -26,13 +26,16 @@ export function blockText(block: Block): string {
 export function actionsFor(
   state: TaskState,
   block: Block | null,
-): { markDone: boolean; resume: boolean; cancel: boolean; rerun: boolean } {
+  planToKeep: TaskView['plan_to_keep'] = null,
+): { markDone: boolean; resume: boolean; cancel: boolean; rerun: boolean; rerunKeep: boolean } {
   return {
     markDone: state === 'review',
     // An expired question is answered in Approvals, not resumed past (spec §2).
     resume: state === 'blocked' && block?.cause !== 'approval_expired',
     cancel: ['spec_draft', 'ready', 'running', 'needs_approval', 'blocked'].includes(state),
+    // "Re-run and plan again" is always there on a Failed card; keeping needs a plan to keep.
     rerun: state === 'failed',
+    rerunKeep: state === 'failed' && planToKeep !== null,
   }
 }
 

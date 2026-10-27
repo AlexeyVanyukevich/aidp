@@ -5,7 +5,7 @@ import { api } from '../api'
 import { Loaded } from '../Loaded'
 import type { EventView, RunView, TaskView } from '../types'
 import { formatDuration, formatTokens } from './format'
-import { runLabel, stepLabel, timelineModel, type Band } from './timeline'
+import { keptPlanLine, runLabel, stepLabel, timelineModel, type Band } from './timeline'
 
 const tokensOf = (event: EventView) =>
   event.usage.input + event.usage.output + event.usage.cache_read + event.usage.cache_write
@@ -85,15 +85,17 @@ function RunTimeline({ runs }: { runs: RunView[] }) {
       <Loaded query={events} failure="The run’s steps could not be loaded.">
         {(list) => {
           const model = timelineModel(run.phases, list)
+          const kept = keptPlanLine(run)
           return (
             <>
               {model.bands.map((band) => (
                 <BandView key={band.phase.id} band={band} />
               ))}
-              {model.loose.length > 0 && (
+              {(model.loose.length > 0 || kept !== null) && (
                 <section aria-labelledby={looseId} className="band">
                   <h3 id={looseId}>Runner</h3>
                   <ol>
+                    {kept !== null && <li className="step">{kept}</li>}
                     {model.loose.map((e) => (
                       <Step key={e.id} event={e} />
                     ))}

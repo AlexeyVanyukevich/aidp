@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { keptPlanLine } from '../../src/card/timeline'
 import { actionsFor, blockText, initialTab, stateAnnouncement } from '../../src/card/blocks'
 import type { Block, TaskState } from '../../src/types'
 
@@ -32,7 +33,7 @@ describe('blockText', () => {
 })
 
 describe('actionsFor', () => {
-  const none = { markDone: false, resume: false, cancel: false, rerun: false }
+  const none = { markDone: false, resume: false, cancel: false, rerun: false, rerunKeep: false }
   it.each<[TaskState, Block | null, Partial<typeof none>]>([
     ['backlog', null, {}],
     // A draft is cancelled as a run is; its card goes back where it came from (slice 3, §4).
@@ -51,6 +52,26 @@ describe('actionsFor', () => {
     ['done', null, {}],
   ])('offers on a %s card (%j)', (state, block, offered) => {
     expect(actionsFor(state, block)).toEqual({ ...none, ...offered })
+  })
+})
+
+// AC4: a Failed card always offers planning again, and keeping only when there is a plan.
+describe('actionsFor on a Failed card', () => {
+  it.each([
+    [{ run: 1 }, { rerun: true, rerunKeep: true }],
+    [null, { rerun: true, rerunKeep: false }],
+  ])('with plan to keep %j offers %j', (planToKeep, expected) => {
+    expect(actionsFor('failed', null, planToKeep)).toMatchObject(expected)
+  })
+})
+
+describe('keptPlanLine', () => {
+  it.each([
+    [[{ kind: 'plan', copied_from_run: 1 }], 'Plan kept from run 1'],
+    [[{ kind: 'plan', copied_from_run: null }], null],
+    [[], null],
+  ])('%j says %j', (artifacts, line) => {
+    expect(keptPlanLine({ artifacts })).toBe(line)
   })
 })
 

@@ -45,6 +45,14 @@ export function runLabel(run: { kind: string; number: number }): string {
   return `${run.kind === 'spec' ? 'Draft' : 'Run'} ${run.number}`
 }
 
+/** The Runner line of a run that holds a plan a Re-run copied into it; null for any other. */
+export function keptPlanLine(run: {
+  artifacts: { kind: string; copied_from_run: number | null }[]
+}): string | null {
+  const copied = run.artifacts.find((a) => a.kind === 'plan' && a.copied_from_run !== null)
+  return copied === undefined ? null : `Plan kept from run ${copied.copied_from_run}`
+}
+
 export function stepLabel(event: EventView): string {
   if (event.type === 'approval_requested') {
     const question = event.payload.question

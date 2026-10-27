@@ -50,6 +50,8 @@ export interface TaskView {
   block: Block | null
   /** Why the latest run, a draft, failed; null otherwise. */
   draft_failure: string | null
+  /** On a Failed card: the run whose accepted plan a Re-run can keep; null when there is none. */
+  plan_to_keep: { run: number } | null
 }
 export type ApprovalKind = 'question' | 'out_of_plan' | 'migration' | 'plan' | 'questions'
 export type ApprovalStatus = 'open' | 'answered' | 'expired' | 'withdrawn'
@@ -142,6 +144,8 @@ export interface ArtifactView {
   body_md: string
   uri: string | null
   data: unknown
+  /** The number of the run a Re-run copied this plan from. */
+  copied_from_run: number | null
 }
 export interface RunView {
   id: string
