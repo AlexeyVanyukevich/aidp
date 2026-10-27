@@ -996,3 +996,96 @@ describe('a spec run', () => {
     expect((await act(taskId, 'resume')).json().state).toBe('spec_draft')
   })
 })
+
+describe('claiming a re-run', () => {
+  const PLAN = { confidence: 'high', steps: [{ files: ['src/a.ts'] }] }
+  async function failedRun1() {
+    const seeded = await seedQueuedRun(db(), { state: 'failed' })
+    await db()
+      .updateTable('runs')
+      .set({ status: 'failed', queued_at: null })
+      .where('id', '=', seeded.runId)
+      .execute()
+    await db()
+      .insertInto('artifacts')
+      .values({
+        run_id: seeded.runId,
+        phase_id: null,
+        kind: 'plan',
+        body_md: 'plan one',
+        data: JSON.stringify(PLAN),
+      })
+      .execute()
+    const ask = (kind: string, path: string) =>
+      db()
+        .insertInto('approval_requests')
+        .values({
+          run_id: seeded.runId,
+          kind: kind as 'out_of_plan',
+          question: 'May I?',
+          options: '[]',
+          context_md: 'code',
+          status: 'answered',
+          answer: JSON.stringify({ option_id: 'allow' }),
+          files: JSON.stringify([path]),
+          answered_at: now,
+        })
+        .execute()
+    await ask('out_of_plan', 'src/extra.ts')
+    await ask('migration', 'server/src/db/migrations/009_x.ts')
+    return seeded
+  }
+  const rerun = (taskId: string, plan: 'keep' | 'again') =>
+    app.inject({
+      method: 'POST',
+      url: `/api/tasks/${taskId}/actions/rerun`,
+      payload: { plan },
+    })
+
+  it('hands a kept run its copied plan, and none of the earlier allowances', async () => {
+    const { taskId } = await failedRun1()
+    expect((await rerun(taskId, 'keep')).statusCode).toBe(200)
+    const work = (await claim()).json().work
+    expect(work).toMatchObject({
+      kind: 'start',
+      run: { number: 2, previous_plans: [], kept_plan: { from_run: 1 } },
+    })
+    // The same run, resumed: its allowed files are its plan's alone.
+    await db()
+      .updateTable('runs')
+      .set({
+        status: 'queued',
+        pending: 'resume',
+        queued_at: at(1),
+        checkpoint: JSON.stringify({
+          stage: 'prepare',
+          attempt: 1,
+          phase_id: null,
+          session: null,
+          head: null,
+          plan_artifact_id: work.run.kept_plan.artifact_id,
+          failing_report_id: null,
+        }),
+      })
+      .where('id', '=', work.run.id)
+      .execute()
+    const resumed = (await claim()).json().work
+    expect(resumed).toMatchObject({
+      kind: 'resume',
+      allowed_files: ['src/a.ts'],
+      approved_migrations: [],
+      run: { kept_plan: { from_run: 1 }, previous_plans: [] },
+    })
+  })
+
+  it('hands a re-planning run the previous plan, with whether it was accepted', async () => {
+    const { taskId } = await failedRun1()
+    expect((await rerun(taskId, 'again')).statusCode).toBe(200)
+    const work = (await claim()).json().work
+    expect(work.run).toMatchObject({
+      number: 2,
+      kept_plan: null,
+      previous_plans: [{ run: 1, accepted: true, body_md: 'plan one' }],
+    })
+  })
+})
