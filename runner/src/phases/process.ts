@@ -6,7 +6,7 @@ import type { SessionTotals } from '../contract.js'
 import { newEvent, type EventSink } from '../sink.js'
 import { StreamNormalizer } from '../stream/normalize.js'
 import { PHASES } from './agents.js'
-import { buildClaudeArgs } from './claude-args.js'
+import { addDirsOf, buildClaudeArgs } from './claude-args.js'
 import { PAUSED_MARKER } from './run-dir.js'
 
 export interface ProcessInput {
@@ -120,6 +120,7 @@ export async function runProcess(input: ProcessInput, deps: ProcessDeps): Promis
     settingsPath: join(input.runDir, 'settings.json'),
     mcpPath: join(input.runDir, 'mcp.json'),
     budgetUsd: input.budgetUsd,
+    addDirs: addDirsOf(input.runDir),
   })
   const child = spawn(deps.claudeBin, args, {
     cwd: input.worktree,
