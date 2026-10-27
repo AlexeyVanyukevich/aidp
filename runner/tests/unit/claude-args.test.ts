@@ -1,5 +1,8 @@
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { buildClaudeArgs } from '../../src/phases/claude-args.js'
+import { addDirsOf, buildClaudeArgs } from '../../src/phases/claude-args.js'
 
 const BASE = {
   prompt: '<task/>',
@@ -67,5 +70,42 @@ describe('buildClaudeArgs', () => {
     ])
     expect(resume).not.toContain('--session-id')
     expect(resume.slice(4)).toEqual(start.slice(4))
+  })
+})
+
+describe('the linked checkouts', () => {
+  const dirsIn = (args: string[]) =>
+    args.flatMap((arg, i) => (arg === '--add-dir' ? [args[i + 1]] : []))
+
+  it.each([
+    ['a first process', {}],
+    ['a resumed process', { resume: true }],
+  ])('gives %s one --add-dir for each checkout', (_name, change) => {
+    const args = buildClaudeArgs({
+      ...BASE,
+      ...change,
+      addDirs: ['/w/run-linked/ZLC', '/w/run-linked/KIT'],
+    })
+    expect(dirsIn(args)).toEqual(['/w/run-linked/ZLC', '/w/run-linked/KIT'])
+  })
+
+  it.each([
+    ['none given', {}],
+    ['an empty list', { addDirs: [] }],
+  ])('gives no --add-dir with %s', (_name, change) => {
+    expect(buildClaudeArgs({ ...BASE, ...change })).not.toContain('--add-dir')
+  })
+
+  it('reads the checkouts from linked.json, and none when the run has no file', () => {
+    const runDir = mkdtempSync(join(tmpdir(), 'run-'))
+    expect(addDirsOf(runDir)).toEqual([])
+    writeFileSync(
+      join(runDir, 'linked.json'),
+      JSON.stringify([
+        { key: 'A', path: '/p/A' },
+        { key: 'B', path: '/p/B' },
+      ]),
+    )
+    expect(addDirsOf(runDir)).toEqual(['/p/A', '/p/B'])
   })
 })
