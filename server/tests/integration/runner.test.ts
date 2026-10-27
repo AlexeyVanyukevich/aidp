@@ -1089,3 +1089,66 @@ describe('claiming a re-run', () => {
     })
   })
 })
+
+describe('the links a claim carries', () => {
+  const ZLC = {
+    key: 'ZLC',
+    name: 'Zellige',
+    note: 'the component kit',
+    repo_path: '/repos/ZLC',
+    github_repo: 'owner/zellige',
+    base_branch: 'main',
+  }
+
+  /** Links the project to a ZLC project, so a claim of one of its tasks carries it. */
+  async function linkTo(projectId: string) {
+    const { id } = await seedProject(db(), { key: 'ZLC', github_repo: ZLC.github_repo })
+    await db().updateTable('projects').set({ name: ZLC.name }).where('id', '=', id).execute()
+    await db()
+      .insertInto('project_links')
+      .values({ project_id: projectId, linked_project_id: id, note: ZLC.note })
+      .execute()
+  }
+
+  it('hands a delivery start its links', async () => {
+    const { projectId } = await seedQueuedRun(db())
+    await linkTo(projectId)
+    expect((await claim()).json().work).toMatchObject({ kind: 'start', run: { links: [ZLC] } })
+  })
+
+  it('hands a delivery resume its links', async () => {
+    const { projectId } = await queuedResume()
+    await linkTo(projectId)
+    expect((await claim()).json().work).toMatchObject({ kind: 'resume', run: { links: [ZLC] } })
+  })
+
+  it('hands a spec start its links', async () => {
+    const taskId = await draftable()
+    const task = await db()
+      .selectFrom('tasks')
+      .select('project_id')
+      .where('id', '=', taskId)
+      .executeTakeFirstOrThrow()
+    await linkTo(task.project_id)
+    await act(taskId, 'draft-spec')
+    expect((await claim()).json().work).toMatchObject({
+      kind: 'start',
+      run: { kind: 'spec', links: [ZLC] },
+    })
+  })
+
+  it('hands a spec resume its links', async () => {
+    const { runId, projectId } = await queuedResume()
+    await db().updateTable('runs').set({ kind: 'spec' }).where('id', '=', runId).execute()
+    await linkTo(projectId)
+    expect((await claim()).json().work).toMatchObject({
+      kind: 'resume',
+      run: { kind: 'spec', links: [ZLC] },
+    })
+  })
+
+  it('hands an empty list when the project links to nothing', async () => {
+    await seedQueuedRun(db())
+    expect((await claim()).json().work.run.links).toEqual([])
+  })
+})
