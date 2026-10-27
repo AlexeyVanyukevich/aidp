@@ -29,7 +29,8 @@ Backlog → (Draft spec, or the owner saves a spec) → Spec draft → Spec revi
   daemon is stopped; Needs approval → Blocked when a question waits 48 hours. Blocked → Running,
   or Spec draft, on Resume, or — for an expired question — on its answer.
 - Running → Failed when a phase fails, Verify fails three times, or the owner cancels; Ready,
-  Needs approval and Blocked → Failed on Cancel of a delivery run. Failed → Ready on Re-run.
+  Needs approval and Blocked → Failed on Cancel of a delivery run. Failed → Ready on Re-run,
+  which has two choices (below).
 
 Every move goes through `server/src/modules/tasks/transitions.ts`, a pure table; nothing else
 writes `tasks.state`. Where a destination depends on the latest run's kind or on whether the task
@@ -120,6 +121,44 @@ session, and its revised plan meets the gate again. A plan's rendered text is li
 characters, the most a `plan` approval's `context_md` holds: `save_plan` refuses a longer plan,
 whatever its confidence, and asks the planner to shorten it. If the board refuses the gate's
 request with a 4xx answer, the run fails with a sentence naming the field and the problem.
+
+**Re-run.** A Failed card offers two choices, both the `rerun` move (Failed → Ready) with the
+latest approved spec. `POST /api/tasks/:id/actions/rerun` takes an optional body
+`{ "plan": "keep" | "again" }`; no body means `again`, `keep` with no plan to keep answers
+`409 conflict` and moves nothing, and any other value answers `400 validation_error` naming
+`plan`.
+
+- **Re-run and plan again** queues a run whose planner is handed the earlier plans. The
+  handoff carries the newest plan any earlier delivery run saved on the same spec version in a
+  `<previous_plan run="<n>" accepted="yes|no">` tag; when that plan was not accepted and an older
+  accepted one exists on the same version, both are carried, the newer first. Each holds the
+  plan's rendered text (at most 20,000 characters), escaped like the other tags, and is separate
+  from the `<plan>` tag Build and Verify get. The planner's instructions call a previous plan a
+  starting point to check against the spec and the code and to revise, never to carry out, and
+  say `accepted="no"` was never approved. Its new plan meets the plan gate like any plan. With no
+  earlier plan on that version the handoff is unchanged.
+- **Re-run with this plan** is offered, as the primary button, only when the task has a plan to
+  keep; the task view reports it as `plan_to_keep: { run }`. In one transaction the run is queued
+  and the plan to keep is copied into it as its own `plan` artifact, with the same `body_md` and
+  `data` and the number of the source run in `artifacts.copied_from_run`; the source artifact is
+  untouched. The Plan tab marks it "Kept from run <n>", and the run's Timeline lists it under
+  Runner.
+
+A plan is **accepted** when its confidence is `high`, when it is a copied plan, or when the owner
+chose Approve plan on a `plan` approval of the same run whose context equals the plan's text
+exactly. Only the text ties an approval to a plan; neither the phase nor the time does, and
+whether Build ever started does not matter. The plan to keep is the newest accepted plan of any
+earlier delivery run whose spec version equals the new run's. A Failed card cannot change its
+spec, so every run since the approval carries the same version.
+
+A run holding a copied plan starts no planner: it has no Plan phase and raises no plan gate, and
+after `prepare` it goes to Build, whose allowed files are the copied plan's. Its checkpoints name
+the copied plan, and a resume from any stage before Build goes on to Build with it. The claim
+tells the runner (`kept_plan`); it also carries `previous_plans` for a planner starting again,
+which a run holding a copied plan leaves empty. Out-of-plan allowances and migration approvals
+belong to the run that got them: a new run asks again. The kept plan is used as written and is
+not checked against changes to the base branch since it was written; the new worktree is cut
+from the current `origin/<base>`, and Build and Verify meet any drift as in any run.
 
 **Out-of-plan edits.** In Build the guard refuses a file outside the run's allowed list and tells
 the builder to ask with `request_approval` kind `out_of_plan`. Allowing the change adds the files
