@@ -32,6 +32,13 @@ const PASS = {
     criteria: [{ id: 'AC1', status: 'pass', evidence: 'src/retry.ts lists 1, 2 and 4' }],
   },
 }
+const FAIL = {
+  tool: 'save_report',
+  args: {
+    summary: 'Failed',
+    criteria: [{ id: 'AC1', status: 'fail', evidence: 'src/retry.ts does not list 1, 2 and 4' }],
+  },
+}
 /** A builder that asks first, then builds once answered. */
 const asking = (question: string, options: { id: string; label: string; impact?: string }[]) => ({
   planner: [[{ tool: 'save_plan', args: PLAN }]],
@@ -97,6 +104,21 @@ const SCRIPT = {
       { id: 'large', label: 'large', impact: 'Readable at a glance' },
     ]),
     'Stop after the plan': {
+      planner: [[{ tool: 'save_plan', args: { ...PLAN, confidence: 'medium' } }]],
+      builder: [BUILD],
+      verifier: [[PASS]],
+    },
+    // A confident plan whose builds are never verified: the run fails with an accepted plan.
+    'Fail after a confident plan': {
+      planner: [[{ tool: 'save_plan', args: PLAN }]],
+      builder: [1, 2, 3].map((n) => [
+        { edit: 'src/retry.ts', content: `export const delays = [${n}]\n` },
+        { commit: `attempt ${n}` },
+      ]),
+      verifier: [1, 2, 3].map(() => [FAIL]),
+    },
+    // Cancelled at the plan gate: a plan the owner never approved, so nothing to keep.
+    'Cancel at the plan gate': {
       planner: [[{ tool: 'save_plan', args: { ...PLAN, confidence: 'medium' } }]],
       builder: [BUILD],
       verifier: [[PASS]],
