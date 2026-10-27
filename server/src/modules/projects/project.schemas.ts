@@ -22,3 +22,10 @@ export const UpdateProjectBody = Type.Object(
 )
 
 export const ProjectKeyParams = Type.Object({ key: Type.String() })
+
+export const LinkBody = Type.Object(
+  { target: Type.String({ maxLength: 100 }), note: Type.String({ maxLength: 5000 }) },
+  { additionalProperties: false },
+)
+
+export const LinkParams = Type.Object({ key: Type.String(), target: Type.String() })
