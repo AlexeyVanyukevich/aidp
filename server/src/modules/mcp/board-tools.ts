@@ -4,7 +4,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { Database } from '../../db/schema.js'
 import { publish } from '../../shared/bus.js'
 import { AppError, ConflictError } from '../../shared/errors.js'
-import type { Finding } from '../approvals/approval-rules.js'
+import { LIMITS, type Finding } from '../approvals/approval-rules.js'
 import { openApproval } from '../approvals/approval.service.js'
 import { lintReply } from '../specs/spec-lint-text.js'
 import { parseSpec } from '../specs/spec-parser.js'
@@ -265,7 +265,7 @@ export function registerBoardTools(server: McpServer, ctx: ToolContext): void {
     'save_plan',
     {
       description:
-        'Save the plan for this run. Every step names the requirements it serves and the files it touches; every acceptance criterion gets a check. Refused, with the reasons, when it does not map onto the spec.',
+        'Save the plan for this run. Every step names the requirements it serves and the files it touches; every acceptance criterion gets a check. Refused, with the reasons, when it does not map onto the spec. The rendered plan is limited to 20,000 characters; a longer plan is refused and must be shortened.',
       inputSchema: {
         summary: z.string().min(1).max(4000),
         confidence: z.enum(['high', 'medium', 'low']),
@@ -288,7 +288,13 @@ export function registerBoardTools(server: McpServer, ctx: ToolContext): void {
       const plan = input as PlanInput
       const findings = checkPlan(plan, await frozenSpec(ctx))
       if (findings.length > 0) return reply(findingsText('The plan was not saved:', findings), true)
-      return (await attach(ctx, 'plan', renderPlan(plan), plan)) ?? reply('Plan saved.')
+      const body = renderPlan(plan)
+      if (body.length > LIMITS.planContext)
+        return reply(
+          `The plan was not saved: its rendered text is ${body.length} characters, and the limit is ${LIMITS.planContext}. Shorten the plan and save it again.`,
+          true,
+        )
+      return (await attach(ctx, 'plan', body, plan)) ?? reply('Plan saved.')
     },
   )
 

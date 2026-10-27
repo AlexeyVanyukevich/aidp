@@ -4,6 +4,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { buildTestApp, closeTestDb, getTestDb, resetDb, TEST_RUNNER_KEY } from './helpers.js'
+import { LIMITS } from '../../src/modules/approvals/approval-rules.js'
+import { renderPlan } from '../../src/modules/mcp/plan-check.js'
 import { GOOD_SPEC, seedProject, seedQueuedRun, seedTask } from './fixtures.js'
 
 let app: FastifyInstance
@@ -130,6 +132,49 @@ describe('the board MCP server', () => {
     expect(
       await getTestDb().selectFrom('artifacts').select('id').where('run_id', '=', runId).execute(),
     ).toEqual([])
+  })
+
+  /** The plan, its one check padded so that its rendered Markdown is `length` characters long. */
+  const planOfLength = (length: number, confidence: 'high' | 'medium' = 'high') => {
+    const base = { ...PLAN, confidence }
+    const bare = renderPlan({ ...base, checks: [{ criterion: 'AC1', how: 'x' }] } as never).length
+    return { ...base, checks: [{ criterion: 'AC1', how: 'x'.repeat(length - bare + 1) }] }
+  }
+
+  it('lists the plan length limit in the save_plan description', async () => {
+    const { client } = await session()
+    const { tools } = await client.listTools()
+    expect(tools.find((t) => t.name === 'save_plan')?.description).toContain('20,000')
+  })
+
+  it.each(['high', 'medium'] as const)(
+    'refuses a plan too long to render at the gate, with %s confidence',
+    async (confidence) => {
+      const { client, runId } = await session()
+      const plan = planOfLength(LIMITS.planContext + 1, confidence)
+      const result = await client.callTool({ name: 'save_plan', arguments: plan })
+      expect(result.isError).toBe(true)
+      expect(text(result)).toContain(String(LIMITS.planContext + 1))
+      expect(text(result)).toContain(String(LIMITS.planContext))
+      expect(
+        await getTestDb()
+          .selectFrom('artifacts')
+          .select('id')
+          .where('run_id', '=', runId)
+          .execute(),
+      ).toEqual([])
+    },
+  )
+
+  it('saves a plan whose rendered text is exactly the limit', async () => {
+    const { client, runId } = await session()
+    const plan = planOfLength(LIMITS.planContext)
+    expect(renderPlan(plan as never).length).toBe(LIMITS.planContext)
+    const result = await client.callTool({ name: 'save_plan', arguments: plan })
+    expect(text(result)).toBe('Plan saved.')
+    expect(
+      await getTestDb().selectFrom('artifacts').select('id').where('run_id', '=', runId).execute(),
+    ).toHaveLength(1)
   })
 
   it('saves a verify report with a verdict on every criterion', async () => {

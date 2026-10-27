@@ -777,6 +777,30 @@ describe('events that pause, block and resume', () => {
     })
     expect(await state(taskId)).toBe('needs_approval')
   })
+
+  it('opens a plan gate whose context is 8 343 characters, whole', async () => {
+    const { runId, token, phaseId } = await running()
+    const context = 'p'.repeat(8343)
+    const response = await send(token, [
+      event(
+        runId,
+        'approval_requested',
+        {
+          approval_id: '00000000-0000-4000-8000-0000000000bc',
+          kind: 'plan',
+          question: 'Approve this plan?',
+          context_md: context,
+        },
+        { phase_id: phaseId },
+      ),
+    ])
+    expect(response.statusCode).toBe(200)
+    const approval = await db()
+      .selectFrom('approval_requests')
+      .selectAll()
+      .executeTakeFirstOrThrow()
+    expect(approval.context_md).toBe(context)
+  })
 })
 
 // Slice 3: spec runs, handed out by the claim and settled by their events (spec §4, §5).
