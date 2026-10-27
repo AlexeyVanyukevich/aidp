@@ -13,6 +13,8 @@ export interface HandoffInput {
   budgetUsd: number | null
   summaries: { phase: string; attempt: number; text: string }[]
   plan?: string
+  /** A planner starting again: the plans of earlier runs, newest first. Never a `<plan>`. */
+  previousPlans?: { run: number; accepted: boolean; text: string }[] | undefined
   verifyReport?: string
   testOutput?: string
   diff?: string
@@ -51,6 +53,10 @@ export function buildHandoff(input: HandoffInput): string {
       `<context>\n${input.summaries.map((s) => `<summary phase="${s.phase}" attempt="${s.attempt}">${escape(s.text)}</summary>`).join('\n')}\n</context>`,
     )
   }
+  for (const previous of input.previousPlans ?? [])
+    parts.push(
+      `<previous_plan run="${previous.run}" accepted="${previous.accepted ? 'yes' : 'no'}">\n${escape(cut('previous plan', previous.text, 20_000))}\n</previous_plan>`,
+    )
   if (input.plan !== undefined) parts.push(`<plan>\n${escape(input.plan)}\n</plan>`)
   if (input.verifyReport !== undefined)
     parts.push(`<verify_report>\n${escape(input.verifyReport)}\n</verify_report>`)

@@ -98,6 +98,10 @@ export interface RunWork {
     test_command: string
     setup_command: string | null
   }
+  /** Earlier plans for a planner starting again; absent from an older board. */
+  previous_plans?: { run: number; accepted: boolean; body_md: string }[]
+  /** The plan a Re-run copied into this run: no planner starts. Absent from an older board. */
+  kept_plan?: { artifact_id: string; from_run: number } | null
 }
 
 export type Work =
@@ -134,6 +138,7 @@ export interface ArtifactView {
   body_md: string
   uri: string | null
   data: unknown
+  copied_from_run?: number | null
 }
 
 export interface RunView {
