@@ -3,6 +3,7 @@ import type { Database } from '../../db/schema.js'
 import { publish } from '../../shared/bus.js'
 import { ConflictError, ValidationError } from '../../shared/errors.js'
 import { queueDeliveryRun, queueSpecRun } from '../specs/spec.service.js'
+import { planToKeepFor } from './plan-history.queries.js'
 import { moveFacts, moveTask } from './task.moves.js'
 
 export const ACTIONS = ['cancel', 'rerun', 'resume', 'draft-spec'] as const
@@ -75,6 +76,8 @@ export async function performAction(
   taskId: string,
   action: Action,
   now: Date,
+  /** Re-run only: keep the plan of an earlier run, or plan again (the default). */
+  plan: 'keep' | 'again' = 'again',
 ): Promise<void> {
   await db.transaction().execute(async (trx) => {
     if (action === 'cancel') {
@@ -140,7 +143,28 @@ export async function performAction(
       .orderBy('version', 'desc')
       .executeTakeFirst()
     if (spec === undefined) throw new ConflictError('This task has no approved spec to run')
-    await queueDeliveryRun(trx, taskId, spec.version, now)
+    // Read before the new run exists: the plan to keep comes from the runs before it.
+    const kept = plan === 'keep' ? await planToKeepFor(trx, taskId) : undefined
+    if (plan === 'keep' && kept === undefined)
+      throw new ConflictError('This task has no accepted plan to keep', { reason: 'no_plan' })
+    const runId = await queueDeliveryRun(trx, taskId, spec.version, now)
+    if (kept === undefined) return
+    const source = await trx
+      .selectFrom('artifacts')
+      .select(['body_md', 'data'])
+      .where('id', '=', kept.id)
+      .executeTakeFirstOrThrow()
+    await trx
+      .insertInto('artifacts')
+      .values({
+        run_id: runId,
+        phase_id: null,
+        kind: 'plan',
+        body_md: source.body_md,
+        data: JSON.stringify(source.data),
+        copied_from_run: kept.runNumber,
+      })
+      .execute()
   })
 }
 

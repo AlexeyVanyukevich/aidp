@@ -1,6 +1,6 @@
 import type { Kysely } from 'kysely'
 import type { Database } from '../../db/schema.js'
-import type { PlanApprovalRecord, PlanRecord } from './plan-history.js'
+import { planToKeep, type PlanApprovalRecord, type PlanRecord } from './plan-history.js'
 
 /** Every plan of a task's delivery runs, and every `plan` approval the owner answered. */
 export async function loadPlanHistory(
@@ -55,4 +55,21 @@ export async function loadPlanHistory(
       optionId: (row.answer as { option_id?: string } | null)?.option_id ?? null,
     })),
   }
+}
+
+/** The plan a Re-run of this task would keep, on the spec version its new run would carry. */
+export async function planToKeepFor(
+  db: Kysely<Database>,
+  taskId: string,
+): Promise<PlanRecord | undefined> {
+  const spec = await db
+    .selectFrom('specs')
+    .select('version')
+    .where('task_id', '=', taskId)
+    .where('status', '=', 'approved')
+    .orderBy('version', 'desc')
+    .executeTakeFirst()
+  if (spec === undefined) return undefined
+  const { plans, approvals } = await loadPlanHistory(db, taskId)
+  return planToKeep(plans, approvals, spec.version)
 }

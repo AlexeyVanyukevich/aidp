@@ -1,5 +1,6 @@
 import { sql, type Kysely } from 'kysely'
 import type { Database } from '../../db/schema.js'
+import { planToKeepFor } from './plan-history.queries.js'
 import type { ApprovalKind, ApprovalStatus, Block, TaskState } from '../../shared/vocabulary.js'
 
 export interface TaskView {
@@ -18,6 +19,8 @@ export interface TaskView {
   block: Block | null
   /** Why the latest run, a draft, failed; null otherwise (slice 3 spec, §5). */
   draft_failure: string | null
+  /** On a Failed card: the run whose accepted plan a Re-run can keep; null when there is none. */
+  plan_to_keep: { run: number } | null
 }
 
 export interface TaskCard {
@@ -74,6 +77,7 @@ export class TaskRepository {
             .where('status', 'in', ['open', 'expired'])
             .orderBy('created_at', 'desc')
             .executeTakeFirst()
+    const kept = row.state === 'failed' ? await planToKeepFor(this.db, id) : undefined
     return {
       id: row.id,
       key: `${row.project_key}-${row.number}`,
@@ -95,6 +99,7 @@ export class TaskRepository {
             },
       block: row.state === 'blocked' ? (run?.block ?? null) : null,
       draft_failure: run?.kind === 'spec' && run.status === 'failed' ? run.failure_reason : null,
+      plan_to_keep: kept === undefined ? null : { run: kept.runNumber },
     }
   }
 

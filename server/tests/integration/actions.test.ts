@@ -68,6 +68,98 @@ describe('Re-run', () => {
     ])
   })
 
+  describe('keeping the plan', () => {
+    const PLAN_DATA = {
+      confidence: 'high',
+      steps: [{ title: 's', requirements: ['R1'], files: ['a.ts'] }],
+    }
+    const rerun = (taskId: string, payload?: unknown) =>
+      app.inject({
+        method: 'POST',
+        url: `/api/tasks/${taskId}/actions/rerun`,
+        ...(payload === undefined ? {} : { payload: payload as object }),
+      })
+    async function failedWithPlan(confidence: 'high' | 'medium') {
+      const seeded = await seedQueuedRun(getTestDb(), { state: 'failed' })
+      await getTestDb()
+        .updateTable('runs')
+        .set({ status: 'failed', queued_at: null })
+        .where('id', '=', seeded.runId)
+        .execute()
+      const planned = await getTestDb()
+        .insertInto('artifacts')
+        .values({
+          run_id: seeded.runId,
+          phase_id: null,
+          kind: 'plan',
+          body_md: 'the plan',
+          data: JSON.stringify({ ...PLAN_DATA, confidence }),
+        })
+        .returning('id')
+        .executeTakeFirstOrThrow()
+      return { ...seeded, artifactId: planned.id }
+    }
+    const artifactsOf = (runId: string) =>
+      getTestDb().selectFrom('artifacts').selectAll().where('run_id', '=', runId).execute()
+
+    it('copies the accepted plan into the new run and leaves the old one alone', async () => {
+      const { taskId, runId, artifactId } = await failedWithPlan('high')
+      const view = await app.inject({ method: 'GET', url: `/api/tasks/${taskId}` })
+      expect(view.json().plan_to_keep).toEqual({ run: 1 })
+      const response = await rerun(taskId, { plan: 'keep' })
+      expect(response.json().state).toBe('ready')
+      const fresh = await getTestDb()
+        .selectFrom('runs')
+        .select(['id', 'status'])
+        .where('id', '!=', runId)
+        .executeTakeFirstOrThrow()
+      expect(fresh.status).toBe('queued')
+      const copied = await artifactsOf(fresh.id)
+      expect(copied).toMatchObject([
+        { kind: 'plan', body_md: 'the plan', data: PLAN_DATA, copied_from_run: 1 },
+      ])
+      expect(await artifactsOf(runId)).toMatchObject([
+        { id: artifactId, copied_from_run: null, body_md: 'the plan' },
+      ])
+    })
+
+    it('answers 409 and moves nothing when there is no plan to keep', async () => {
+      const { taskId } = await failedWithPlan('medium')
+      const response = await rerun(taskId, { plan: 'keep' })
+      expect(response.statusCode).toBe(409)
+      expect(response.json().error).toBe('conflict')
+      expect(
+        (await app.inject({ method: 'GET', url: `/api/tasks/${taskId}` })).json(),
+      ).toMatchObject({
+        state: 'failed',
+        plan_to_keep: null,
+      })
+      expect(
+        await getTestDb().selectFrom('runs').select('id').where('task_id', '=', taskId).execute(),
+      ).toHaveLength(1)
+    })
+
+    it('plans again without a body, or with "again"', async () => {
+      const { taskId } = await failedWithPlan('high')
+      expect((await rerun(taskId, { plan: 'again' })).json().state).toBe('ready')
+      const fresh = await getTestDb()
+        .selectFrom('runs')
+        .select('id')
+        .where('task_id', '=', taskId)
+        .where('number', '=', 2)
+        .executeTakeFirstOrThrow()
+      expect(await artifactsOf(fresh.id)).toEqual([])
+    })
+
+    it('refuses another value with 400 naming plan', async () => {
+      const { taskId } = await failedWithPlan('high')
+      const response = await rerun(taskId, { plan: 'later' })
+      expect(response.statusCode).toBe(400)
+      expect(response.json().details).toEqual({ field: 'plan' })
+      expect(response.json().error).toBe('validation_error')
+    })
+  })
+
   it('refuses an unknown action', async () => {
     const { taskId } = await seedQueuedRun(getTestDb())
     expect((await act(taskId, 'deploy')).statusCode).toBe(400)

@@ -38,10 +38,7 @@ const KEEP: KeepCase[] = [
   },
   {
     name: 'AC2: run 1 high plan beats run 2 unapproved medium plan',
-    plans: [
-      plan({ id: 'a', confidence: 'high' }),
-      plan({ id: 'b', runId: 'r2', runNumber: 2 }),
-    ],
+    plans: [plan({ id: 'a', confidence: 'high' }), plan({ id: 'b', runId: 'r2', runNumber: 2 })],
     approvals: [],
     version: 1,
     keep: 'a',
@@ -119,10 +116,7 @@ const PREV: PrevCase[] = [
   },
   {
     name: 'AC10: an unapproved newest plan and an older accepted one',
-    plans: [
-      plan({ id: 'a', confidence: 'high' }),
-      plan({ id: 'b', runId: 'r2', runNumber: 2 }),
-    ],
+    plans: [plan({ id: 'a', confidence: 'high' }), plan({ id: 'b', runId: 'r2', runNumber: 2 })],
     approvals: [],
     exclude: undefined,
     expected: [
