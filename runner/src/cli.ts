@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { BoardApi } from './api.js'
 import { decide, denyOutput } from './hooks/guard.js'
 import { hookToEvent, pausedBy } from './hooks/hook-event.js'
+import { readLinked } from './linked.js'
 import { PAUSED_MARKER } from './phases/run-dir.js'
 import { EventSink } from './sink.js'
 
@@ -70,6 +71,7 @@ async function guard(): Promise<void> {
         ? (JSON.parse(readFileSync(approvedPath, 'utf8')) as string[])
         : [],
       paused: existsSync(join(runDir, PAUSED_MARKER)),
+      linked: readLinked(runDir),
       cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(),
       exists: existsSync,
     },
