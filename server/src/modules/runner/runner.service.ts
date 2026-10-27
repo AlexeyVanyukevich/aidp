@@ -38,6 +38,15 @@ export interface RunWork {
     test_command: string
     setup_command: string | null
   }
+  /** The projects this one links to, ordered by key: the runner makes read-only checkouts. */
+  links: {
+    key: string
+    name: string
+    note: string
+    repo_path: string
+    github_repo: string
+    base_branch: string
+  }[]
   /**
    * A delivery run's earlier plans for a planner starting again: the newest on this spec
    * version, and the newest accepted one when that was not. Empty for a run holding a copied plan.
@@ -258,6 +267,7 @@ export class RunnerService {
         'runs.number as run_number',
         'runs.spec_version',
         'runs.note',
+        'projects.id as project_id',
         'specs.version',
         'tasks.id as task_id',
         'tasks.number',
@@ -293,6 +303,20 @@ export class RunnerService {
         ({ plan, accepted }) => ({ run: plan.runNumber, accepted, body_md: plan.bodyMd }),
       )
     }
+    const links = await trx
+      .selectFrom('project_links')
+      .innerJoin('projects', 'projects.id', 'project_links.linked_project_id')
+      .select([
+        'projects.key',
+        'projects.name',
+        'project_links.note',
+        'projects.repo_path',
+        'projects.github_repo',
+        'projects.base_branch',
+      ])
+      .where('project_links.project_id', '=', row.project_id)
+      .orderBy('projects.key')
+      .execute()
     return {
       id: row.id,
       number: row.run_number,
@@ -318,6 +342,7 @@ export class RunnerService {
         test_command: row.test_command,
         setup_command: row.setup_command,
       },
+      links,
       previous_plans: previous,
       kept_plan:
         kept === undefined || kept.copied_from_run === null

@@ -73,6 +73,15 @@ export interface Checkpoint {
   failing_report_id: string | null
 }
 
+export interface LinkedProject {
+  key: string
+  name: string
+  note: string
+  repo_path: string
+  github_repo: string
+  base_branch: string
+}
+
 export interface RunWork {
   id: string
   number: number
@@ -98,6 +107,8 @@ export interface RunWork {
     test_command: string
     setup_command: string | null
   }
+  /** The projects this one links to, read-only, ordered by key; absent from an older board. */
+  links?: LinkedProject[]
   /** Earlier plans for a planner starting again; absent from an older board. */
   previous_plans?: { run: number; accepted: boolean; body_md: string }[]
   /** The plan a Re-run copied into this run: no planner starts. Absent from an older board. */
