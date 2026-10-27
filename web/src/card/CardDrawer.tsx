@@ -223,7 +223,7 @@ export function CardDrawer() {
                 )}
                 {offered.rerun && (
                   <Button
-                    variant={offered.rerunKeep ? 'secondary' : 'primary'}
+                    {...(offered.rerunKeep ? {} : { variant: 'primary' as const })}
                     busy={rerun.isPending}
                     onClick={() =>
                       rerun.mutate('again', {
