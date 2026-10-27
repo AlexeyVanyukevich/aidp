@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { BoardApi } from '../../src/api.js'
+import { ApiError, BoardApi } from '../../src/api.js'
 import { loadRunnerConfig } from '../../src/config.js'
 
 /** A board that accepts the connection and never answers — as a socket left dead by a sleep. */
@@ -41,6 +41,18 @@ describe('the board client', () => {
       expect(String(error)).toMatch(/did not answer within/)
     },
   )
+
+  it('keeps the parsed body of a refused request', async () => {
+    const body = { error: 'validation_error', details: { findings: [{ field: 'x', code: 'y' }] } }
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify(body), { status: 400 })) as typeof fetch
+    const error = await new BoardApi('http://board', 'key', fetchImpl)
+      .sendEvents('t', [])
+      .catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(ApiError)
+    expect(error).toMatchObject({ status: 400, body })
+    expect((error as Error).message).toContain('answered 400')
+  })
 
   it('hands back the runs to stop and the runs that paused', async () => {
     vi.useRealTimers()

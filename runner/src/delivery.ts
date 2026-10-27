@@ -6,6 +6,7 @@ import type { Git } from './git.js'
 import { buildHandoff, type HandoffInput } from './phases/handoff.js'
 import { prepareRunDir, writeAllowedFiles, writeApprovedMigrations } from './phases/run-dir.js'
 import { End, Release, runPaths, runSteps, type Outcome, type RunDeps } from './run-steps.js'
+import { ApiError } from './api.js'
 import { newEvent } from './sink.js'
 import type { runTestCommand } from './test-command.js'
 
@@ -187,19 +188,29 @@ export async function carryOut(
           state.planId = plan.id
           if ((plan.data as PlanData).confidence !== 'high') {
             await steps.checkpoint()
-            await deps.sink.send([
-              newEvent(
-                { runId: run.id, phaseId: result.record.phaseId, type: 'approval_requested' },
-                {
-                  payload: {
-                    approval_id: randomUUID(),
-                    kind: 'plan',
-                    question: PLAN_QUESTION,
-                    context_md: plan.body_md,
+            try {
+              await deps.sink.send([
+                newEvent(
+                  { runId: run.id, phaseId: result.record.phaseId, type: 'approval_requested' },
+                  {
+                    payload: {
+                      approval_id: randomUUID(),
+                      kind: 'plan',
+                      question: PLAN_QUESTION,
+                      context_md: plan.body_md,
+                    },
                   },
-                },
-              ),
-            ])
+                ),
+              ])
+            } catch (error) {
+              // sink.send flushes older queued events first, so a 4xx on one of those reads as a
+              // gate refusal too (AIDP-28).
+              if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
+                await steps.endPhase(false)
+                throw new End('failed', gateRefusal(error))
+              }
+              throw error
+            }
             throw new Release()
           }
           await steps.endPhase(true)
@@ -278,4 +289,19 @@ export async function cleanUp(
   const worktree = work.run.worktree_path ?? runPaths(deps.config.home, work.run.id).worktree
   if (!existsSync(worktree)) return
   await deps.git.removeWorktree(work.run.repo_path, worktree).catch(() => undefined)
+}
+
+/** The reason a refused plan gate gives: a plain sentence, never the status line or the body. */
+function gateRefusal(error: ApiError): string {
+  const body = error.body as { details?: { findings?: unknown } } | undefined
+  const findings = Array.isArray(body?.details?.findings) ? body.details.findings : []
+  const named = findings
+    .filter(
+      (f): f is { field: string; code: string } =>
+        typeof f?.field === 'string' && typeof f?.code === 'string',
+    )
+    .map((f) => `${f.field} is ${f.code.replaceAll('_', ' ')}`)
+  return named.length === 0
+    ? 'The board refused the plan gate.'
+    : `The board refused the plan gate: ${named.join('; ')}.`
 }
