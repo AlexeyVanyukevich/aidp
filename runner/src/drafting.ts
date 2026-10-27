@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import type { Work } from './contract.js'
 import { buildHandoff } from './phases/handoff.js'
+import { linkedForHandoff } from './linked.js'
 import { prepareRunDir } from './phases/run-dir.js'
 import { End, runPaths, runSteps, type RunDeps } from './run-steps.js'
 
@@ -30,6 +31,7 @@ export async function draftSpec(
       ...(run.note === null ? {} : { note: run.note }),
       budgetUsd: task.budget_usd,
       summaries: [],
+      linked: linkedForHandoff(runDir),
     })
 
   return steps.carry({ repo: project.repo_path, branch: null }, async () => {

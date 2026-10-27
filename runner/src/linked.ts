@@ -71,3 +71,15 @@ export async function removeLinked(git: CheckoutGit, dir: string, runDir: string
   rmSync(dir, { recursive: true, force: true })
   rmSync(join(runDir, LINKED_FILE), { force: true })
 }
+
+/** The checkouts as a handoff lists them. */
+export function linkedForHandoff(runDir: string) {
+  return readLinked(runDir).map((c) => ({
+    key: c.key,
+    name: c.name,
+    github_repo: c.github_repo,
+    base_branch: c.base_branch,
+    path: c.path,
+    note: c.note,
+  }))
+}

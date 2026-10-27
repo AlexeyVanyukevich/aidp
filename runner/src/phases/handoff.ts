@@ -18,6 +18,15 @@ export interface HandoffInput {
   verifyReport?: string
   testOutput?: string
   diff?: string
+  /** The read-only checkouts of the projects this one links to. */
+  linked?: {
+    key: string
+    name: string
+    github_repo: string
+    base_branch: string
+    path: string
+    note: string
+  }[]
 }
 
 const escape = (text: string) =>
@@ -66,8 +75,20 @@ export function buildHandoff(input: HandoffInput): string {
     )
   if (input.diff !== undefined)
     parts.push(`<diff>\n${escape(cut('diff', input.diff, 60_000))}\n</diff>`)
+  const linked = [...(input.linked ?? [])].sort((a, b) => a.key.localeCompare(b.key))
+  if (linked.length > 0)
+    parts.push(
+      `<linked_projects>\n${linked
+        .map(
+          (p) =>
+            `<project key="${attr(p.key)}" name="${attr(p.name)}" github_repo="${attr(p.github_repo)}" base_branch="${attr(p.base_branch)}" path="${attr(p.path)}">${escape(p.note)}</project>`,
+        )
+        .join('\n')}\n</linked_projects>`,
+    )
   parts.push(
-    '<constraints>Work only inside this worktree. Never push. Stop and say so in your reply if the spec cannot be met as written.</constraints>',
+    linked.length > 0
+      ? '<constraints>Work only inside this worktree. The linked checkouts may be read and never changed. Never push. Stop and say so in your reply if the spec cannot be met as written.</constraints>'
+      : '<constraints>Work only inside this worktree. Never push. Stop and say so in your reply if the spec cannot be met as written.</constraints>',
   )
   if (input.budgetUsd !== null) parts.push(`<budget usd="${input.budgetUsd.toFixed(2)}"/>`)
   parts.push(`<return_format>${escape(RETURNS[input.phase])}</return_format>`)
