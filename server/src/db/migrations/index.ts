@@ -3,6 +3,7 @@ import * as initial from './001_initial.js'
 import * as pauseAndResume from './002_pause_and_resume.js'
 import * as draftedSpecs from './003_drafted_specs.js'
 import * as setupCommand from './004_setup_command.js'
+import * as planKeptFrom from './005_plan_kept_from.js'
 
 /**
  * Listed rather than discovered from disk: a file provider imports at runtime, which fails
@@ -14,4 +15,5 @@ export const migrations: Record<string, Migration> = {
   '002_pause_and_resume': pauseAndResume,
   '003_drafted_specs': draftedSpecs,
   '004_setup_command': setupCommand,
+  '005_plan_kept_from': planKeptFrom,
 }
