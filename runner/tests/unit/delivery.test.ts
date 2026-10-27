@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import type { BoardApi } from '../../src/api.js'
+import { ApiError, type BoardApi } from '../../src/api.js'
 import type { ArtifactView, Checkpoint, RunnerEvent, RunWork, Work } from '../../src/contract.js'
 import {
   carryOut,
@@ -54,6 +54,8 @@ interface Script {
   prOpen?: boolean
   hasMessages?: boolean
   worktreeGone?: boolean
+  /** What the board answers to the gate's event, instead of accepting it. */
+  refuse?: ApiError
 }
 
 function harness(script: Script) {
@@ -71,6 +73,8 @@ function harness(script: Script) {
     issueToken: async () => 'token',
     retire: async () => undefined,
     sendEvents: async (_t: string, events: RunnerEvent[]) => {
+      if (script.refuse !== undefined && events.some((e) => e.type === 'approval_requested'))
+        throw script.refuse
       sent.push(...events)
       return events.length
     },
@@ -413,6 +417,32 @@ describe('pausing and resuming', () => {
         }),
       }),
     ])
+  })
+
+  it('fails the run in plain words when the board refuses the plan gate', async () => {
+    const refusal = new ApiError(
+      400,
+      'POST /api/runner/events answered 400: {"error":"validation_error"}',
+      {
+        error: 'validation_error',
+        details: { findings: [{ field: 'context_md', code: 'too_long' }] },
+      },
+    )
+    const h = harness({ confidence: ['medium'], refuse: refusal })
+    expect(await carryOut(START as Extract<Work, { kind: 'start' }>, h.deps)).toBe('failed')
+    expect(h.calls).toContain('end plan-1 failed')
+    const reason = String(h.runEnd()?.payload.reason)
+    expect(reason).toBe('The board refused the plan gate: context_md is too long.')
+    expect(reason).not.toContain('answered 400')
+    expect(reason).not.toContain('{')
+  })
+
+  it('fails the run with a bare sentence when the refusal names nothing', async () => {
+    const h = harness({ confidence: ['medium'], refuse: new ApiError(400, 'answered 400: no') })
+    await carryOut(START as Extract<Work, { kind: 'start' }>, h.deps)
+    expect(h.runEnd()).toMatchObject({
+      payload: { outcome: 'failed', reason: 'The board refused the plan gate.' },
+    })
   })
 
   it('starts Build once the owner approves the plan', async () => {

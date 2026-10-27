@@ -4,6 +4,7 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly body: unknown = undefined,
   ) {
     super(message)
   }
@@ -51,11 +52,20 @@ export class BoardApi {
     } finally {
       clearTimeout(timer)
     }
-    if (!response.ok)
+    if (!response.ok) {
+      const text = await response.text()
+      let body: unknown
+      try {
+        body = JSON.parse(text)
+      } catch {
+        body = undefined
+      }
       throw new ApiError(
         response.status,
-        `${method} ${path} answered ${response.status}: ${await response.text()}`,
+        `${method} ${path} answered ${response.status}: ${text}`,
+        body,
       )
+    }
     return response.status === 204 ? (undefined as T) : ((await response.json()) as T)
   }
 
