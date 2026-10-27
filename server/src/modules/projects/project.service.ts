@@ -1,5 +1,5 @@
 import { NotFoundError, ValidationError } from '../../shared/errors.js'
-import type { ProjectRepository, ProjectView } from './project.repository.js'
+import type { ProjectRepository, ProjectView, ProjectWithLinks } from './project.repository.js'
 import { matchesGithubRepo, type RepoInspector } from './repo-inspector.js'
 
 export class ProjectService {
@@ -8,8 +8,38 @@ export class ProjectService {
     private readonly inspector: RepoInspector,
   ) {}
 
-  list(): Promise<ProjectView[]> {
-    return this.repository.list()
+  list(): Promise<ProjectWithLinks[]> {
+    return this.repository.listWithLinks()
+  }
+
+  async addLink(key: string, target: string, note: string): Promise<void> {
+    const project = await this.repository.byKey(key)
+    if (project === undefined) throw new NotFoundError(`No project ${key}`)
+    // The note is checked here, not in the schema, so the refusal names its field.
+    if (note.trim() === '' || note.length > 500) {
+      throw new ValidationError('The note must be 1 to 500 characters, not blank', {
+        field: 'note',
+      })
+    }
+    if (target === key) {
+      throw new ValidationError('A project cannot link to itself', { field: 'target' })
+    }
+    const linked = await this.repository.byKey(target)
+    if (linked === undefined) {
+      throw new ValidationError(`No project ${target}`, { field: 'target' })
+    }
+    if (!(await this.repository.addLink(project.id, linked.id, note))) {
+      throw new ValidationError(`${key} already links to ${target}`, { field: 'target' })
+    }
+  }
+
+  async removeLink(key: string, target: string): Promise<void> {
+    const project = await this.repository.byKey(key)
+    const linked = await this.repository.byKey(target)
+    if (project === undefined || linked === undefined) throw new NotFoundError('No such link')
+    if (!(await this.repository.removeLink(project.id, linked.id))) {
+      throw new NotFoundError('No such link')
+    }
   }
 
   /**

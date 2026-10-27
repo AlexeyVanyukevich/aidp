@@ -192,3 +192,83 @@ describe('the project_links table', () => {
     await expect(link(a, a).execute()).rejects.toThrow()
   })
 })
+
+describe('links between projects', () => {
+  const OTHER = {
+    ...VALID,
+    key: 'OTH',
+    name: 'Other',
+    repo_path: '/repos/other',
+    github_repo: 'owner/other',
+  }
+  const link = (key: string, payload: unknown) =>
+    app.inject({ method: 'POST', url: `/api/projects/${key}/links`, payload: payload as object })
+  const unlink = (key: string, target: string) =>
+    app.inject({ method: 'DELETE', url: `/api/projects/${key}/links/${target}` })
+  const list = async () =>
+    (await app.inject({ method: 'GET', url: '/api/projects' })).json() as {
+      key: string
+      links: { key: string; name: string; note: string }[]
+    }[]
+
+  beforeEach(async () => {
+    await app.inject({ method: 'POST', url: '/api/projects', payload: VALID })
+    await app.inject({ method: 'POST', url: '/api/projects', payload: OTHER })
+  })
+
+  it('links one way, and lists the link under the project that references', async () => {
+    const response = await link('PAY', { target: 'OTH', note: 'the kit' })
+    expect(response.statusCode).toBe(201)
+    const projects = await list()
+    expect(projects.find((p) => p.key === 'PAY')?.links).toEqual([
+      { key: 'OTH', name: 'Other', note: 'the kit' },
+    ])
+    expect(projects.find((p) => p.key === 'OTH')?.links).toEqual([])
+  })
+
+  it.each([
+    ['itself', 'PAY'],
+    ['an unknown project', 'NOPE'],
+  ])('refuses a link to %s, naming target', async (_name, target) => {
+    const response = await link('PAY', { target, note: 'n' })
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({
+      error: 'validation_error',
+      details: { field: 'target' },
+    })
+  })
+
+  it('refuses a link that exists', async () => {
+    await link('PAY', { target: 'OTH', note: 'n' })
+    const response = await link('PAY', { target: 'OTH', note: 'again' })
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({ details: { field: 'target' } })
+  })
+
+  it.each([
+    ['blank', '   '],
+    ['empty', ''],
+    ['501 characters', 'x'.repeat(501)],
+  ])('refuses a %s note, creating nothing', async (_name, note) => {
+    const response = await link('PAY', { target: 'OTH', note })
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({ error: 'validation_error', details: { field: 'note' } })
+    expect((await list()).find((p) => p.key === 'PAY')?.links).toEqual([])
+  })
+
+  it('answers 404 for an unknown project', async () => {
+    expect((await link('NOPE', { target: 'OTH', note: 'n' })).statusCode).toBe(404)
+  })
+
+  it('removes one link, leaving the reverse, and answers 404 the second time', async () => {
+    await link('PAY', { target: 'OTH', note: 'a' })
+    await link('OTH', { target: 'PAY', note: 'b' })
+    expect((await unlink('PAY', 'OTH')).statusCode).toBe(204)
+    const projects = await list()
+    expect(projects.find((p) => p.key === 'PAY')?.links).toEqual([])
+    expect(projects.find((p) => p.key === 'OTH')?.links).toEqual([
+      { key: 'PAY', name: 'Payments', note: 'b' },
+    ])
+    expect((await unlink('PAY', 'OTH')).statusCode).toBe(404)
+  })
+})
