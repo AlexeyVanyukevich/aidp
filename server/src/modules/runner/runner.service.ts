@@ -7,6 +7,8 @@ import { hashToken, newToken } from '../../shared/tokens.js'
 import type { Checkpoint, SpecCriterion } from '../../shared/vocabulary.js'
 import { allowedFiles, approvedMigrations, type Answer } from '../approvals/approval-rules.js'
 import { openApproval } from '../approvals/approval.service.js'
+import { previousPlans } from '../tasks/plan-history.js'
+import { loadPlanHistory } from '../tasks/plan-history.queries.js'
 import { moveFacts, moveTask } from '../tasks/task.moves.js'
 import { effectOf, type Effect } from './event-effects.js'
 import type { RunnerEvent } from './runner.schemas.js'
@@ -36,6 +38,13 @@ export interface RunWork {
     test_command: string
     setup_command: string | null
   }
+  /**
+   * A delivery run's earlier plans for a planner starting again: the newest on this spec
+   * version, and the newest accepted one when that was not. Empty for a run holding a copied plan.
+   */
+  previous_plans: { run: number; accepted: boolean; body_md: string }[]
+  /** The plan a Re-run copied into this run; the run starts no planner. */
+  kept_plan: { artifact_id: string; from_run: number } | null
 }
 
 /** What a claim hands the runner (spec §6): a run to start, to resume, or to clean up after. */
@@ -266,6 +275,24 @@ export class RunnerService {
       ])
       .where('runs.id', '=', runId)
       .executeTakeFirstOrThrow()
+    const kept =
+      row.kind === 'delivery'
+        ? await trx
+            .selectFrom('artifacts')
+            .select(['id', 'copied_from_run'])
+            .where('run_id', '=', runId)
+            .where('kind', '=', 'plan')
+            .where('copied_from_run', 'is not', null)
+            .orderBy('created_at', 'desc')
+            .executeTakeFirst()
+        : undefined
+    let previous: RunWork['previous_plans'] = []
+    if (row.kind === 'delivery' && kept === undefined && row.spec_version !== null) {
+      const { plans, approvals } = await loadPlanHistory(trx, row.task_id)
+      previous = previousPlans(plans, approvals, row.spec_version, runId).map(
+        ({ plan, accepted }) => ({ run: plan.runNumber, accepted, body_md: plan.bodyMd }),
+      )
+    }
     return {
       id: row.id,
       number: row.run_number,
@@ -291,6 +318,11 @@ export class RunnerService {
         test_command: row.test_command,
         setup_command: row.setup_command,
       },
+      previous_plans: previous,
+      kept_plan:
+        kept === undefined || kept.copied_from_run === null
+          ? null
+          : { artifact_id: kept.id, from_run: kept.copied_from_run },
     }
   }
 
