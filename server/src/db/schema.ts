@@ -185,8 +185,16 @@ export interface PricesTable {
   cache_write: Numeric
 }
 
+export interface ProjectLinksTable {
+  project_id: string
+  linked_project_id: string
+  note: string
+  created_at: Generated<Date>
+}
+
 export interface Database {
   projects: ProjectsTable
+  project_links: ProjectLinksTable
   tasks: TasksTable
   specs: SpecsTable
   runs: RunsTable

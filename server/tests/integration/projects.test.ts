@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
-import { buildTestApp, closeTestDb, resetDb } from './helpers.js'
+import { buildTestApp, closeTestDb, getTestDb, resetDb } from './helpers.js'
 import type { RepoInspector } from '../../src/modules/projects/repo-inspector.js'
 
 const fakeInspector: RepoInspector = {
@@ -143,5 +143,52 @@ describe('the setup command', () => {
 
   it('answers 404 for an unknown key', async () => {
     expect((await patch('/api/projects/NOPE', { setup_command: null })).statusCode).toBe(404)
+  })
+})
+
+describe('the project_links table', () => {
+  const db = () => getTestDb()
+  const make = async (key: string) =>
+    (
+      await db()
+        .insertInto('projects')
+        .values({
+          key,
+          name: key,
+          repo_path: `/tmp/${key}`,
+          github_repo: `owner/${key.toLowerCase()}`,
+          base_branch: 'main',
+          test_command: 'npm test',
+        })
+        .returning('id')
+        .executeTakeFirstOrThrow()
+    ).id
+  const link = (from: string, to: string) =>
+    db().insertInto('project_links').values({ project_id: from, linked_project_id: to, note: 'n' })
+
+  it('removes every link from or to a deleted project, and nothing else', async () => {
+    const [a, b, c, d] = [
+      await make('AAA'),
+      await make('BBB'),
+      await make('CCC'),
+      await make('DDD'),
+    ]
+    await link(a, b).execute()
+    await link(b, a).execute()
+    await link(c, a).execute()
+    await link(c, d).execute()
+    await db().deleteFrom('projects').where('id', '=', a).execute()
+    const left = await db()
+      .selectFrom('project_links')
+      .select(['project_id', 'linked_project_id'])
+      .execute()
+    expect(left).toEqual([{ project_id: c, linked_project_id: d }])
+    const projects = await db().selectFrom('projects').select('id').execute()
+    expect(projects.map((p) => p.id).sort()).toEqual([b, c, d].sort())
+  })
+
+  it('refuses a project linked to itself', async () => {
+    const a = await make('AAA')
+    await expect(link(a, a).execute()).rejects.toThrow()
   })
 })
