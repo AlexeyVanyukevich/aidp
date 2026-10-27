@@ -6,6 +6,7 @@ import type {
   OpenApproval,
   PrFile,
   ProjectView,
+  ProjectWithLinks,
   RunView,
   SpecView,
   TaskCard,
@@ -54,11 +55,19 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 export const api = {
-  projects: () => request<ProjectView[]>('GET', '/api/projects'),
+  projects: () => request<ProjectWithLinks[]>('GET', '/api/projects'),
   createProject: (input: Omit<ProjectView, 'id'>) =>
     request<ProjectView>('POST', '/api/projects', input),
   setSetupCommand: (key: string, setup_command: string | null) =>
     request<ProjectView>('PATCH', `/api/projects/${key}`, { setup_command }),
+  addLink: (key: string, input: { target: string; note: string }) =>
+    request<{ key: string; target: string; note: string }>(
+      'POST',
+      `/api/projects/${key}/links`,
+      input,
+    ),
+  removeLink: (key: string, target: string) =>
+    request<void>('DELETE', `/api/projects/${key}/links/${target}`),
   board: (key: string) =>
     request<{ project: ProjectView; tasks: TaskCard[] }>('GET', `/api/projects/${key}/tasks`),
   createTask: (key: string, input: { title: string; description_md?: string }) =>
