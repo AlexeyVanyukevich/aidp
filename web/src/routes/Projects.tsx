@@ -10,7 +10,9 @@ import type { ProjectView, ProjectWithLinks } from '../types'
 
 type FieldName = Exclude<keyof ProjectView, 'id'>
 
-const SETUP_PROBLEM = 'This command does not run in that repository.'
+const TEST_HINT = 'Runs in the repository after every Build.'
+const COMMAND_PROBLEM = 'This command does not run in that repository.'
+const SETUP_PROBLEM = COMMAND_PROBLEM
 
 /** The page's own words for each field, and for what is wrong when the server refuses it. */
 const FIELDS: readonly { name: FieldName; label: string; hint: string; problem: string }[] = [
@@ -42,8 +44,8 @@ const FIELDS: readonly { name: FieldName; label: string; hint: string; problem: 
   {
     name: 'test_command',
     label: 'Test command',
-    hint: 'Runs in the repository after every Build.',
-    problem: 'This command does not run in that repository.',
+    hint: TEST_HINT,
+    problem: COMMAND_PROBLEM,
   },
   {
     name: 'setup_command',
@@ -118,6 +120,7 @@ export function Projects() {
                       {project.key} {project.name}
                     </Link>
                     <span className="muted">{project.github_repo}</span>
+                    <TestCommand project={project} announce={setAnnouncement} />
                     <SetupCommand project={project} />
                     <Links project={project} all={list} announce={setAnnouncement} />
                   </li>
@@ -163,6 +166,100 @@ export function Projects() {
         </form>
       </section>
     </main>
+  )
+}
+
+/** A project's test command, and the control that changes it. It cannot be cleared. */
+function TestCommand({
+  project,
+  announce,
+}: {
+  project: ProjectView
+  announce: (text: string) => void
+}) {
+  const client = useQueryClient()
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState('')
+  const input = useRef<HTMLInputElement>(null)
+  const edit = useRef<HTMLButtonElement>(null)
+  const save = useMutation({
+    mutationFn: () => api.setTestCommand(project.key, value),
+    onSuccess: async () => {
+      announce(`${project.key}’s test command is now ${value}.`)
+      setEditing(false)
+      await client.invalidateQueries({ queryKey: ['projects'] })
+    },
+  })
+  const refused = invalidField(save.error) === 'test_command'
+  // Set when the form closes, so focus returns to the button once it is rendered again.
+  const returning = useRef(false)
+
+  useEffect(() => {
+    if (save.error !== null && refused) input.current?.focus()
+  }, [save.error, refused])
+  useEffect(() => {
+    if (editing) input.current?.focus()
+    else if (returning.current) {
+      returning.current = false
+      edit.current?.focus()
+    }
+  }, [editing])
+
+  if (!editing) {
+    return (
+      <>
+        <span className="muted">{`Test command: ${project.test_command}`}</span>
+        <Button
+          ref={edit}
+          type="button"
+          onClick={() => {
+            setValue(project.test_command)
+            save.reset()
+            setEditing(true)
+          }}
+        >
+          {`Edit test command of ${project.key}`}
+        </Button>
+      </>
+    )
+  }
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault()
+        returning.current = true
+        save.mutate()
+      }}
+    >
+      <Field
+        label={`Test command of ${project.key}`}
+        hint={TEST_HINT}
+        error={refused ? COMMAND_PROBLEM : undefined}
+      >
+        <Input
+          ref={input}
+          name="test_command"
+          value={value}
+          autoComplete="off"
+          onChange={(e) => setValue(e.target.value)}
+        />
+      </Field>
+      <Notice tone="danger" className="announce">
+        {save.isError && !refused ? 'The test command could not be saved. Try again.' : ''}
+      </Notice>
+      <Button type="submit" variant="primary" busy={save.isPending}>
+        Save
+      </Button>
+      <Button
+        type="button"
+        onClick={() => {
+          returning.current = true
+          setEditing(false)
+        }}
+      >
+        Cancel
+      </Button>
+    </form>
   )
 }
 
