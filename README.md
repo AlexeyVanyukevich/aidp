@@ -32,7 +32,10 @@ app, giving each up to 30 s before SIGKILL. A process `./run dev` did not record
 before this rule, or from the directory under another name — is yours to end by hand.
 
 Register a repository on the Projects page (give it a setup command, such as `npm ci`, if the
-repository needs its dependencies installed in each run's fresh checkout), then record the price of each model the phases
+repository needs its dependencies installed in each run's fresh checkout). This repository is
+registered with the test command `./run check`, so a board run checks Types, Lint and Formatting
+as well as the suites; change the test command of an already registered project with
+`Edit test command of <KEY>` on the Projects page. Then record the price of each model the phases
 use, from Anthropic's price list, in USD per million tokens — the spec-writer runs on Opus
 (`claude-opus-5-5`), the other phases on Sonnet, Claude Code's own calls on Haiku:
 

@@ -109,10 +109,18 @@ tests → Verify rounds. All criteria passing pushes the branch and opens the pu
 takes one already open for the branch. The worktree is removed when the run ends.
 
 **The setup command.** A project may carry a `setup_command` (at most 500 characters), set when
-it is registered or later with `PATCH /api/projects/:key`, whose body is exactly
-`{ "setup_command": string | null }`: any other field is refused with 400, a null or blank value
-clears it, and an unknown key answers 404. Like the test command, a command whose first word does
-not resolve in `repo_path` is refused with `validation_error` on the field. In the `prepare`
+it is registered or later with `PATCH /api/projects/:key`, whose body is either or both of
+`setup_command` (string or null) and `test_command` (string), at least one: any other field, or an
+empty body, is refused with 400, and an unknown key answers 404. A null or blank `setup_command`
+clears it; a `test_command` cannot be cleared, and a blank, null or over-500-character one is
+refused naming the field. A command whose first word does not resolve in `repo_path` is refused
+with `validation_error` on its field, and the fields present are written all or none: the test
+command is checked first, so a body with both invalid names `test_command`. The Projects page
+shows each project's test command with an `Edit test command of <KEY>` button, which opens a form
+(`Test command of <KEY>`, `Save`, `Cancel`) beside the setup command's. Saving announces the new
+command in the page's shared announcement region and returns focus to the button; a refusal
+stays on the field, and any other failure is written into the form's own alert. The next claim
+carries the changed command to the runner. In the `prepare`
 stage of every spec run and delivery run, once the worktree is checked out, the runner runs it
 with `sh -c` in the worktree, bounded by `TEST_TIMEOUT_MS`, before any phase starts: it is how
 the repository's dependencies — and so the `charter` rules `CLAUDE.md` imports — are there when
