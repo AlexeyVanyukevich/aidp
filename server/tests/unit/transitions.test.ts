@@ -24,6 +24,10 @@ const ALLOWED: [TaskState, Move, TaskState, Facts?][] = [
   ['review', 'merge', 'done'],
   ['review', 'drag_done', 'done'],
   ['review', 'close_pr', 'failed'],
+  // AIDP-22: a fix made outside a run closes its task from the three states with no PR.
+  ['backlog', 'mark_done', 'done'],
+  ['spec_review', 'mark_done', 'done'],
+  ['failed', 'mark_done', 'done'],
   // Slice 2: pause, block, resume, and Cancel from the two new waiting states.
   ['running', 'request_approval', 'needs_approval'],
   ['needs_approval', 'answer', 'running'],

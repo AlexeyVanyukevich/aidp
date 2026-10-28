@@ -35,10 +35,10 @@ describe('blockText', () => {
 describe('actionsFor', () => {
   const none = { markDone: false, resume: false, cancel: false, rerun: false, rerunKeep: false }
   it.each<[TaskState, Block | null, Partial<typeof none>]>([
-    ['backlog', null, {}],
+    ['backlog', null, { markDone: true }],
     // A draft is cancelled as a run is; its card goes back where it came from (slice 3, §4).
     ['spec_draft', null, { cancel: true }],
-    ['spec_review', null, {}],
+    ['spec_review', null, { markDone: true }],
     ['ready', null, { cancel: true }],
     ['running', null, { cancel: true }],
     ['needs_approval', null, { cancel: true }],
@@ -48,7 +48,7 @@ describe('actionsFor', () => {
     // An expired question is answered, not resumed past (spec §2).
     ['blocked', { cause: 'approval_expired', stage: 'build' }, { cancel: true }],
     ['review', null, { markDone: true }],
-    ['failed', null, { rerun: true }],
+    ['failed', null, { markDone: true, rerun: true }],
     ['done', null, {}],
   ])('offers on a %s card (%j)', (state, block, offered) => {
     expect(actionsFor(state, block)).toEqual({ ...none, ...offered })

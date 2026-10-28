@@ -19,7 +19,11 @@ export function PrTab({ task }: { task: TaskView }) {
       {(list) => {
         const latest = list[0]
         if (latest === undefined || latest.pr_url === null)
-          return <Empty title="No pull request yet">One opens when every criterion passes.</Empty>
+          return task.state === 'done' ? (
+            <Empty title="Closed without a pull request." />
+          ) : (
+            <Empty title="No pull request yet">One opens when every criterion passes.</Empty>
+          )
         const report = latest.artifacts.filter((a) => a.kind === 'verify_report').at(-1)?.data as
           ReportData | undefined
         return (
@@ -30,7 +34,11 @@ export function PrTab({ task }: { task: TaskView }) {
                 <span className="zl-visually-hidden"> (opens in a new tab)</span>
               </a>{' '}
               on <code>{latest.branch}</code> ·{' '}
-              {task.state === 'done' ? 'merged' : task.state === 'failed' ? 'closed' : 'open'}
+              {latest.failure_reason !== null || task.state === 'failed'
+                ? 'closed'
+                : task.state === 'done'
+                  ? 'merged'
+                  : 'open'}
             </p>
             <section aria-labelledby={filesId}>
               <h3 id={filesId}>Files changed</h3>

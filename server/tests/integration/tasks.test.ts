@@ -108,9 +108,42 @@ describe('PATCH /api/tasks/:id', () => {
     expect(response.statusCode).toBe(409)
     expect(response.json()).toMatchObject({
       error: 'conflict',
-      details: { state: 'running', move: 'drag_done' },
+      details: { state: 'running', move: 'mark_done' },
     })
   })
+
+  it.each(['backlog', 'spec_review', 'failed'] as const)(
+    'marks a %s card done, last in Done',
+    async (state) => {
+      await seedTask(getTestDb(), projectId, { number: 8, state: 'done', position: 7 })
+      const { id } = await seedTask(getTestDb(), projectId, { number: 9, state })
+      const response = await app.inject({
+        method: 'PATCH',
+        url: `/api/tasks/${id}`,
+        payload: { state: 'done' },
+      })
+      expect(response.statusCode).toBe(200)
+      expect(response.json().state).toBe('done')
+      expect(response.json().position).toBeGreaterThan(7)
+    },
+  )
+
+  it.each(['spec_draft', 'ready', 'needs_approval', 'blocked', 'done'] as const)(
+    'answers 409 for a %s card',
+    async (state) => {
+      const { id } = await seedTask(getTestDb(), projectId, { state })
+      const response = await app.inject({
+        method: 'PATCH',
+        url: `/api/tasks/${id}`,
+        payload: { state: 'done' },
+      })
+      expect(response.statusCode).toBe(409)
+      expect(response.json()).toMatchObject({
+        error: 'conflict',
+        details: { state, move: 'mark_done' },
+      })
+    },
+  )
 
   it.each([
     ['any other state', { state: 'ready' }],

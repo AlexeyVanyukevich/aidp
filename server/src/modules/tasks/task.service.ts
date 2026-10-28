@@ -84,7 +84,9 @@ export class TaskService {
     // A draft reads the description it started with; later runs read the approved spec.
     if (fields.description_md !== undefined && !DESCRIBABLE.includes(task.state))
       throw new ConflictError(`The description is fixed in ${task.state}`, { state: task.state })
-    if (state === 'done') await moveTask(this.db, id, 'drag_done')
+    // Review is the owner's drag; any other state asks for `mark_done`, which refuses what it must.
+    if (state === 'done')
+      await moveTask(this.db, id, task.state === 'review' ? 'drag_done' : 'mark_done')
     if (Object.keys(fields).length > 0) {
       await this.tasks.update(id, fields)
       await publish(this.db, { topic: 'task.updated', taskId: id })

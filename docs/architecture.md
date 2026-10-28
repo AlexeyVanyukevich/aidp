@@ -16,7 +16,8 @@ What the board does today. This document is authoritative; the specs in
 
 Backlog → (Draft spec, or the owner saves a spec) → Spec draft → Spec review → (Approve) → Ready
 → (the runner claims) → Running → Review → (the pull request merges, or the owner marks it done)
-→ Done.
+→ Done. A task in Backlog, Spec review or Failed goes straight to Done on Mark done, or on
+`PATCH /api/tasks/:id` `{ state: 'done' }`, with no pull request involved: a fix made outside a run.
 
 - Backlog → Spec draft on **Draft spec**, which needs a description; Spec review → Spec draft on
   **Redraft**, which needs a note. Spec draft → Spec review when the spec run ends having saved a
