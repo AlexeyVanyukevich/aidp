@@ -60,6 +60,8 @@ export const api = {
     request<ProjectView>('POST', '/api/projects', input),
   setSetupCommand: (key: string, setup_command: string | null) =>
     request<ProjectView>('PATCH', `/api/projects/${key}`, { setup_command }),
+  setTestCommand: (key: string, test_command: string) =>
+    request<ProjectView>('PATCH', `/api/projects/${key}`, { test_command }),
   addLink: (key: string, input: { target: string; note: string }) =>
     request<{ key: string; target: string; note: string }>(
       'POST',
