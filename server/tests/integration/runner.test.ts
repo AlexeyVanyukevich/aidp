@@ -1147,9 +1147,7 @@ describe('claiming a re-run', () => {
       .execute()
     const resumed = (await claim()).json().work
     expect(resumed.kind).toBe('resume')
-    expect(resumed.run.plan_answers).toEqual([
-      { run: 1, approved: false, text: 'from run one' },
-    ])
+    expect(resumed.run.plan_answers).toEqual([{ run: 1, approved: false, text: 'from run one' }])
   })
 })
 
