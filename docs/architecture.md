@@ -176,6 +176,20 @@ latest approved spec. `POST /api/tasks/:id/actions/rerun` takes an optional body
   starting point to check against the spec and the code and to revise, never to carry out, and
   say `accepted="no"` was never approved. Its new plan meets the plan gate like any plan. With no
   earlier plan on that version the handoff is unchanged.
+
+  The claim also carries `plan_answers: { run, approved, text }[]`, the owner's words at earlier
+  plan gates: the answered `plan` approvals of the task's other delivery runs on the same spec
+  version whose answer text is not blank, oldest answered first (ties by approval id), with the
+  text trimmed; `approved` is true exactly when the answer chose Approve plan. It is empty
+  wherever `previous_plans` is empty, and an older board's absent field counts as empty. Only
+  the Plan phase's handoff carries them, one `<plan_answer run="<n>" approved="yes|no">` tag
+  each after the `<previous_plan>` tags. Their trimmed texts total at most 20,000 characters,
+  counted before escaping: the runner keeps the newest whole, stops at the first that would
+  overflow, leaves every older one out, and adds
+  `<plan_answers_left_out count="<k>" runs="<r1>,<r2>,…"/>` after the last tag. The planner's
+  instructions say the new plan keeps every correction, or names the one the spec or the code
+  rules out and says why; the newer of two conflicting answers wins; and the left-out tag means
+  older answers were not shown.
 - **Re-run with this plan** is offered, as the primary button, only when the task has a plan to
   keep; the task view reports it as `plan_to_keep: { run }`. In one transaction the run is queued
   and the plan to keep is copied into it as its own `plan` artifact, with the same `body_md` and
