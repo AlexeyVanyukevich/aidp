@@ -7,7 +7,7 @@ import { hashToken, newToken } from '../../shared/tokens.js'
 import type { Checkpoint, SpecCriterion } from '../../shared/vocabulary.js'
 import { allowedFiles, approvedMigrations, type Answer } from '../approvals/approval-rules.js'
 import { openApproval } from '../approvals/approval.service.js'
-import { previousPlans } from '../tasks/plan-history.js'
+import { planAnswers, previousPlans } from '../tasks/plan-history.js'
 import { loadPlanHistory } from '../tasks/plan-history.queries.js'
 import { moveFacts, moveTask } from '../tasks/task.moves.js'
 import { effectOf, type Effect } from './event-effects.js'
@@ -52,6 +52,7 @@ export interface RunWork {
    * version, and the newest accepted one when that was not. Empty for a run holding a copied plan.
    */
   previous_plans: { run: number; accepted: boolean; body_md: string }[]
+  plan_answers: { run: number; approved: boolean; text: string }[]
   /** The plan a Re-run copied into this run; the run starts no planner. */
   kept_plan: { artifact_id: string; from_run: number } | null
 }
@@ -297,11 +298,13 @@ export class RunnerService {
             .executeTakeFirst()
         : undefined
     let previous: RunWork['previous_plans'] = []
+    let answers: RunWork['plan_answers'] = []
     if (row.kind === 'delivery' && kept === undefined && row.spec_version !== null) {
       const { plans, approvals } = await loadPlanHistory(trx, row.task_id)
       previous = previousPlans(plans, approvals, row.spec_version, runId).map(
         ({ plan, accepted }) => ({ run: plan.runNumber, accepted, body_md: plan.bodyMd }),
       )
+      answers = planAnswers(approvals, row.spec_version, runId)
     }
     const links = await trx
       .selectFrom('project_links')
@@ -344,6 +347,7 @@ export class RunnerService {
       },
       links,
       previous_plans: previous,
+      plan_answers: answers,
       kept_plan:
         kept === undefined || kept.copied_from_run === null
           ? null

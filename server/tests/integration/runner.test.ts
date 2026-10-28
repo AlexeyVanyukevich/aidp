@@ -1048,7 +1048,7 @@ describe('claiming a re-run', () => {
     const work = (await claim()).json().work
     expect(work).toMatchObject({
       kind: 'start',
-      run: { number: 2, previous_plans: [], kept_plan: { from_run: 1 } },
+      run: { number: 2, previous_plans: [], plan_answers: [], kept_plan: { from_run: 1 } },
     })
     // The same run, resumed: its allowed files are its plan's alone.
     await db()
@@ -1087,6 +1087,69 @@ describe('claiming a re-run', () => {
       kept_plan: null,
       previous_plans: [{ run: 1, accepted: true, body_md: 'plan one' }],
     })
+  })
+
+  const answerPlanGate = (runId: string, text: string) =>
+    db()
+      .insertInto('approval_requests')
+      .values({
+        run_id: runId,
+        kind: 'plan',
+        question: 'Approve?',
+        options: '[]',
+        context_md: 'plan one',
+        status: 'answered',
+        answer: JSON.stringify({ text }),
+        answered_at: now,
+      })
+      .execute()
+
+  it('hands a re-planning run the words the owner wrote at earlier plan gates', async () => {
+    const { taskId, runId } = await failedRun1()
+    await answerPlanGate(runId, '  keep tests in tests/unit  ')
+    expect((await rerun(taskId, 'again')).statusCode).toBe(200)
+    const work = (await claim()).json().work
+    expect(work.run.plan_answers).toEqual([
+      { run: 1, approved: false, text: 'keep tests in tests/unit' },
+    ])
+  })
+
+  it('hands a run that keeps its plan no plan answers', async () => {
+    const { taskId, runId } = await failedRun1()
+    await answerPlanGate(runId, 'keep tests in tests/unit')
+    expect((await rerun(taskId, 'keep')).statusCode).toBe(200)
+    expect((await claim()).json().work.run.plan_answers).toEqual([])
+  })
+
+  it('leaves the current run own answers out when it resumes', async () => {
+    const { taskId, runId } = await failedRun1()
+    await answerPlanGate(runId, 'from run one')
+    expect((await rerun(taskId, 'again')).statusCode).toBe(200)
+    const work = (await claim()).json().work
+    await answerPlanGate(work.run.id, 'from run two')
+    await db()
+      .updateTable('runs')
+      .set({
+        status: 'queued',
+        pending: 'resume',
+        queued_at: at(1),
+        checkpoint: JSON.stringify({
+          stage: 'prepare',
+          attempt: 1,
+          phase_id: null,
+          session: null,
+          head: null,
+          plan_artifact_id: null,
+          failing_report_id: null,
+        }),
+      })
+      .where('id', '=', work.run.id)
+      .execute()
+    const resumed = (await claim()).json().work
+    expect(resumed.kind).toBe('resume')
+    expect(resumed.run.plan_answers).toEqual([
+      { run: 1, approved: false, text: 'from run one' },
+    ])
   })
 })
 
