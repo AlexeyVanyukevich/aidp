@@ -69,3 +69,9 @@ export function stateAnnouncement(change: {
     return `${moved} v${change.latestVersion} is ready to review.`
   return moved
 }
+
+/** The PR line's status word: a recorded failure or a Failed card reads closed, a Done card merged. */
+export function prStatus(state: TaskState, failureReason: string | null): string {
+  if (failureReason !== null || state === 'failed') return 'closed'
+  return state === 'done' ? 'merged' : 'open'
+}
