@@ -17,8 +17,11 @@ export const CreateProjectBody = Type.Object(
 )
 
 export const UpdateProjectBody = Type.Object(
-  { setup_command: SetupCommand },
-  { additionalProperties: false },
+  {
+    setup_command: Type.Optional(SetupCommand),
+    test_command: Type.Optional(NonBlankString({ maxLength: 500 })),
+  },
+  { additionalProperties: false, minProperties: 1 },
 )
 
 export const ProjectKeyParams = Type.Object({ key: Type.String() })

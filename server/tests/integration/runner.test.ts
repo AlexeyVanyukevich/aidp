@@ -133,6 +133,28 @@ describe('POST /api/runner/claim', () => {
     expect((await claim()).json()).toEqual({ work: null })
   })
 
+  it('hands over the test command as changed by PATCH', async () => {
+    const patched = await buildTestApp({
+      clock: () => now,
+      repoInspector: {
+        inspect: async () => ({ isGitRepo: true, remotes: [] }),
+        commandExists: async () => true,
+      },
+    })
+    try {
+      await seedQueuedRun(getTestDb())
+      const response = await patched.inject({
+        method: 'PATCH',
+        url: '/api/projects/PAY',
+        payload: { test_command: 'true' },
+      })
+      expect(response.statusCode).toBe(200)
+      expect((await claim()).json().work.run.project.test_command).toBe('true')
+    } finally {
+      await patched.close()
+    }
+  })
+
   it('hands over the oldest queued run with everything the runner needs, once', async () => {
     const { taskId, runId } = await seedQueuedRun(getTestDb())
     const work = (await claim()).json().work
