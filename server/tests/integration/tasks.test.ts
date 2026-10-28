@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { buildTestApp, closeTestDb, getTestDb, resetDb } from './helpers.js'
-import { seedProject, seedTask } from './fixtures.js'
+import { GOOD_SPEC, seedProject, seedTask } from './fixtures.js'
 import { moveTask } from '../../src/modules/tasks/task.moves.js'
 
 let app: FastifyInstance
@@ -125,6 +125,53 @@ describe('PATCH /api/tasks/:id', () => {
       expect(response.statusCode).toBe(200)
       expect(response.json().state).toBe('done')
       expect(response.json().position).toBeGreaterThan(7)
+    },
+  )
+
+  it.each(['backlog', 'spec_review', 'failed'] as const)(
+    'keeps the specs, runs and artifacts of a %s card when it is marked done',
+    async (state) => {
+      const db = getTestDb()
+      const { id } = await seedTask(db, projectId, { number: 9, state })
+      if (state !== 'backlog') {
+        await db
+          .insertInto('specs')
+          .values({ task_id: id, version: 1, body_md: GOOD_SPEC, status: 'draft', criteria: null })
+          .execute()
+        const run = await db
+          .insertInto('runs')
+          .values({
+            task_id: id,
+            kind: state === 'failed' ? 'delivery' : 'spec',
+            number: 1,
+            spec_version: state === 'failed' ? 1 : null,
+            status: 'failed',
+            failure_reason: state === 'failed' ? 'pull request closed without merging' : null,
+          })
+          .returning('id')
+          .executeTakeFirstOrThrow()
+        await db
+          .insertInto('artifacts')
+          .values({ run_id: run.id, kind: 'verify_report', body_md: 'x', uri: null, data: null })
+          .execute()
+      }
+      const count = async (table: 'specs' | 'runs' | 'artifacts') =>
+        Number(
+          (
+            await db
+              .selectFrom(table)
+              .select((eb) => eb.fn.countAll().as('n'))
+              .executeTakeFirstOrThrow()
+          ).n,
+        )
+      const before = [await count('specs'), await count('runs'), await count('artifacts')]
+      const response = await app.inject({
+        method: 'PATCH',
+        url: `/api/tasks/${id}`,
+        payload: { state: 'done' },
+      })
+      expect(response.statusCode).toBe(200)
+      expect([await count('specs'), await count('runs'), await count('artifacts')]).toEqual(before)
     },
   )
 

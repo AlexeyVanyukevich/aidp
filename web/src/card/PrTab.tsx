@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Badge, Empty, Loading } from '@zellige/react'
 import { api } from '../api'
 import { Loaded } from '../Loaded'
+import { prStatus } from './blocks'
 import type { ReportData, TaskView } from '../types'
 
 export function PrTab({ task }: { task: TaskView }) {
@@ -33,12 +34,7 @@ export function PrTab({ task }: { task: TaskView }) {
                 Pull request #{latest.pr_number}
                 <span className="zl-visually-hidden"> (opens in a new tab)</span>
               </a>{' '}
-              on <code>{latest.branch}</code> ·{' '}
-              {latest.failure_reason !== null || task.state === 'failed'
-                ? 'closed'
-                : task.state === 'done'
-                  ? 'merged'
-                  : 'open'}
+              on <code>{latest.branch}</code> · {prStatus(task.state, latest.failure_reason)}
             </p>
             <section aria-labelledby={filesId}>
               <h3 id={filesId}>Files changed</h3>
