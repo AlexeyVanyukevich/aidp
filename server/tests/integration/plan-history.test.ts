@@ -30,7 +30,7 @@ describe('loadPlanHistory', () => {
         options: JSON.stringify([]),
         context_md: 'the plan',
         status: 'answered',
-        answer: JSON.stringify({ option_id: 'approve' }),
+        answer: JSON.stringify({ option_id: 'approve', text: 'and words' }),
         answered_at: new Date(),
       })
       .execute()
@@ -38,7 +38,17 @@ describe('loadPlanHistory', () => {
     expect(plans).toMatchObject([
       { runNumber: 1, specVersion: 1, confidence: 'medium', bodyMd: 'the plan' },
     ])
-    expect(approvals).toMatchObject([{ optionId: 'approve', contextMd: 'the plan' }])
+    expect(approvals).toMatchObject([
+      {
+        optionId: 'approve',
+        contextMd: 'the plan',
+        answerText: 'and words',
+        runNumber: 1,
+        specVersion: 1,
+      },
+    ])
+    expect(approvals[0]?.answeredAt).toBeInstanceOf(Date)
+    expect(typeof approvals[0]?.id).toBe('string')
     expect(planToKeep(plans, approvals, 1)?.runNumber).toBe(1)
   })
 })

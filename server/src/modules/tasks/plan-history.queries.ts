@@ -29,9 +29,13 @@ export async function loadPlanHistory(
     .selectFrom('approval_requests')
     .innerJoin('runs', 'runs.id', 'approval_requests.run_id')
     .select([
+      'approval_requests.id',
       'approval_requests.run_id',
       'approval_requests.context_md',
       'approval_requests.answer',
+      'approval_requests.answered_at',
+      'runs.number',
+      'runs.spec_version',
     ])
     .where('runs.task_id', '=', taskId)
     .where('runs.kind', '=', 'delivery')
@@ -50,9 +54,14 @@ export async function loadPlanHistory(
       copiedFromRun: row.copied_from_run,
     })),
     approvals: approvals.map((row) => ({
+      id: row.id,
       runId: row.run_id,
+      runNumber: row.number,
+      specVersion: row.spec_version,
       contextMd: row.context_md,
       optionId: (row.answer as { option_id?: string } | null)?.option_id ?? null,
+      answerText: (row.answer as { text?: string } | null)?.text ?? null,
+      answeredAt: row.answered_at ?? new Date(0),
     })),
   }
 }

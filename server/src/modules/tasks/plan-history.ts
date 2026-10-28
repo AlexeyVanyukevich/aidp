@@ -17,9 +17,43 @@ export interface PlanRecord {
 
 /** An answered `plan` approval. */
 export interface PlanApprovalRecord {
+  id: string
   runId: string
+  runNumber: number
+  specVersion: number | null
   contextMd: string | null
   optionId: string | null
+  /** The words of the answer, if it carried any. */
+  answerText: string | null
+  answeredAt: Date
+}
+
+/** What the owner wrote at an earlier plan gate. */
+export interface PlanAnswer {
+  run: number
+  approved: boolean
+  text: string
+}
+
+/**
+ * The owner's worded answers at plan gates of earlier runs on this spec version, oldest answered
+ * first, ties by approval id. Blank answers and the current run's own are left out.
+ */
+export function planAnswers(
+  approvals: PlanApprovalRecord[],
+  specVersion: number,
+  excludeRunId?: string,
+): PlanAnswer[] {
+  return approvals
+    .filter((a) => a.specVersion === specVersion && a.runId !== excludeRunId)
+    .map((a) => ({ a, text: (a.answerText ?? '').trim() }))
+    .filter(({ text }) => text !== '')
+    .sort(
+      (x, y) =>
+        x.a.answeredAt.getTime() - y.a.answeredAt.getTime() ||
+        (x.a.id < y.a.id ? -1 : x.a.id > y.a.id ? 1 : 0),
+    )
+    .map(({ a, text }) => ({ run: a.runNumber, approved: a.optionId === 'approve', text }))
 }
 
 /**

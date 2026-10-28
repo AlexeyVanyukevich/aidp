@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   isAccepted,
+  planAnswers,
   planToKeep,
   previousPlans,
   type PlanApprovalRecord,
@@ -18,8 +19,18 @@ const plan = (over: Partial<PlanRecord> & { id: string }): PlanRecord => ({
   copiedFromRun: null,
   ...over,
 })
+let approvalSeq = 0
 const approve = (runId: string, contextMd: string, optionId: string | null = 'approve') =>
-  ({ runId, contextMd, optionId }) satisfies PlanApprovalRecord
+  ({
+    id: `a${(approvalSeq += 1)}`,
+    runId,
+    runNumber: 1,
+    specVersion: 1,
+    contextMd,
+    optionId,
+    answerText: null,
+    answeredAt: new Date(2026, 0, 1),
+  }) satisfies PlanApprovalRecord
 
 interface KeepCase {
   name: string
@@ -151,5 +162,94 @@ describe('previousPlans', () => {
   it.each(PREV)('$name', ({ plans, approvals, exclude, expected }) => {
     const found = previousPlans(plans, approvals, 1, exclude)
     expect(found.map((p) => [p.plan.id, p.accepted])).toEqual(expected)
+  })
+})
+
+const at = (n: number) => new Date(2026, 1, 1, 0, 0, n)
+const answer = (
+  id: string,
+  runNumber: number,
+  over: Partial<PlanApprovalRecord> = {},
+): PlanApprovalRecord => ({
+  id,
+  runId: `run${runNumber}`,
+  runNumber,
+  specVersion: 1,
+  contextMd: 'plan',
+  optionId: null,
+  answerText: 'words',
+  answeredAt: at(Number(id.slice(1))),
+  ...over,
+})
+
+interface AnswerCase {
+  name: string
+  approvals: PlanApprovalRecord[]
+  version: number
+  exclude: string | undefined
+  expected: { run: number; approved: boolean; text: string }[]
+}
+const ANSWERS: AnswerCase[] = [
+  {
+    name: 'AC1: spec version, approve flag, blank answers and the current run',
+    approvals: [
+      answer('i1', 2, { answerText: 'two' }),
+      answer('i2', 3, { optionId: 'approve', answerText: 'three' }),
+      answer('i3', 3, { optionId: 'approve', answerText: null }),
+      answer('i4', 4, { answerText: 'four' }),
+      answer('i5', 5, { specVersion: 2, answerText: 'five' }),
+    ],
+    version: 1,
+    exclude: 'run4',
+    expected: [
+      { run: 2, approved: false, text: 'two' },
+      { run: 3, approved: true, text: 'three' },
+    ],
+  },
+  {
+    name: 'AC2: oldest answered first, whatever the insertion order',
+    approvals: [
+      answer('i1', 2, { answerText: 'late', answeredAt: at(20) }),
+      answer('i2', 3, { answerText: 'early', answeredAt: at(10) }),
+    ],
+    version: 1,
+    exclude: undefined,
+    expected: [
+      { run: 3, approved: false, text: 'early' },
+      { run: 2, approved: false, text: 'late' },
+    ],
+  },
+  {
+    name: 'AC3: the same answered time is ordered by approval id',
+    approvals: [
+      answer('i2', 3, { answerText: 'greater', answeredAt: at(5) }),
+      answer('i1', 2, { answerText: 'lesser', answeredAt: at(5) }),
+    ],
+    version: 1,
+    exclude: undefined,
+    expected: [
+      { run: 2, approved: false, text: 'lesser' },
+      { run: 3, approved: false, text: 'greater' },
+    ],
+  },
+  {
+    name: 'AC4: whitespace-only text is dropped',
+    approvals: [answer('i1', 2, { answerText: ' \n\t ' })],
+    version: 1,
+    exclude: undefined,
+    expected: [],
+  },
+  {
+    name: 'AC4: text is trimmed',
+    approvals: [answer('i1', 2, { answerText: '\n\n keep it \n\n' })],
+    version: 1,
+    exclude: undefined,
+    expected: [{ run: 2, approved: false, text: 'keep it' }],
+  },
+]
+
+describe('planAnswers', () => {
+  it.each(ANSWERS)('$name', ({ approvals, version, exclude, expected }) => {
+    expect(planAnswers(approvals, version, exclude)).toEqual(expected)
   })
 })
