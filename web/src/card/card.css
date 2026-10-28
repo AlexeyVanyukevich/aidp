@@ -142,6 +142,10 @@ td {
   border: 1px solid var(--zl-line);
   border-radius: var(--zl-radius);
 }
+.approval .code pre {
+  margin: 0;
+  font: inherit;
+}
 .options {
   display: grid;
   gap: var(--zl-space-2);

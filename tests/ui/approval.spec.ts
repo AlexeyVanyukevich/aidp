@@ -193,5 +193,9 @@ test('a migration request shows its path and code, in a block that scrolls at 32
   expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(320)
   await expect(panel.getByRole('button', { name: 'Allow the migration' })).toBeVisible()
   await expect(panel.getByRole('button', { name: 'Keep to the plan' })).toBeVisible()
+  // The block scrolls, so the keyboard reaches it: one tab stop, then the first option.
+  await tabTo(page, block)
+  await page.keyboard.press('Tab')
+  await expect(panel.getByRole('button', { name: 'Allow the migration' })).toBeFocused()
   await expectAccessible(page)
 })

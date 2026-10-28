@@ -121,14 +121,14 @@ export function ApprovalsTab({
                       <code>{migrationPath(current)}</code>
                     </p>
                     {/* Plain text, never markup: a migration is code the owner reads as written. */}
-                    <pre
+                    <section
                       className="code"
-                      tabIndex={0}
-                      role="region"
                       aria-label={codeLabel(migrationPath(current) ?? '')}
+                      // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- the block scrolls, so it must be reachable by keyboard (WCAG 2.1.1)
+                      tabIndex={0}
                     >
-                      {current.context_md ?? ''}
-                    </pre>
+                      <pre>{current.context_md ?? ''}</pre>
+                    </section>
                   </>
                 ) : (
                   <>
