@@ -17,6 +17,16 @@ load_env_file
 DB_HOST_PORT=5435
 COMPOSE_DB_URL="postgres://postgres:postgres@localhost:${DB_HOST_PORT}/board"
 RUN_STATE=".run"
+WEB_PORT=5174
+CHECKOUT="$(pwd -P)"
+
+# The order `stop` takes: the runner first, so it can block its run while the server still
+# answers.
+BOARD_PARTS="runner server web"
+
+# The board's processes by what they run, as each workspace's npm script starts them. Anchored,
+# so that `vitest` is not Vite.
+BOARD_COMMANDS='src/server\.ts( |$)|node_modules/\.bin/vite( |$)|src/cli\.ts daemon( |$)|board-cli daemon( |$)'
 
 # ── preflight ────────────────────────────────────────────────────────────────
 
@@ -53,42 +63,206 @@ run_migrations() {
   DATABASE_URL="${DATABASE_URL:-$COMPOSE_DB_URL}" npm run --silent --workspace server migrate
 }
 
+# ── the board's processes ────────────────────────────────────────────────────
+
+# Each part of the board runs as its own process group, recorded by its id in .run/<part>.pid,
+# so `stop` reaches npm, tsx and node alike — not only the npm wrapper.
+
+# The group a part's pid file records, if the file holds a usable one. 0 and 1 never are: a
+# signal to group 1 goes to every process the owner has.
+recorded_group() {
+  local file="$RUN_STATE/$1.pid" pgid
+  [ -f "$file" ] || return 1
+  pgid=$(cat "$file")
+  case "$pgid" in '' | *[!0-9]* | 0 | 1) return 1 ;; esac
+  echo "$pgid"
+}
+
+group_alive() { kill -0 -- -"$1" 2>/dev/null; }
+
+# Starts a part in a process group of its own and records it. Background jobs of a shell with
+# job control lead their own group, and macOS has no setsid. Stdin is /dev/null: Vite and tsx
+# read it, and die with `read EIO` once the terminal that started them goes away (AIDP-31).
+start_part() {
+  local part=$1 pgid
+  shift
+  pgid=$( set -m; exec "$@" </dev/null >"$RUN_STATE/$part.log" 2>&1 & echo $! )
+  echo "$pgid" >"$RUN_STATE/$part.pid"
+}
+
+start_board() {
+  mkdir -p "$RUN_STATE"
+  start_part server npm run --workspace server dev
+  start_part web npm run --workspace web dev
+  start_part runner npm run --workspace runner daemon
+}
+
+# SIGTERM, up to 30 s for every process in the group to end, then SIGKILL. Fails if the group
+# outlives even that.
+stop_group() {
+  local pgid=$1 waited=0
+  kill -TERM -- -"$pgid" 2>/dev/null || return 0
+  while group_alive "$pgid" && [ "$waited" -lt 150 ]; do
+    sleep 0.2
+    waited=$((waited + 1))
+  done
+  group_alive "$pgid" || return 0
+  kill -KILL -- -"$pgid" 2>/dev/null || true
+  sleep 1
+  ! group_alive "$pgid"
+}
+
+# Stops every recorded part, runner first, and deletes a pid file only once its group is gone.
+# Sets STOPPED to 1 if any group was still running.
+STOPPED=0
+stop_board() {
+  local part pgid
+  for part in $BOARD_PARTS; do
+    if pgid=$(recorded_group "$part") && group_alive "$pgid"; then
+      stop_group "$pgid" ||
+        die "The ${part}'s processes (group ${pgid}) outlived SIGKILL." \
+          "Look:  ps -g ${pgid}   — .run/${part}.pid is kept."
+      STOPPED=1
+    fi
+    rm -f "$RUN_STATE/$part.pid"
+  done
+}
+
+cwd_of() { lsof -a -d cwd -p "$1" -Fn 2>/dev/null | sed -n 's/^n//p'; }
+
+# Prints "<pid> <how it was found>" for each process that means a board is running: one in a
+# recorded group, one running the board's commands from inside this checkout, one holding the
+# server's or the web app's port. A process can appear more than once.
+find_board() {
+  local part pgid pid cwd port
+  for part in $BOARD_PARTS; do
+    if pgid=$(recorded_group "$part"); then
+      for pid in $(pgrep -g "$pgid"); do echo "$pid recorded"; done
+    fi
+  done
+  for pid in $(pgrep -f "$BOARD_COMMANDS"); do
+    cwd=$(cwd_of "$pid")
+    if [ "$cwd" = "$CHECKOUT" ] || [ "${cwd#"$CHECKOUT"/}" != "$cwd" ]; then echo "$pid command"; fi
+  done
+  for port in "${PORT:-4100}" "$WEB_PORT"; do
+    for pid in $(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null); do echo "$pid port-$port"; done
+  done
+}
+
+# Refuses to start beside a running board, naming what it found. Stops nothing it finds.
+refuse_if_running() {
+  local found pid how recorded="" unrecorded=""
+  found=$(find_board | awk '{ how[$1] = how[$1] (how[$1] ? ", " : "") $2 }
+    END { for (pid in how) print pid, how[pid] }' | sort -n)
+  [ -n "$found" ] || return 0
+  printf '%s✗ A board is already running here, or its ports are taken:%s\n' "$RED" "$OFF" >&2
+  while read -r pid how; do
+    printf '  %s  (%s)  in %s\n    %s\n' "$pid" "${how//port-/port }" "$(cwd_of "$pid")" \
+      "$(ps -o command= -p "$pid" 2>/dev/null || echo '(gone)')" >&2
+    case "$how" in *recorded*) recorded=1 ;; *) unrecorded="$unrecorded $pid" ;; esac
+  done <<<"$found"
+  if [ -z "$unrecorded" ]; then
+    die "Not starting a second board." "Stop the running one first:  ./run stop"
+  elif [ -z "$recorded" ]; then
+    die "Not starting a second board." \
+      "./run stop knows none of these. End them, if you mean to:  kill${unrecorded}"
+  fi
+  die "Not starting a second board." \
+    "Run ./run stop, then end the rest, if you mean to:  kill${unrecorded}"
+}
+
+# Up to 60 s for the server's health, any answer from the web app, and the runner claiming.
+# Prints the part whose check failed — at once if all of a part's processes have ended.
+wait_for_board() {
+  local waited=0 part
+  while [ "$waited" -lt 120 ]; do
+    for part in $BOARD_PARTS; do
+      group_alive "$(recorded_group "$part")" || { echo "$part"; return 1; }
+    done
+    if curl -fsS --max-time 2 -o /dev/null "http://127.0.0.1:${PORT:-4100}/api/health" 2>/dev/null &&
+      curl -sS --max-time 2 -o /dev/null "http://127.0.0.1:${WEB_PORT}/" 2>/dev/null &&
+      grep -q 'claiming from' "$RUN_STATE/runner.log" 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.5
+    waited=$((waited + 1))
+  done
+  if ! curl -fsS --max-time 2 -o /dev/null "http://127.0.0.1:${PORT:-4100}/api/health" 2>/dev/null; then
+    echo server
+  elif ! curl -sS --max-time 2 -o /dev/null "http://127.0.0.1:${WEB_PORT}/" 2>/dev/null; then
+    echo web
+  else
+    echo runner
+  fi
+  return 1
+}
+
+# A start that did not come up stops what it started and shows why.
+fail_start() {
+  local part=$1
+  stop_board
+  case "$part" in
+    server) printf '%s✗ The server did not come up: /api/health did not answer.%s\n' "$RED" "$OFF" >&2 ;;
+    web) printf '%s✗ The web app did not come up on port %s.%s\n' "$RED" "$WEB_PORT" "$OFF" >&2 ;;
+    runner) printf '%s✗ The runner did not come up: it is not claiming.%s\n' "$RED" "$OFF" >&2 ;;
+  esac
+  note "The end of ${RUN_STATE}/${part}.log:" >&2
+  tail -n 20 "$RUN_STATE/$part.log" >&2
+  die "Nothing was left running." "Fix the cause above, then:  ./run dev"
+}
+
 # ── scenarios ────────────────────────────────────────────────────────────────
 
-scenario_dev() {
-  need_node; need_deps; need_plugins; need_hooks; need_local_env
-  start_db
-  run_migrations
-  export DATABASE_URL="${DATABASE_URL:-$COMPOSE_DB_URL}"
-
-  if [ "${1:-}" = "--bg" ]; then
-    mkdir -p "$RUN_STATE"
-    npm run --workspace server dev >"$RUN_STATE/server.log" 2>&1 & echo $! >"$RUN_STATE/server.pid"
-    npm run --workspace web dev >"$RUN_STATE/web.log" 2>&1 & echo $! >"$RUN_STATE/web.pid"
-    npm run --workspace runner daemon >"$RUN_STATE/runner.log" 2>&1 & echo $! >"$RUN_STATE/runner.pid"
-    ok "Running in the background"
-    note "http://127.0.0.1:5174   logs: ${RUN_STATE}/*.log   stop: ./run stop"
-    return
-  fi
-
-  ok "Board on http://127.0.0.1:5174"
-  note "Ctrl-C stops the server, the web app and the runner"
-  trap 'kill 0' EXIT INT TERM
-  npm run --workspace server dev 2>&1 | sed "s/^/${DIM}[server]${OFF} /" &
-  npm run --workspace web dev 2>&1 | sed "s/^/${DIM}[web]   ${OFF} /" &
-  npm run --workspace runner daemon 2>&1 | sed "s/^/${DIM}[runner]${OFF} /" &
+# The terminal shows the parts' logs with a prefix each. The tails run as a group of their own,
+# so the cleanup can end them without signalling itself.
+show_logs() {
+  tail -n +1 -f "$RUN_STATE/server.log" | sed "s/^/${DIM}[server]${OFF} /" &
+  tail -n +1 -f "$RUN_STATE/web.log" | sed "s/^/${DIM}[web]   ${OFF} /" &
+  tail -n +1 -f "$RUN_STATE/runner.log" | sed "s/^/${DIM}[runner]${OFF} /" &
   wait
 }
 
-scenario_stop() {
-  local stopped=0
-  for pidfile in "$RUN_STATE"/*.pid; do
-    [ -f "$pidfile" ] || continue
-    local pid; pid=$(cat "$pidfile")
-    if kill -0 "$pid" 2>/dev/null; then kill "$pid" 2>/dev/null || true; stopped=1; fi
-    rm -f "$pidfile"
+scenario_dev() {
+  need_node; need_deps; need_plugins; need_hooks; need_local_env
+  refuse_if_running
+  start_db
+  run_migrations
+  export DATABASE_URL="${DATABASE_URL:-$COMPOSE_DB_URL}"
+  local failed
+
+  if [ "${1:-}" = "--bg" ]; then
+    step "Starting the server, the web app and the runner"
+    start_board
+    failed=$(wait_for_board) || fail_start "$failed"
+    ok "Running in the background"
+    note "http://127.0.0.1:${WEB_PORT}   logs: ${RUN_STATE}/*.log   stop: ./run stop"
+    return
+  fi
+
+  # Ctrl-C reaches only this script, since every part leads a group of its own: the cleanup
+  # stops them as `stop` does, runner first.
+  exec 3>&1
+  start_board
+  LOGS_GROUP=$( set -m; show_logs >&3 2>&3 </dev/null & echo $! )
+  trap 'trap - EXIT; kill -- -"$LOGS_GROUP" 2>/dev/null; stop_board' EXIT
+  trap 'exit 130' INT TERM HUP
+  failed=$(wait_for_board) || { kill -- -"$LOGS_GROUP" 2>/dev/null; fail_start "$failed"; }
+  ok "Board on http://127.0.0.1:${WEB_PORT}"
+  note "Ctrl-C stops the server, the web app and the runner"
+  local part pgid
+  while :; do
+    for part in $BOARD_PARTS; do
+      pgid=$(recorded_group "$part") && group_alive "$pgid" && break
+      pgid=""
+    done
+    [ -n "$pgid" ] || break
+    sleep 1
   done
-  [ "$stopped" = 1 ] && ok "Stopped" || note "Nothing was running in the background"
+}
+
+scenario_stop() {
+  stop_board
+  if [ "$STOPPED" = 1 ]; then ok "Stopped"; else note "Nothing was running in the background"; fi
 }
 
 scenario_test() {
@@ -155,8 +329,9 @@ usage() {
   cat <<TEXT
 ${BOLD}./run <scenario>${OFF}
 
-  ${BOLD}dev${OFF}        [--bg]  PostgreSQL, migrations, the server, the web app and the runner
-  ${BOLD}stop${OFF}       stop what dev --bg started
+  ${BOLD}dev${OFF}        [--bg]  PostgreSQL, migrations, the server, the web app and the runner;
+             refuses while a board runs, and reports success once all three are up
+  ${BOLD}stop${OFF}       stop what dev started, runner first, up to 30 s for each part
   ${BOLD}test${OFF}       every workspace's suite
   ${BOLD}test:ui${OFF}    the browser journeys, with a fake claude
   ${BOLD}check${OFF}      types, formatting and the suites

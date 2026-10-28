@@ -22,6 +22,15 @@ Needs Node 24, Docker, Claude Code signed in, and the GitHub CLI signed in (`gh 
     ./run dev            # PostgreSQL, the server, the web app and the runner
     open http://127.0.0.1:5174
 
+`./run dev --bg` starts the same in the background, its logs in `.run/`. Either reports success
+only once the server answers `/api/health`, the web app answers, and the runner is claiming —
+within 60 s, or it stops what it started and shows the end of the failing log. Neither starts
+beside a board already running from this checkout, or while something holds port 4100 or 5174:
+it names each process it found and stops none of them. `./run stop` stops the board `./run dev`
+started, in either mode: the runner first, so it can block its run, then the server and the web
+app, giving each up to 30 s before SIGKILL. A process `./run dev` did not record — a board from
+before this rule, or from the directory under another name — is yours to end by hand.
+
 Register a repository on the Projects page (give it a setup command, such as `npm ci`, if the
 repository needs its dependencies installed in each run's fresh checkout), then record the price of each model the phases
 use, from Anthropic's price list, in USD per million tokens — the spec-writer runs on Opus
