@@ -76,13 +76,31 @@ export class ProjectService {
     return this.repository.insert(input)
   }
 
-  /** Sets the setup command, or clears it with null or a blank value. */
-  async updateSetupCommand(key: string, value: string | null): Promise<ProjectView> {
+  /**
+   * Sets the fields present: the setup command (cleared by null or a blank value) and the test
+   * command. Both are checked before either is written, the test command first.
+   */
+  async update(
+    key: string,
+    body: { setup_command?: string | null | undefined; test_command?: string | undefined },
+  ): Promise<ProjectView> {
     const project = await this.repository.byKey(key)
     if (project === undefined) throw new NotFoundError(`No project ${key}`)
-    const setupCommand = blankToNull(value)
-    if (setupCommand !== null) await this.checkSetupCommand(setupCommand, project.repo_path)
-    const updated = await this.repository.updateSetupCommand(key, setupCommand)
+    const changes: { setup_command?: string | null; test_command?: string } = {}
+    if (body.test_command !== undefined) {
+      if (!(await this.inspector.commandExists(body.test_command, project.repo_path))) {
+        throw new ValidationError('The test command does not resolve in that repository', {
+          field: 'test_command',
+        })
+      }
+      changes.test_command = body.test_command
+    }
+    if (body.setup_command !== undefined) {
+      const setupCommand = blankToNull(body.setup_command)
+      if (setupCommand !== null) await this.checkSetupCommand(setupCommand, project.repo_path)
+      changes.setup_command = setupCommand
+    }
+    const updated = await this.repository.update(key, changes)
     if (updated === undefined) throw new NotFoundError(`No project ${key}`)
     return updated
   }

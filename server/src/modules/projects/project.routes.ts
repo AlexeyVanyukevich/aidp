@@ -24,7 +24,7 @@ export function registerProjects(instance: FastifyInstance): void {
   app.patch(
     '/api/projects/:key',
     { schema: { params: ProjectKeyParams, body: UpdateProjectBody } },
-    async (request) => service.updateSetupCommand(request.params.key, request.body.setup_command),
+    async (request) => service.update(request.params.key, request.body),
   )
 
   app.post(

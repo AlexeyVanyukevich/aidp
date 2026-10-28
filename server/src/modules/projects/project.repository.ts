@@ -90,10 +90,14 @@ export class ProjectRepository {
     return row.key === key ? 'key' : 'repo_path'
   }
 
-  updateSetupCommand(key: string, setupCommand: string | null): Promise<ProjectView | undefined> {
+  /** Sets only the fields given, in one statement. */
+  update(
+    key: string,
+    changes: { setup_command?: string | null; test_command?: string },
+  ): Promise<ProjectView | undefined> {
     return this.db
       .updateTable('projects')
-      .set({ setup_command: setupCommand })
+      .set(changes)
       .where('key', '=', key)
       .returning(COLUMNS)
       .executeTakeFirst()

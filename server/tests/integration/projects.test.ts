@@ -11,7 +11,7 @@ const fakeInspector: RepoInspector = {
     return { isGitRepo: false, remotes: [] }
   },
   async commandExists(command) {
-    return command.startsWith('npm')
+    return !command.startsWith('pnpm')
   },
 }
 
@@ -143,6 +143,103 @@ describe('the setup command', () => {
 
   it('answers 404 for an unknown key', async () => {
     expect((await patch('/api/projects/NOPE', { setup_command: null })).statusCode).toBe(404)
+  })
+})
+
+describe('PATCH /api/projects/:key test command', () => {
+  const register = () => app.inject({ method: 'POST', url: '/api/projects', payload: VALID })
+  const list = async () => (await app.inject({ method: 'GET', url: '/api/projects' })).json()
+  const patch = (url: string, payload: unknown) =>
+    app.inject({ method: 'PATCH', url, payload: payload as object })
+  const unchanged = { name: 'Payments', test_command: 'npm test', setup_command: 'npm ci' }
+  const registerWithSetup = () =>
+    app.inject({
+      method: 'POST',
+      url: '/api/projects',
+      payload: { ...VALID, setup_command: 'npm ci' },
+    })
+
+  const refusedBodies: [string, unknown][] = [
+    ['an empty body', {}],
+    ['an unknown field beside test_command', { test_command: 'true', name: 'New' }],
+  ]
+  it.each(refusedBodies)('refuses %s and writes nothing', async (_name, body) => {
+    await registerWithSetup()
+    const response = await patch('/api/projects/PAY', body)
+    expect(response.statusCode).toBe(400)
+    expect(response.json().error).toBe('validation_error')
+    expect((await list())[0]).toMatchObject(unchanged)
+  })
+
+  const badTestCommands: [string, unknown][] = [
+    ['spaces', '   '],
+    ['empty', ''],
+    ['null', null],
+    ['501 characters', 'x'.repeat(501)],
+    ['an unresolvable command', 'pnpm test'],
+  ]
+  it.each(badTestCommands)('refuses a test command of %s, naming the field', async (_n, value) => {
+    await registerWithSetup()
+    const response = await patch('/api/projects/PAY', { test_command: value })
+    expect(response.statusCode).toBe(400)
+    const json = response.json()
+    expect(json.error).toBe('validation_error')
+    expect(JSON.stringify(json)).toContain('test_command')
+    if (value === 'pnpm test') expect(json.details.field).toBe('test_command')
+    expect((await list())[0]).toMatchObject(unchanged)
+  })
+
+  const bothInvalid: [string, unknown][] = [
+    ['an unresolvable setup command ', { setup_command: 'true', test_command: 'pnpm test' }],
+    ['both unresolvable', { setup_command: 'pnpm install', test_command: 'pnpm test' }],
+  ]
+  it.each(bothInvalid)('writes neither field when %s', async (_name, body) => {
+    await registerWithSetup()
+    const response = await patch('/api/projects/PAY', body)
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({ details: { field: 'test_command' } })
+    expect((await list())[0]).toMatchObject(unchanged)
+  })
+
+  it('refuses a valid test command beside an unresolvable setup command, writing neither', async () => {
+    await registerWithSetup()
+    const response = await patch('/api/projects/PAY', {
+      setup_command: 'pnpm install',
+      test_command: 'true',
+    })
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({ details: { field: 'setup_command' } })
+    expect((await list())[0]).toMatchObject(unchanged)
+  })
+
+  it('sets the test command alone, keeping the setup command', async () => {
+    await registerWithSetup()
+    const response = await patch('/api/projects/PAY', { test_command: 'true' })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ test_command: 'true', setup_command: 'npm ci' })
+    expect((await list())[0]).toMatchObject({ test_command: 'true', setup_command: 'npm ci' })
+  })
+
+  it('sets both fields at once', async () => {
+    await register()
+    const response = await patch('/api/projects/PAY', {
+      setup_command: 'npm ci',
+      test_command: 'true',
+    })
+    expect(response.statusCode).toBe(200)
+    expect((await list())[0]).toMatchObject({ test_command: 'true', setup_command: 'npm ci' })
+  })
+
+  it('keeps the test command when only the setup command is set', async () => {
+    await register()
+    await patch('/api/projects/PAY', { setup_command: 'npm ci' })
+    expect((await list())[0]).toMatchObject({ test_command: 'npm test', setup_command: 'npm ci' })
+  })
+
+  it('answers 404 for an unknown key', async () => {
+    const response = await patch('/api/projects/NOPE', { test_command: 'true' })
+    expect(response.statusCode).toBe(404)
+    expect(response.json().error).toBe('not_found')
   })
 })
 
