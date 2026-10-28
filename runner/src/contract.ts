@@ -111,6 +111,8 @@ export interface RunWork {
   links?: LinkedProject[]
   /** Earlier plans for a planner starting again; absent from an older board. */
   previous_plans?: { run: number; accepted: boolean; body_md: string }[]
+  /** The owner's words at earlier plan gates on this spec version; absent from an older board. */
+  plan_answers?: { run: number; approved: boolean; text: string }[]
   /** The plan a Re-run copied into this run: no planner starts. Absent from an older board. */
   kept_plan?: { artifact_id: string; from_run: number } | null
 }

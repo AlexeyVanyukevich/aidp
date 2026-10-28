@@ -106,6 +106,7 @@ export async function carryOut(
           accepted: p.accepted,
           text: p.body_md,
         })),
+        planAnswers: run.plan_answers ?? [],
       })
     const plan = state.planId === null ? undefined : await artifact('plan', { id: state.planId })
     if (plan === undefined) throw new End('failed', 'the run has no plan to work from')

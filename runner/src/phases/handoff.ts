@@ -15,6 +15,8 @@ export interface HandoffInput {
   plan?: string
   /** A planner starting again: the plans of earlier runs, newest first. Never a `<plan>`. */
   previousPlans?: { run: number; accepted: boolean; text: string }[] | undefined
+  /** A planner starting again: the owner's words at earlier plan gates, oldest first. */
+  planAnswers?: { run: number; approved: boolean; text: string }[] | undefined
   verifyReport?: string
   testOutput?: string
   diff?: string
@@ -37,6 +39,34 @@ function cut(label: string, text: string, max: number): string {
   return text.length <= max
     ? text
     : `${text.slice(0, max)}\n[${label} cut: ${text.length - max} more characters]`
+}
+
+const PLAN_ANSWERS_MAX = 20_000
+
+/** The newest answers that fit whole in the bound; the first that does not fit ends the walk. */
+function planAnswerTags(answers: { run: number; approved: boolean; text: string }[]): string[] {
+  let total = 0
+  let kept = answers.length
+  for (let i = answers.length - 1; i >= 0; i--) {
+    total += answers[i]?.text.length ?? 0
+    if (total > PLAN_ANSWERS_MAX) {
+      kept = i + 1
+      break
+    }
+    kept = i
+  }
+  const tags = answers
+    .slice(kept)
+    .map(
+      (a) =>
+        `<plan_answer run="${a.run}" approved="${a.approved ? 'yes' : 'no'}">\n${escape(a.text)}\n</plan_answer>`,
+    )
+  const left = answers.slice(0, kept)
+  if (left.length > 0) {
+    const runs = [...new Set(left.map((a) => a.run))].sort((a, b) => a - b)
+    tags.push(`<plan_answers_left_out count="${left.length}" runs="${runs.join(',')}"/>`)
+  }
+  return tags
 }
 
 const RETURNS: Record<HandoffInput['phase'], string> = {
@@ -66,6 +96,7 @@ export function buildHandoff(input: HandoffInput): string {
     parts.push(
       `<previous_plan run="${previous.run}" accepted="${previous.accepted ? 'yes' : 'no'}">\n${escape(cut('previous plan', previous.text, 20_000))}\n</previous_plan>`,
     )
+  if (input.phase === 'plan') parts.push(...planAnswerTags(input.planAnswers ?? []))
   if (input.plan !== undefined) parts.push(`<plan>\n${escape(input.plan)}\n</plan>`)
   if (input.verifyReport !== undefined)
     parts.push(`<verify_report>\n${escape(input.verifyReport)}\n</verify_report>`)

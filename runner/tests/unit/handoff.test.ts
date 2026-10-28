@@ -129,6 +129,90 @@ describe('buildHandoff with previous plans', () => {
   })
 })
 
+describe('buildHandoff with plan answers', () => {
+  const PLANNER = { ...BASE, phase: 'plan' as const, attempt: 1, summaries: [] }
+  const ans = (run: number, size: number, ch = 'a') => ({
+    run,
+    approved: false,
+    text: ch.repeat(size),
+  })
+  const tagRuns = (text: string) =>
+    [...text.matchAll(/<plan_answer run="(\d+)"/g)].map((m) => Number(m[1]))
+
+  interface Row {
+    name: string
+    answers: { run: number; approved: boolean; text: string }[]
+    shown: number[]
+    leftOut: string | null
+  }
+  const ROWS: Row[] = [
+    {
+      name: 'AC11: six 4,000-character answers keep the five newest',
+      answers: [1, 1, 2, 3, 4, 5].map((r) => ans(r, 4_000)),
+      shown: [1, 2, 3, 4, 5],
+      leftOut: '<plan_answers_left_out count="1" runs="1"/>',
+    },
+    {
+      name: 'AC12: exactly 20,000 characters, all shown',
+      answers: [1, 2, 3, 4, 5].map((r) => ans(r, 4_000)),
+      shown: [1, 2, 3, 4, 5],
+      leftOut: null,
+    },
+    {
+      name: 'AC13: the first answer that does not fit ends the walk',
+      answers: [500, 2_000, 4_000, 4_000, 4_000, 4_000, 3_000].map((n, i) => ans(i + 1, n)),
+      shown: [3, 4, 5, 6, 7],
+      leftOut: '<plan_answers_left_out count="2" runs="1,2"/>',
+    },
+    {
+      name: 'AC14: the bound counts unescaped text',
+      answers: [1, 2, 3, 4, 5]
+        .map((r) => ans(r, 4_000, '<&'))
+        .map((a) => ({
+          ...a,
+          text: a.text.slice(0, 4_000),
+        })),
+      shown: [1, 2, 3, 4, 5],
+      leftOut: null,
+    },
+  ]
+  it.each(ROWS)('$name', ({ answers, shown, leftOut }) => {
+    const text = buildHandoff({ ...PLANNER, planAnswers: answers })
+    expect(tagRuns(text)).toEqual(shown)
+    if (leftOut === null) expect(text).not.toContain('<plan_answers_left_out')
+    else expect(text).toContain(leftOut)
+  })
+
+  it('AC9: tags follow the previous plan, in order, escaped, before the constraints', () => {
+    const text = buildHandoff({
+      ...PLANNER,
+      previousPlans: [{ run: 1, accepted: true, text: 'p' }],
+      planAnswers: [
+        { run: 2, approved: false, text: 'use <tests>' },
+        { run: 3, approved: true, text: 'ok' },
+      ],
+    })
+    const at = [
+      '<previous_plan',
+      '<plan_answer run="2" approved="no">\nuse &lt;tests&gt;\n</plan_answer>',
+      '<plan_answer run="3" approved="yes">\nok\n</plan_answer>',
+      '<constraints>',
+    ].map((t) => text.indexOf(t))
+    expect(at.every((i) => i >= 0)).toBe(true)
+    expect(at).toEqual([...at].sort((a, b) => a - b))
+  })
+
+  it.each([undefined, []])('AC8: %j adds nothing', (planAnswers) => {
+    expect(buildHandoff({ ...PLANNER, planAnswers })).toBe(buildHandoff(PLANNER))
+    expect(buildHandoff(PLANNER)).not.toContain('<plan_answer')
+  })
+
+  it.each(['build', 'verify'] as const)('AC10: a %s handoff carries no answer', (phase) => {
+    const text = buildHandoff({ ...BASE, phase, planAnswers: [ans(1, 10)] })
+    expect(text).not.toContain('<plan_answer')
+  })
+})
+
 // A run's linked projects: read-only checkouts, listed for every phase.
 describe('buildHandoff with linked projects', () => {
   const LINKED = [
