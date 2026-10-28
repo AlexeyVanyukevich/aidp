@@ -53,5 +53,6 @@ unreviewed change inside an unrelated commit. If it blocks the task, it is part 
 its state. A task touching the same code is either taken into the plan or left there knowingly.
 A code comment may point at a task by its key, never stand in for one.
 
-A fix made outside the task's own run cannot close it yet: a task in Backlog has no move to Done
-(AIDP-22). Name the task the fix settles in the session's review, so the owner can.
+A fix made outside the task's own run is closed by marking the task done, from its card or with
+`PATCH /api/tasks/:id` `{ "state": "done" }`. Name the task the fix settles in the session's
+review, so the owner can.

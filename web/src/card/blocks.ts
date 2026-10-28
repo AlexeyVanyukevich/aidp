@@ -29,7 +29,7 @@ export function actionsFor(
   planToKeep: TaskView['plan_to_keep'] = null,
 ): { markDone: boolean; resume: boolean; cancel: boolean; rerun: boolean; rerunKeep: boolean } {
   return {
-    markDone: state === 'review',
+    markDone: ['review', 'backlog', 'spec_review', 'failed'].includes(state),
     // An expired question is answered in Approvals, not resumed past (spec §2).
     resume: state === 'blocked' && block?.cause !== 'approval_expired',
     cancel: ['spec_draft', 'ready', 'running', 'needs_approval', 'blocked'].includes(state),

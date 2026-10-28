@@ -56,6 +56,9 @@ describe('dropPatch', () => {
     ['Backlog to Ready', 'backlog', 'ready'],
     ['Running to Done', 'running', 'done'],
     ['Review to Backlog', 'review', 'backlog'],
+    ['Backlog to Done', 'backlog', 'done'],
+    ['Spec review to Done', 'spec_review', 'done'],
+    ['Failed to Done', 'failed', 'done'],
   ] as const)('refuses a drag from %s', (_name, from, to) => {
     expect(dropPatch(card('x', from, 1), to, undefined, [])).toBeNull()
   })

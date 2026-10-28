@@ -21,7 +21,8 @@ export const PatchTaskBody = Type.Object(
     description_md: Type.Optional(Type.String({ maxLength: 100_000 })),
     budget_usd: Type.Optional(Type.Union([Budget, Type.Null()])),
     position: Type.Optional(Type.Number()),
-    // The one move a drag makes. Every other move is a button with its own endpoint.
+    // Marks the task done: a drag from Review, or Mark done from Backlog, Spec review or Failed.
+    // Every other move is a button with its own endpoint.
     state: Type.Optional(Type.Literal('done')),
   },
   { additionalProperties: false, minProperties: 1 },
