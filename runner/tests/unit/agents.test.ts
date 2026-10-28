@@ -31,6 +31,15 @@ describe('the agents', () => {
     expect(prompt).toContain('never approved by the owner')
   })
 
+  it('tells the planner to keep the owner’s plan gate answers', () => {
+    const prompt = AGENTS.planner!.prompt
+    expect(prompt).toContain('<plan_answer>')
+    expect(prompt).toContain('keeps every correction')
+    expect(prompt).toContain('names that correction and says why')
+    expect(prompt).toContain('the newer one wins')
+    expect(prompt).toContain('<plan_answers_left_out>')
+  })
+
   it('tells the builder to follow the commit rules and never bypass hooks', () => {
     const prompt = AGENTS.builder!.prompt
     expect(prompt).toContain('CLAUDE.md')

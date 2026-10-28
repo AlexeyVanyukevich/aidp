@@ -421,6 +421,28 @@ describe('a re-planning run', () => {
   })
 })
 
+describe('a re-planning run with plan answers', () => {
+  const answers = [{ run: 1, approved: false, text: 'keep tests in tests/unit' }]
+  it('AC10: only the planner is handed the answers', async () => {
+    const h = harness({})
+    const work = { kind: 'start', run: { ...RUN, plan_answers: answers } } as Extract<
+      Work,
+      { kind: 'start' }
+    >
+    await carryOut(work, h.deps)
+    expect(h.handoffs['plan-1']).toContain(
+      '<plan_answer run="1" approved="no">\nkeep tests in tests/unit\n</plan_answer>',
+    )
+    expect(h.handoffs['build-1']).not.toContain('<plan_answer')
+  })
+
+  it('AC8: a claim without the field gives a handoff without the tag', async () => {
+    const h = harness({})
+    await carryOut(START as Extract<Work, { kind: 'start' }>, h.deps)
+    expect(h.handoffs['plan-1']).not.toContain('<plan_answer')
+  })
+})
+
 describe('pausing and resuming', () => {
   it('releases a run that pauses in Build: no phase end, no run end, the worktree kept', async () => {
     const h = harness({ acts: { 'build-1': ['paused'] } })
