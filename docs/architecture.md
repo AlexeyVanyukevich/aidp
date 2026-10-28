@@ -190,6 +190,7 @@ latest approved spec. `POST /api/tasks/:id/actions/rerun` takes an optional body
   instructions say the new plan keeps every correction, or names the one the spec or the code
   rules out and says why; the newer of two conflicting answers wins; and the left-out tag means
   older answers were not shown.
+
 - **Re-run with this plan** is offered, as the primary button, only when the task has a plan to
   keep; the task view reports it as `plan_to_keep: { run }`. In one transaction the run is queued
   and the plan to keep is copied into it as its own `plan` artifact, with the same `body_md` and
