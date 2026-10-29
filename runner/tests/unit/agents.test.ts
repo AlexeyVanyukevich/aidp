@@ -97,4 +97,26 @@ describe('the spec-writer', () => {
     expect(prompt).toContain('## Acceptance criteria\n- AC1 (R1): Given … When … Then …')
     expect(prompt).toContain('## Open questions')
   })
+
+  it('tells the spec-writer to prefer checkable criteria and to mark the rest owner', () => {
+    const prompt = AGENTS['spec-writer']!.prompt
+    expect(prompt).toContain('(R3, owner)')
+    expect(prompt).toContain('Prefer a criterion a run can check')
+  })
+})
+
+describe('the owner check in the prompts', () => {
+  it('tells the planner to name the hand check and what a run can still check', () => {
+    const prompt = AGENTS.planner!.prompt
+    expect(prompt).toContain('names the hand check the owner will do')
+    expect(prompt).toContain('anything a run can still check')
+  })
+
+  it('tells the verifier which criteria take owner and that fail still applies', () => {
+    const prompt = AGENTS.verifier!.prompt
+    expect(prompt).toContain('owner check')
+    expect(prompt).toContain('gets fail when you can see the work is wrong')
+    expect(prompt).toContain('never gets pass')
+    expect(prompt).toContain('not back to Build')
+  })
 })

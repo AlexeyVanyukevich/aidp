@@ -41,7 +41,7 @@ const BRANCH = 'board/PAY-1-r2'
 
 /** What one process of a phase does. */
 type Act = 'ok' | 'paused' | 'cancelled' | 'shutdown' | 'fails' | 'gone'
-type Verdict = 'pass' | 'fail' | 'no-report'
+type Verdict = 'pass' | 'fail' | 'owner-pass' | 'owner-fail' | 'no-report'
 interface Script {
   /** Per phase and attempt, what each of its processes does in turn: `{ 'build-1': ['paused', 'ok'] }`. */
   acts?: Record<string, Act[]>
@@ -115,7 +115,21 @@ function harness(script: Script) {
           phase_id: record.phaseId,
           body_md: `| AC1 | ${verdict} |`,
           uri: null,
-          data: { summary: 's', criteria: [{ id: 'AC1', status: verdict, evidence: 'e' }] },
+          data: {
+            summary: 's',
+            criteria:
+              verdict === 'owner-pass'
+                ? [
+                    { id: 'AC1', status: 'pass', evidence: 'e' },
+                    { id: 'AC2', status: 'owner', evidence: 'e' },
+                  ]
+                : verdict === 'owner-fail'
+                  ? [
+                      { id: 'AC1', status: 'fail', evidence: 'e' },
+                      { id: 'AC2', status: 'owner', evidence: 'e' },
+                    ]
+                  : [{ id: 'AC1', status: verdict, evidence: 'e' }],
+          },
         })
     }
     return {
@@ -323,6 +337,27 @@ describe('a run carried out from the start, as slice 1 did', () => {
       'start verify-3',
     ])
     expect(h.handoffs['build-2']).toContain('<verify_report>')
+    expect(h.runEnd()).toMatchObject({
+      payload: { outcome: 'failed', reason: 'verify failed three times' },
+    })
+  })
+
+  it('opens the pull request when the report holds pass and owner and no fail', async () => {
+    const h = harness({ verdicts: ['owner-pass'] })
+    expect(await carryOut(START as Extract<Work, { kind: 'start' }>, h.deps)).toBe('review')
+    expect(h.calls.filter((c) => c.startsWith('start'))).toEqual([
+      'start plan-1',
+      'start build-1',
+      'start verify-1',
+    ])
+    expect(h.gitCalls).toContain(`push ${BRANCH}`)
+    expect(h.gitCalls).toContain('create pr')
+  })
+
+  it('still fails after the third report that holds an owner and a fail', async () => {
+    const h = harness({ verdicts: ['owner-fail', 'owner-fail', 'owner-fail'] })
+    expect(await carryOut(START as Extract<Work, { kind: 'start' }>, h.deps)).toBe('failed')
+    expect(h.calls.filter((c) => c.startsWith('start verify'))).toHaveLength(3)
     expect(h.runEnd()).toMatchObject({
       payload: { outcome: 'failed', reason: 'verify failed three times' },
     })

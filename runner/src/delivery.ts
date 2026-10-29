@@ -271,7 +271,7 @@ export async function carryOut(
             throw new End('failed', 'the verifier saved no report')
           }
           await steps.endPhase(true)
-          if ((report.data as ReportData).criteria.every((c) => c.status === 'pass'))
+          if ((report.data as ReportData).criteria.every((c) => c.status !== 'fail'))
             state.stage = 'push'
           else nextAttempt(report.id)
           break
