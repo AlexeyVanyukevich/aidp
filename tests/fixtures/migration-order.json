@@ -1,0 +1,51 @@
+[
+  {
+    "name": "004_helps against 004_setup_command",
+    "file": "004_helps.ts",
+    "siblings": ["001_initial.ts", "002_a.ts", "003_b.ts", "004_setup_command.ts"],
+    "tooEarly": true,
+    "after": "004_setup_command"
+  },
+  {
+    "name": "007_x against 001 to 006",
+    "file": "007_x.ts",
+    "siblings": ["001_a.ts", "002_a.ts", "003_a.ts", "004_a.ts", "005_a.ts", "006_a.ts"],
+    "tooEarly": false,
+    "after": "006_a"
+  },
+  {
+    "name": "a name equal to a sibling's with another extension",
+    "file": "004_helps.js",
+    "siblings": ["003_a.ts", "004_helps.ts"],
+    "tooEarly": true,
+    "after": "004_helps"
+  },
+  {
+    "name": "a sibling named index.ts is ignored",
+    "file": "001_initial.ts",
+    "siblings": ["index.ts"],
+    "tooEarly": false,
+    "after": null
+  },
+  {
+    "name": "004_helps against 0040_x, by code unit",
+    "file": "004_helps.ts",
+    "siblings": ["0040_x.ts"],
+    "tooEarly": false,
+    "after": "0040_x"
+  },
+  {
+    "name": "a new path whose own file is on origin",
+    "file": "004_helps.ts",
+    "siblings": ["003_a.ts", "004_helps.ts"],
+    "tooEarly": true,
+    "after": "004_helps"
+  },
+  {
+    "name": "no sibling at all",
+    "file": "001_initial.ts",
+    "siblings": [],
+    "tooEarly": false,
+    "after": null
+  }
+]

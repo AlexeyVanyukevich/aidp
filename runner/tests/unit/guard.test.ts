@@ -124,6 +124,55 @@ describe('the guard', () => {
     it('refuses to create a migration outside Build', () => {
       expect(decide(edit(NEW, 'Write'), mctx('plan', [NEW])).allow).toBe(false)
     })
+
+    describe('order', () => {
+      const DIR = 'server/src/db/migrations'
+      const early = `${DIR}/004_helps.ts`
+      const later = `${DIR}/007_helps.ts`
+      const existing = `${DIR}/005_plan_kept_from.ts`
+      const octx = (allowed: string[], approved: string[] = []) => ({
+        phase: 'build',
+        allowedFiles: allowed,
+        approvedMigrations: approved,
+        paused: false,
+        cwd: CWD,
+        exists: (path: string) => path.endsWith('005_plan_kept_from.ts'),
+        migrationSiblings: (dir: string) =>
+          dir === DIR
+            ? ['004_setup_command.ts', '005_plan_kept_from.ts', '006_project_links.ts']
+            : [],
+      })
+      it('denies a new migration that sorts too early, even when the plan lists it', () => {
+        const verdict = decide(edit(early, 'Write'), octx([early]))
+        expect(verdict.allow).toBe(false)
+        expect(reason(verdict)).toContain('004_helps.ts')
+        expect(reason(verdict)).toContain('name order')
+        expect(reason(verdict)).toContain('006_project_links')
+        expect(reason(verdict)).not.toContain('request_approval')
+      })
+      it('keeps the request text for a new migration in order', () => {
+        const verdict = decide(edit(later, 'Write'), octx([later]))
+        expect(reason(verdict)).toContain('creating the migration')
+        expect(reason(verdict)).toContain('kind migration')
+      })
+      it('does not check the order of an existing migration', () => {
+        const verdict = decide(edit(existing), octx([existing]))
+        expect(reason(verdict)).toContain('changing the migration')
+        expect(reason(verdict)).not.toContain('name order')
+      })
+      it('does not check a migration the owner allowed', () => {
+        expect(decide(edit(early, 'Write'), octx([], [early]))).toEqual({ allow: true })
+      })
+      it('does not look for siblings of a path that is no migration', () => {
+        const verdict = decide(edit('src/a.ts', 'Write'), {
+          ...octx(['src/a.ts']),
+          migrationSiblings: () => {
+            throw new Error('listed')
+          },
+        })
+        expect(verdict).toEqual({ allow: true })
+      })
+    })
   })
 
   // Slice 3 spec §10: a command or agent left in the background is lost when the turn ends.
