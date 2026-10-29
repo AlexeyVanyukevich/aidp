@@ -1,5 +1,6 @@
 import { isAbsolute } from 'node:path'
 import type { ApprovalKind } from '../../shared/vocabulary.js'
+import { migrationOrder } from './migration-order.js'
 
 /**
  * The rules of an approval request and its answer (slice 2 spec, §5; a batch, slice 3 spec, §6):
@@ -62,6 +63,17 @@ export interface Finding {
     | 'unknown_question'
     | 'duplicate'
     | 'not_relative'
+    | 'out_of_order'
+  /** For `out_of_order`: the greatest sibling name, which a new name must sort after. */
+  after?: string
+}
+
+/** What a migration request is checked against, read beforehand: the files beside the path. */
+export interface MigrationSiblings {
+  /** Whether the path exists in the run's worktree. */
+  exists: boolean
+  /** File names directly in the migration's directory, in the worktree and on the base. */
+  siblings: string[]
 }
 
 export const LIMITS = {
@@ -154,7 +166,7 @@ function checkBatch(input: RequestInput): Finding[] {
   return findings
 }
 
-export function checkRequest(input: RequestInput): Finding[] {
+export function checkRequest(input: RequestInput, order?: MigrationSiblings): Finding[] {
   if (input.kind === 'questions') return checkBatch(input)
   const findings: Finding[] = []
   if (blank(input.question)) findings.push({ field: 'question', code: 'required' })
@@ -172,6 +184,14 @@ export function checkRequest(input: RequestInput): Finding[] {
     else if (files.length > 1) findings.push({ field: 'files', code: 'too_many' })
     else if (!insideWorktree(files[0] ?? ''))
       findings.push({ field: 'files[0]', code: 'not_relative' })
+    else if (order !== undefined && !order.exists) {
+      const { tooEarly, after } = migrationOrder(
+        (files[0] ?? '').split(/[\\/]/).at(-1) ?? '',
+        order.siblings,
+      )
+      if (tooEarly && after !== null)
+        findings.push({ field: 'files[0]', code: 'out_of_order', after })
+    }
   } else if (
     (input.context_md ?? '').length > (input.kind === 'plan' ? LIMITS.planContext : LIMITS.context)
   )

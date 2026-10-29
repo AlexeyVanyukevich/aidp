@@ -157,6 +157,33 @@ describe('checkRequest', () => {
   })
 })
 
+describe('checkRequest for a migration out of order', () => {
+  const DIR = 'server/src/db/migrations'
+  const request = (file: string) => ({
+    kind: 'migration' as const,
+    question: 'Adds a column.',
+    options: [],
+    files: [`${DIR}/${file}`],
+    context_md: 'code',
+  })
+  const siblings = ['004_setup_command.ts', '005_plan_kept_from.ts', '006_project_links.ts']
+  it('names the sibling a new name must sort after', () => {
+    expect(checkRequest(request('004_helps.ts'), { exists: false, siblings })).toEqual([
+      { field: 'files[0]', code: 'out_of_order', after: '006_project_links' },
+    ])
+  })
+  it.each([
+    ['a name in order', '007_helps.ts', false],
+    ['an existing path', '004_setup_command.ts', true],
+  ])('raises nothing for %s', (_name, file, exists) => {
+    expect(checkRequest(request(file), { exists, siblings })).toEqual([])
+  })
+  it('raises nothing when no siblings were read', () => {
+    expect(checkRequest(request('001_initial.ts'), { exists: false, siblings: [] })).toEqual([])
+    expect(checkRequest(request('004_helps.ts'))).toEqual([])
+  })
+})
+
 describe('checkRequest for a plan', () => {
   const plan = (length: number): RequestInput => ({
     kind: 'plan',
