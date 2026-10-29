@@ -142,15 +142,103 @@ describe('the lint', () => {
     expect(spec.findings).toEqual([])
     expect(spec.approvable).toBe(false)
   })
+})
 
-  it('ignores prose that is not a list item inside a section', () => {
+const REQS = '## Requirements\n1. R1 – a\n\n## Acceptance criteria\n- AC1 (R1): Given x Then y\n\n'
+
+interface Row {
+  name: string
+  body: string
+  questions: string[]
+  approvable: boolean
+}
+
+const QUESTION_ROWS: Row[] = [
+  {
+    name: 'AC1 a plain line',
+    body: `${REQS}## Open questions\nShell cwd was reset to /tmp/x\n`,
+    questions: ['Shell cwd was reset to /tmp/x'],
+    approvable: false,
+  },
+  {
+    name: 'AC2 an indented line after an item',
+    body: `${REQS}## Open questions\n- Should a dead delivery alert anyone?\n  It matters for on-call.\n`,
+    questions: ['Should a dead delivery alert anyone?', 'It matters for on-call.'],
+    approvable: false,
+  },
+  {
+    name: 'AC3 blanks, spaces and bare markers',
+    body: `${REQS}## Open questions\n\n   \n-\n- \n*\n+\n1.\n1)\n`,
+    questions: [],
+    approvable: true,
+  },
+  {
+    name: 'AC4 None',
+    body: `${REQS}## Open questions\nNone\n`,
+    questions: ['None'],
+    approvable: false,
+  },
+  {
+    name: 'AC4 None.',
+    body: `${REQS}## Open questions\nNone.\n`,
+    questions: ['None.'],
+    approvable: false,
+  },
+  {
+    name: 'AC4 N/A',
+    body: `${REQS}## Open questions\nN/A\n`,
+    questions: ['N/A'],
+    approvable: false,
+  },
+  {
+    name: 'AC4 - None',
+    body: `${REQS}## Open questions\n- None\n`,
+    questions: ['None'],
+    approvable: false,
+  },
+  {
+    name: 'AC5 order',
+    body: `${REQS}## Open questions\nFirst\n- Second\nThird\n`,
+    questions: ['First', 'Second', 'Third'],
+    approvable: false,
+  },
+  {
+    name: 'AC6 a repeated empty section',
+    body: `${REQS}## Open questions\n- Is one second right?\n\n## Open questions\n`,
+    questions: ['Is one second right?'],
+    approvable: false,
+  },
+  {
+    name: 'AC11 prose under other sections',
+    body: '## Requirements\nEach is testable:\n1. R1 – a\n\n## Acceptance criteria\nEach names its requirement:\n- AC1 (R1): Given x Then y\n',
+    questions: [],
+    approvable: true,
+  },
+]
+
+describe('parseSpec on Open questions', () => {
+  it.each(QUESTION_ROWS)('$name', ({ body, questions, approvable }) => {
+    const spec = parseSpec(body)
+    expect(spec.openQuestions).toEqual(questions)
+    expect(spec.findings).toEqual([])
+    expect(spec.approvable).toBe(approvable)
+  })
+})
+
+describe('parseSpec on a repeated heading', () => {
+  it('AC7 reads both sections as one', () => {
     const spec = parseSpec(
-      GOOD.replace(
-        '## Open questions\n',
-        '## Open questions\nAll must be answered before approval.\n',
-      ),
+      '## Requirements\n1. R1 – a\n\n## Requirements\n2. R2 – b\n\n## Acceptance criteria\n- AC1 (R1): Given x Then y\n- AC2 (R2): Given x Then y\n',
     )
-    expect(spec.openQuestions).toEqual([])
+    expect(spec.requirements.map((r) => r.id)).toEqual(['R1', 'R2'])
+    expect(spec.findings).toEqual([])
+  })
+
+  it('AC8 reports an id repeated across sections', () => {
+    const spec = parseSpec(
+      '## Requirements\n1. R1 – a\n\n## Requirements\n2. R1 – b\n\n## Acceptance criteria\n- AC1 (R1): Given x Then y\n',
+    )
+    expect(spec.findings).toContainEqual({ code: 'duplicate_id', id: 'R1' })
   })
 })
 

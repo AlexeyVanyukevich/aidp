@@ -115,6 +115,17 @@ describe('approving a spec', () => {
     expect(response.json().details.open_questions).toEqual(['Is one second right?'])
   })
 
+  it('refuses a spec whose open question is a plain line', async () => {
+    const spec = (await save(`${GOOD_SPEC}Shell cwd was reset to /tmp/x\n`)).json()
+    const response = await approve(spec.id)
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({
+      error: 'validation_error',
+      details: { open_questions: ['Shell cwd was reset to /tmp/x'] },
+    })
+    expect(await taskState()).toBe('spec_review')
+  })
+
   // Review Focus 4: two tabs, one stale.
   it.each([
     [
