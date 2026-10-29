@@ -1,7 +1,16 @@
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { buildTestApp, closeTestDb, getTestDb, resetDb } from './helpers.js'
 import { seedRunningRun } from './fixtures.js'
+import { registerBoardTools } from '../../src/modules/mcp/board-tools.js'
+import { readMigrationSiblings } from '../../src/modules/projects/migration-siblings.js'
 import { openApproval, type OpenRequest } from '../../src/modules/approvals/approval.service.js'
 import type { BoardMessage } from '../../src/shared/bus.js'
 
@@ -438,5 +447,136 @@ describe('a batch of questions', () => {
     })
     expect(response.statusCode).toBe(200)
     expect(await taskState(taskId)).toBe('running')
+  })
+})
+
+describe('a migration request that sorts before a sibling', () => {
+  const DIR = 'server/src/db/migrations'
+
+  /** A run whose worktree holds `files`, and a repository whose origin/main holds `onOrigin`. */
+  async function migrationRun(
+    files: string[],
+    onOrigin: string[] = [],
+    repo = true,
+    projectKey = 'PAY',
+  ) {
+    const root = mkdtempSync(join(tmpdir(), 'order-'))
+    const worktree = join(root, 'worktree')
+    mkdirSync(join(worktree, DIR), { recursive: true })
+    for (const f of files) writeFileSync(join(worktree, DIR, f), '')
+    const repoPath = join(root, 'repo')
+    if (repo) {
+      mkdirSync(join(repoPath, DIR), { recursive: true })
+      const git = (...args: string[]) =>
+        execFileSync(
+          'git',
+          ['-C', repoPath, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args],
+          { stdio: 'ignore' },
+        )
+      for (const f of onOrigin) writeFileSync(join(repoPath, DIR, f), '')
+      writeFileSync(join(repoPath, 'README'), '')
+      git('init', '-q', '-b', 'main')
+      git('add', '-A')
+      git('commit', '-qm', 'x')
+      git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+    }
+    const run = await seedRunningRun(db(), { projectKey })
+    await db()
+      .updateTable('runs')
+      .set({ worktree_path: worktree })
+      .where('id', '=', run.runId)
+      .execute()
+    await db()
+      .updateTable('projects')
+      .set({ repo_path: repoPath })
+      .where('id', '=', run.projectId)
+      .execute()
+    const server = new McpServer({ name: 'board', version: '1.0.0' })
+    registerBoardTools(server, { db: db(), runId: run.runId, taskId: run.taskId, clock: () => now })
+    const [a, b] = InMemoryTransport.createLinkedPair()
+    await server.connect(a)
+    const client = new Client({ name: 'test', version: '0.0.0' })
+    await client.connect(b)
+    const ask = async (file: string) =>
+      (await client.callTool({
+        name: 'request_approval',
+        arguments: {
+          kind: 'migration',
+          question: 'Adds a column.',
+          files: [`${DIR}/${file}`],
+          context_md: 'code',
+        },
+      })) as { isError?: boolean; content: { text: string }[] }
+    return { ...run, ask, worktree, repoPath }
+  }
+
+  const statuses = async (run: { runId: string; phaseId: string; taskId: string }) => ({
+    run: (await runRow(run.runId)).status,
+    phase: (
+      await db()
+        .selectFrom('phases')
+        .select('status')
+        .where('id', '=', run.phaseId)
+        .executeTakeFirstOrThrow()
+    ).status,
+    task: await taskState(run.taskId),
+    requests: await db()
+      .selectFrom('approval_requests')
+      .select('id')
+      .where('run_id', '=', run.runId)
+      .execute(),
+  })
+
+  it('is refused naming files[0], the order and the sibling, opening nothing', async () => {
+    const run = await migrationRun(['006_project_links.ts'])
+    const before = await statuses(run)
+    const result = await run.ask('004_helps.ts')
+    expect(result.isError).toBe(true)
+    const text = result.content.map((c) => c.text).join('\n')
+    expect(text).toContain('files[0]')
+    expect(text).toContain('out of order')
+    expect(text).toContain('006_project_links')
+    expect(await statuses(run)).toEqual(before)
+    expect(before.requests).toEqual([])
+  })
+
+  it('names a sibling that only origin/<base> holds', async () => {
+    const run = await migrationRun(['001_a.ts'], ['004_setup_command.ts'])
+    const result = await run.ask('004_helps.ts')
+    expect(result.isError).toBe(true)
+    expect(result.content[0]?.text).toContain('004_setup_command')
+  })
+
+  it('opens and pauses the run for a name in order', async () => {
+    const run = await migrationRun(['006_project_links.ts'])
+    const result = await run.ask('007_helps.ts')
+    expect(result.isError).toBeUndefined()
+    const after = await statuses(run)
+    expect(after.run).toBe('paused')
+    expect(after.requests).toHaveLength(1)
+  })
+
+  it('raises no order finding for a path that exists in the worktree', async () => {
+    const run = await migrationRun(['004_setup_command.ts', '006_project_links.ts'])
+    const result = await run.ask('004_setup_command.ts')
+    expect(result.isError).toBeUndefined()
+  })
+
+  it('compares with the worktree alone when origin/<base> does not resolve, fetching nothing', async () => {
+    const run = await migrationRun(['006_project_links.ts'], [], false)
+    expect((await run.ask('004_helps.ts')).isError).toBe(true)
+    const calls: string[][] = []
+    const siblings = await readMigrationSiblings(
+      { worktreePath: run.worktree, repoPath: run.repoPath, baseBranch: 'main' },
+      `${DIR}/001_initial.ts`,
+      async (_cwd, args) => {
+        calls.push(args)
+        throw new Error('no ref')
+      },
+    )
+    expect(siblings).toEqual({ exists: false, siblings: ['006_project_links.ts'] })
+    expect(calls.flat()).not.toContain('fetch')
+    const none = await migrationRun([], [], false, 'NON')
+    expect((await none.ask('001_initial.ts')).isError).toBeUndefined()
   })
 })
