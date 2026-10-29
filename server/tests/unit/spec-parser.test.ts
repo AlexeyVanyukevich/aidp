@@ -208,12 +208,6 @@ const QUESTION_ROWS: Row[] = [
     questions: ['Is one second right?'],
     approvable: false,
   },
-  {
-    name: 'AC11 prose under other sections',
-    body: '## Requirements\nEach is testable:\n1. R1 – a\n\n## Acceptance criteria\nEach names its requirement:\n- AC1 (R1): Given x Then y\n',
-    questions: [],
-    approvable: true,
-  },
 ]
 
 describe('parseSpec on Open questions', () => {
@@ -303,5 +297,134 @@ describe('parseSpec on the owner marker', () => {
     ['(R1, owner)', true],
   ])('approvable for %s is %s', (marks, approvable) => {
     expect(parseSpec(withMarks(marks)).approvable).toBe(approvable)
+  })
+})
+
+const AC = '## Acceptance criteria\n- AC1 (R1): Given x Then y\n'
+const PROSE = (section: string, text: string) => ({ code: 'prose_in_list', section, text })
+
+const PROSE_ROWS: { name: string; body: string; findings: object[] }[] = [
+  {
+    name: 'AC1 a line after an item',
+    body: `## Requirements\n1. R1 – first\nThe export must also include archived rows.\n\n${AC}`,
+    findings: [PROSE('Requirements', 'The export must also include archived rows.')],
+  },
+  {
+    name: 'AC2 prose under other sections',
+    body: '## Requirements\nEach is testable:\n1. R1 – a\n\n## Acceptance criteria\nEach names its requirement:\n- AC1 (R1): Given x Then y\n',
+    findings: [
+      PROSE('Requirements', 'Each is testable:'),
+      PROSE('Acceptance criteria', 'Each names its requirement:'),
+    ],
+  },
+  {
+    name: 'AC3 a fenced block at column 0',
+    body: `## Requirements\n1. R1 – a\n\n\`\`\`json\n{ "a": 1 }\n\`\`\`\n\n${AC}`,
+    findings: [
+      PROSE('Requirements', '```json'),
+      PROSE('Requirements', '{ "a": 1 }'),
+      PROSE('Requirements', '```'),
+    ],
+  },
+  {
+    name: 'AC8 an indented line with nothing above',
+    body: `## Requirements\n   indented with nothing above\n1. R1 – a\n\n${AC}`,
+    findings: [PROSE('Requirements', 'indented with nothing above')],
+  },
+  {
+    name: 'AC9 an indented line under a repeated heading',
+    body: `## Requirements\n1. R1 – a\n\n## Requirements\n   b\n\n${AC}`,
+    findings: [PROSE('Requirements', 'b')],
+  },
+  {
+    name: 'AC12 only prose under Requirements',
+    body: `## Requirements\nThe export must include archived rows.\n\n${AC}`,
+    findings: [
+      { code: 'no_requirements' },
+      PROSE('Requirements', 'The export must include archived rows.'),
+      { code: 'unknown_requirement', id: 'AC1', text: 'R1' },
+    ],
+  },
+  {
+    name: 'AC13 prose between requirements',
+    body: '## Requirements\n1. R1 – a\nmiddle\n2. R2 – b\n\n## Acceptance criteria\n- AC1 (R1): Given x\n- AC2 (R2): Given x\n',
+    findings: [PROSE('Requirements', 'middle')],
+  },
+  {
+    name: 'AC14 findings in the order of the lines',
+    body: '## Requirements\n- first without id\nbetween\n- second without id\n1. R1 – a\n\n## Acceptance criteria\n- criterion without id\nafter it\n- AC1 (R1): Given x Then y\n',
+    findings: [
+      { code: 'requirement_without_id', text: 'first without id' },
+      PROSE('Requirements', 'between'),
+      { code: 'requirement_without_id', text: 'second without id' },
+      { code: 'criterion_without_id', text: 'criterion without id' },
+      PROSE('Acceptance criteria', 'after it'),
+    ],
+  },
+]
+
+describe('parseSpec on prose under Requirements and Acceptance criteria', () => {
+  it.each(PROSE_ROWS)('$name', ({ body, findings }) => {
+    const spec = parseSpec(body)
+    expect(spec.findings).toEqual(findings)
+    expect(spec.approvable).toBe(false)
+  })
+
+  it('AC12 reads no requirement from prose', () => {
+    expect(parseSpec(PROSE_ROWS[5]?.body ?? '').requirements).toEqual([])
+  })
+
+  it('AC13 keeps both requirements around prose', () => {
+    expect(parseSpec(PROSE_ROWS[6]?.body ?? '').requirements.map((r) => r.id)).toEqual(['R1', 'R2'])
+  })
+
+  it('AC9 keeps R1 text', () => {
+    expect(parseSpec(PROSE_ROWS[4]?.body ?? '').requirements).toEqual([{ id: 'R1', text: 'a' }])
+  })
+
+  it('AC4 ignores blanks and bare markers', () => {
+    const spec = parseSpec(
+      '## Requirements\n\n   \n\t\n-\n*\n+\n1.\n1)\n1. R1 – a\n\n## Acceptance criteria\n\n \n-\n*\n+\n1.\n1)\n- AC1 (R1): Given x Then y\n',
+    )
+    expect(spec.findings).toEqual([])
+    expect(spec.approvable).toBe(true)
+  })
+})
+
+describe('parseSpec on continuation lines', () => {
+  it('AC5 joins an indented line to its criterion', () => {
+    const spec = parseSpec(
+      `## Requirements\n1. R1 – a\n\n## Acceptance criteria\n- AC1 (R1): Given x\n  When y Then z\n`,
+    )
+    expect(spec.criteria).toEqual([
+      { id: 'AC1', requirements: ['R1'], text: 'Given x\n  When y Then z', owner: false },
+    ])
+    expect(spec.findings).toEqual([])
+  })
+
+  it('AC6 keeps nested list lines in a requirement', () => {
+    const spec = parseSpec(
+      `## Requirements\n1. R1 – runs these commands:\n\n   - npm test\n   - npm run lint\n\n${AC}`,
+    )
+    expect(spec.requirements).toEqual([
+      { id: 'R1', text: 'runs these commands:\n   - npm test\n   - npm run lint' },
+    ])
+    expect(spec.findings).toEqual([])
+  })
+
+  it('AC7 keeps a tab', () => {
+    const spec = parseSpec(
+      `## Requirements\n1. R1 – a\n\n## Acceptance criteria\n- AC1 (R1): Given x\n\tWhen y Then z\n`,
+    )
+    expect(spec.criteria[0]?.text).toBe('Given x\n\tWhen y Then z')
+    expect(spec.findings).toEqual([])
+  })
+
+  it('AC10 reads parentheses from the first line only', () => {
+    const spec = parseSpec(
+      '## Requirements\n1. R1 – a\n2. R2 – b\n\n## Acceptance criteria\n- AC1 (R1): Given x\n  (R2) Then y\n- AC2 (R2): Given x\n',
+    )
+    expect(spec.criteria[0]?.requirements).toEqual(['R1'])
+    expect(spec.findings).toEqual([])
   })
 })

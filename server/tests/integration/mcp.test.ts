@@ -504,6 +504,17 @@ describe('save_spec', () => {
     ])
   })
 
+  it('names a prose line under Requirements', async () => {
+    const { client } = await specSession()
+    const result = await saveSpec(
+      client,
+      '## Requirements\n1. R1 – a\nIt also retries.\n\n## Acceptance criteria\n- AC1 (R1): Given x Then y\n',
+    )
+    expect(text(result)).toContain(
+      'Under Requirements every line must be an item or indented under one: “It also retries.”.',
+    )
+  })
+
   it('refuses a delivery run, and saves nothing', async () => {
     const { client, taskId } = await session()
     const result = await saveSpec(client, GOOD_SPEC)
