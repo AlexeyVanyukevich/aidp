@@ -31,6 +31,14 @@ describe('lintMessage', () => {
       { code: 'unknown_marker', id: 'AC1', text: 'Owner' },
       'AC1 has “Owner” in its parentheses, which is neither a requirement id nor owner.',
     ],
+    [
+      { code: 'prose_in_list', section: 'Requirements', text: 'x' },
+      'Under Requirements every line must be an item or indented under one: “x”.',
+    ],
+    [
+      { code: 'prose_in_list', section: 'Acceptance criteria', text: 'y' },
+      'Under Acceptance criteria every line must be an item or indented under one: “y”.',
+    ],
     [{ code: 'something_new' }, 'something_new'],
   ])('%j', (finding, message) => {
     expect(lintMessage(finding)).toBe(message)

@@ -18,6 +18,8 @@ export function lintMessage(finding: LintFinding): string {
       return `${finding.id} is used twice.`
     case 'unknown_marker':
       return `${finding.id} has “${finding.text}” in its parentheses, which is neither a requirement id nor owner.`
+    case 'prose_in_list':
+      return `Under ${finding.section} every line must be an item or indented under one: “${finding.text}”.`
     default:
       return finding.code
   }
