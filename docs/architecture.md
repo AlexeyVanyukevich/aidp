@@ -265,6 +265,24 @@ the run; the claim carries both, and the runner writes `approved-migrations.json
 `allowed-files.json`, where the guard reads it. Outside Build the guard still refuses to create
 a migration.
 
+*Order.* A migration's name is its file name without its last extension; its siblings are the
+other migrations directly in its directory, in the run's worktree and on `origin/<base>` as last
+fetched (`index.*` files excluded). Migrations apply in name order, compared by UTF-16 code unit
+as the migrator's own sort does, so a new migration (a path not in the worktree) whose name is
+equal to or sorts before a sibling's would stop the server at start. The guard denies creating
+such a migration even when the plan lists it, naming the sibling with the greatest name, which a
+new name must sort after, and does not tell the builder to ask. `request_approval` kind
+`migration` refuses the same path with an `out_of_order` finding on `files[0]` carrying that name
+as `after`; no request is opened and the run does not pause. The server reads the siblings
+(worktree directory, then `git ls-tree` of `origin/<base>` in the project's `repo_path`) before
+the transaction opens. The guard learns the base from `base-branch.txt` in the run directory,
+which the runner writes on every start and resume. Nothing is fetched: when `origin/<base>`
+cannot be read, only the worktree's directory is compared, and when that directory does not
+exist, only `origin/<base>`. A migration path the owner already allowed is not checked again,
+and changing an existing migration has no order check. The order is not checked again before
+push, so a base that gains a later migration in the meantime can still leave a branch out of
+order.
+
 **Migrations on start.** `server/src/server.ts` applies every pending migration before it
 listens. A failed one is logged by name with the database's error, the server exits non-zero
 without listening, and the migration is not recorded as applied. `npm run migrate` (and
@@ -306,7 +324,10 @@ Code misses part of it and which is not compared.
 
 ## Security
 
-New migrations, and changes to migrations from the base branch, need the owner's approval.
+New migrations, and changes to migrations from the base branch, need the owner's approval. A new
+migration whose name sorts at or before a sibling's, in the worktree or on `origin/<base>` as last
+fetched, is refused by the guard and by the `migration` request, never put to the owner; see
+"Migration approval".
 
 No sign-in: the server binds 127.0.0.1, answers only to `ALLOWED_HOSTS`, and refuses writes
 from a foreign `Origin`. The runner authenticates with `RUNNER_KEY`; each `claude` process gets
