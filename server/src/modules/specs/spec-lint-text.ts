@@ -20,6 +20,8 @@ export function lintText(finding: LintFinding): string {
       return `${finding.id ?? ''} names ${finding.text ?? ''}, which is not a requirement.`
     case 'duplicate_id':
       return `${finding.id ?? ''} is used twice.`
+    case 'unknown_marker':
+      return `${finding.id ?? ''} has “${finding.text ?? ''}” in its parentheses, which is neither a requirement id nor owner.`
   }
 }
 
