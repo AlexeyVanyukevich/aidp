@@ -1,4 +1,5 @@
-import { isAbsolute, relative, resolve, sep, basename } from 'node:path'
+import { isAbsolute, relative, resolve, sep, basename, posix } from 'node:path'
+import { migrationOrder } from './migration-order.js'
 
 export type Verdict = { allow: true } | { allow: false; reason: string }
 
@@ -157,6 +158,10 @@ function migrationReason(path: string, exists: boolean): string {
   return `${exists ? 'changing' : 'creating'} the migration \`${path}\` needs the owner's approval. Call request_approval with kind migration, the path in files, a summary of what it changes and whether its down step undoes it in question, and the whole file in context_md. Then end your turn.`
 }
 
+function orderReason(path: string, after: string): string {
+  return `the migration \`${path}\` sorts too early: migrations apply in name order, and a new name must sort after \`${after}\`. Rename it so it does, and write it again. It needs no approval request.`
+}
+
 export function decide(
   input: { tool_name: string; tool_input: Record<string, unknown> },
   ctx: {
@@ -171,6 +176,8 @@ export function decide(
     linked?: LinkedPath[]
     cwd: string
     exists: (path: string) => boolean
+    /** File names directly in a migrations directory (relative path), here and on the base. */
+    migrationSiblings?: (directory: string) => string[]
   },
 ): Verdict {
   if (ctx.paused) return deny('The run is paused; end your turn.')
@@ -200,6 +207,14 @@ export function decide(
   if (isMigration(relativePath) && !approved) {
     const exists = ctx.exists(absolute)
     if (ctx.phase === 'build') {
+      if (!exists && ctx.migrationSiblings !== undefined) {
+        const order = migrationOrder(
+          posix.basename(relativePath),
+          ctx.migrationSiblings(posix.dirname(relativePath)),
+        )
+        if (order.tooEarly && order.after !== null)
+          return deny(orderReason(relativePath, order.after))
+      }
       return deny(migrationReason(relativePath, exists))
     } else if (input.tool_name === 'Write' && !exists) {
       return deny(
