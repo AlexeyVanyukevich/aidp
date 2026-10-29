@@ -105,8 +105,27 @@ The runner creates a worktree under `~/.aidp/worktrees/<run>` on `board/<KEY>-r<
 `origin/<base>`, and a run directory under `~/.aidp/runs/<run>` holding the agents, the
 hooks, the MCP configuration, the event buffer and the files Build may change. A run goes through
 stages — `prepare`, `plan`, `build`, `tests`, `verify`, `push`, `pr` — with up to three Build →
-tests → Verify rounds. All criteria passing pushes the branch and opens the pull request, or
+tests → Verify rounds. A report with no `fail` pushes the branch and opens the pull request, or
 takes one already open for the branch. The worktree is removed when the run ends.
+
+**The owner check.** A criterion that no agent in a run can check, such as one that needs a
+browser, carries the word `owner` in its parentheses: `- AC5 (R3, owner): Given … Then …`. The
+spec parser stores `owner: true` on it (a criterion stored without the field reads as `false`);
+`owner` is not a requirement reference, so `(owner)` alone still gets
+`criterion_without_requirement`. Any other token in the parentheses that is not `R<n>` — `Owner`,
+`ownr`, `r1` — is an `unknown_marker` finding, which blocks approval like any lint finding; empty
+tokens left by stray separators are ignored. The verifier gives every criterion one of three
+verdicts through `save_report`: `pass` or `fail` for an ordinary criterion, and for an owner check
+`fail` when it can see the work is wrong and otherwise `owner`, with the evidence of what it did
+check. `save_report` refuses `owner` on an unmarked criterion (`owner_on_unmarked_criterion`) and
+`pass` on an owner check (`pass_on_owner_check`), saving nothing. A report with no `fail` opens the
+pull request whether the rest are `pass` or `owner`; one `fail` starts the next Build round, and
+the third ends the run `failed` with "verify failed three times". The owner sees what is left to
+them as a sentence — "1 criterion is yours to check: AC5." or "2 criteria are yours to check:
+AC5, AC6." — before the report table in the pull request body and above the table in the card's
+PR tab, where an `owner` verdict is a `warning` badge with the text `owner`. The planner's check
+for an owner-check criterion names the hand check, plus whatever a run can still check. The board
+records no result of the hand check.
 
 **The setup command.** A project may carry a `setup_command` (at most 500 characters), set when
 it is registered or later with `PATCH /api/projects/:key`, whose body is either or both of

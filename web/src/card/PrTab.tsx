@@ -4,7 +4,10 @@ import { Badge, Empty, Loading } from '@zellige/react'
 import { api } from '../api'
 import { Loaded } from '../Loaded'
 import { prStatus } from './blocks'
+import { ownerSentence } from './lint'
 import type { ReportData, TaskView } from '../types'
+
+const VERDICT_TONE = { pass: 'success', fail: 'danger', owner: 'warning' } as const
 
 export function PrTab({ task }: { task: TaskView }) {
   const runs = useQuery({ queryKey: ['runs', task.id], queryFn: () => api.runs(task.id) })
@@ -27,6 +30,9 @@ export function PrTab({ task }: { task: TaskView }) {
           )
         const report = latest.artifacts.filter((a) => a.kind === 'verify_report').at(-1)?.data as
           ReportData | undefined
+        const owned = ownerSentence(
+          report?.criteria.filter((c) => c.status === 'owner').map((c) => c.id) ?? [],
+        )
         return (
           <div className="pr-tab">
             <p>
@@ -53,6 +59,7 @@ export function PrTab({ task }: { task: TaskView }) {
                 </ul>
               )}
             </section>
+            {owned !== undefined && <p>{owned}</p>}
             {report && (
               <table>
                 <caption>Verify report</caption>
@@ -68,7 +75,7 @@ export function PrTab({ task }: { task: TaskView }) {
                     <tr key={c.id}>
                       <th scope="row">{c.id}</th>
                       <td>
-                        <Badge tone={c.status === 'pass' ? 'success' : 'danger'}>{c.status}</Badge>
+                        <Badge tone={VERDICT_TONE[c.status]}>{c.status}</Badge>
                       </td>
                       <td>{c.evidence}</td>
                     </tr>

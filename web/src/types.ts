@@ -230,7 +230,7 @@ export interface PlanData {
 }
 export interface ReportData {
   summary: string
-  criteria: { id: string; status: 'pass' | 'fail'; evidence: string }[]
+  criteria: { id: string; status: 'pass' | 'fail' | 'owner'; evidence: string }[]
 }
 export interface PrFile {
   path: string

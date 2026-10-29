@@ -123,6 +123,38 @@ const SCRIPT = {
       builder: [BUILD],
       verifier: [[PASS]],
     },
+    // A spec with an owner check: the verifier passes AC1 and leaves AC2 to the owner.
+    'Hand check at the PR': {
+      planner: [
+        [
+          {
+            tool: 'save_plan',
+            args: {
+              ...PLAN,
+              checks: [
+                { criterion: 'AC1', how: 'read the delays' },
+                { criterion: 'AC2', how: 'the owner reads the banner in a browser' },
+              ],
+            },
+          },
+        ],
+      ],
+      builder: [BUILD],
+      verifier: [
+        [
+          {
+            tool: 'save_report',
+            args: {
+              summary: 'One is yours',
+              criteria: [
+                { id: 'AC1', status: 'pass', evidence: 'src/retry.ts lists 1, 2 and 4' },
+                { id: 'AC2', status: 'owner', evidence: 'the banner is not in the diff to run' },
+              ],
+            },
+          },
+        ],
+      ],
+    },
     'Push fails once': {
       planner: [[{ tool: 'save_plan', args: PLAN }]],
       builder: [BUILD],
