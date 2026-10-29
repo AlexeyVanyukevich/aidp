@@ -88,7 +88,12 @@ describe('approving a spec', () => {
       .where('id', '=', spec.id)
       .executeTakeFirstOrThrow()
     expect(stored.criteria).toEqual([
-      { id: 'AC1', requirements: ['R1'], text: 'Given a failure Then it retries after 1s' },
+      {
+        id: 'AC1',
+        requirements: ['R1'],
+        text: 'Given a failure Then it retries after 1s',
+        owner: false,
+      },
     ])
   })
 
