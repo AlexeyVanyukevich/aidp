@@ -98,6 +98,13 @@ describe('the spec-writer', () => {
     expect(prompt).toContain('## Open questions')
   })
 
+  it('tells the spec-writer to write only items under Requirements and Acceptance criteria', () => {
+    const prompt = AGENTS['spec-writer']?.prompt ?? ''
+    expect(prompt).toContain(
+      'write only items, with no lead-in sentence, and indent a line that continues an item',
+    )
+  })
+
   it('tells the spec-writer to prefer checkable criteria and to mark the rest owner', () => {
     const prompt = AGENTS['spec-writer']!.prompt
     expect(prompt).toContain('(R3, owner)')
