@@ -4,7 +4,8 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { Database } from '../../db/schema.js'
 import { publish } from '../../shared/bus.js'
 import { AppError, ConflictError } from '../../shared/errors.js'
-import { LIMITS, type Finding } from '../approvals/approval-rules.js'
+import { LIMITS, type Finding, type MigrationSiblings } from '../approvals/approval-rules.js'
+import { readMigrationSiblings } from '../projects/migration-siblings.js'
 import { openApproval } from '../approvals/approval.service.js'
 import { lintReply } from '../specs/spec-lint-text.js'
 import { parseSpec } from '../specs/spec-parser.js'
@@ -122,9 +123,34 @@ function refusal(error: unknown) {
   return reply(
     [
       'The question was not asked:',
-      ...findings.map((f) => `- ${f.field}: ${f.code.replaceAll('_', ' ')}`),
+      ...findings.map(
+        (f) =>
+          `- ${f.field}: ${f.code.replaceAll('_', ' ')}${f.after === undefined ? '' : `; migrations apply in name order, so a new name must sort after ${f.after}`}`,
+      ),
     ].join('\n'),
     true,
+  )
+}
+
+/** The siblings of the migration a request names; undefined for any other request. */
+async function siblingsOf(
+  ctx: ToolContext,
+  kind: string | undefined,
+  files: string[] | undefined,
+): Promise<MigrationSiblings | undefined> {
+  const path = files?.[0]
+  if (kind !== 'migration' || files?.length !== 1 || path === undefined) return undefined
+  const where = await ctx.db
+    .selectFrom('runs')
+    .innerJoin('tasks', 'tasks.id', 'runs.task_id')
+    .innerJoin('projects', 'projects.id', 'tasks.project_id')
+    .select(['runs.worktree_path', 'projects.repo_path', 'projects.base_branch'])
+    .where('runs.id', '=', ctx.runId)
+    .executeTakeFirst()
+  if (where === undefined || path.split(/[\\/]/).includes('..')) return undefined
+  return readMigrationSiblings(
+    { worktreePath: where.worktree_path, repoPath: where.repo_path, baseBranch: where.base_branch },
+    path,
   )
 }
 
@@ -167,6 +193,8 @@ export function registerBoardTools(server: McpServer, ctx: ToolContext): void {
           new ConflictError('', { reason: waiting === undefined ? 'no_phase' : 'waiting' }),
         )
       }
+      // Read before the transaction: no git call runs while rows are locked.
+      const migrationSiblings = await siblingsOf(ctx, input.kind, input.files)
       try {
         await ctx.db.transaction().execute((trx) =>
           openApproval(
@@ -187,6 +215,7 @@ export function registerBoardTools(server: McpServer, ctx: ToolContext): void {
                 recommendation: asked.recommendation ?? null,
                 context_md: asked.context_md ?? null,
               })),
+              ...(migrationSiblings === undefined ? {} : { migrationSiblings }),
             },
             ctx.clock(),
             { recordEvent: true },
