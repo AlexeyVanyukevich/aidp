@@ -118,6 +118,7 @@ export interface OpenApproval extends ApprovalView {
 export interface LintFinding {
   code: string
   id?: string
+  section?: string
   text?: string
 }
 export interface SpecView {
