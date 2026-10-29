@@ -9,7 +9,7 @@ export interface PlanInput {
 
 export interface ReportInput {
   summary: string
-  criteria: { id: string; status: 'pass' | 'fail'; evidence: string }[]
+  criteria: { id: string; status: 'pass' | 'fail' | 'owner'; evidence: string }[]
 }
 
 export interface PlanFinding {
@@ -19,7 +19,12 @@ export interface PlanFinding {
 }
 
 export interface ReportFinding {
-  code: 'missing_criterion' | 'unknown_criterion' | 'duplicate_criterion'
+  code:
+    | 'missing_criterion'
+    | 'unknown_criterion'
+    | 'duplicate_criterion'
+    | 'owner_on_unmarked_criterion'
+    | 'pass_on_owner_check'
   id: string
 }
 
@@ -49,6 +54,13 @@ export function checkReport(report: ReportInput, criteria: SpecCriterion[]): Rep
   for (const verdict of report.criteria) {
     if (!known.has(verdict.id)) findings.push({ code: 'unknown_criterion', id: verdict.id })
     else if (seen.has(verdict.id)) findings.push({ code: 'duplicate_criterion', id: verdict.id })
+    else {
+      const marked = criteria.find((c) => c.id === verdict.id)?.owner === true
+      if (verdict.status === 'owner' && !marked)
+        findings.push({ code: 'owner_on_unmarked_criterion', id: verdict.id })
+      if (verdict.status === 'pass' && marked)
+        findings.push({ code: 'pass_on_owner_check', id: verdict.id })
+    }
     seen.add(verdict.id)
   }
   for (const id of known) if (!seen.has(id)) findings.push({ code: 'missing_criterion', id })
@@ -80,14 +92,26 @@ export function renderPlan(plan: PlanInput): string {
   ].join('\n')
 }
 
+const VERDICT_TEXT = { pass: '✔ pass', fail: '✘ fail', owner: '👁 owner' } as const
+
+/** "1 criterion is yours to check: AC5.", or undefined when the report leaves none to the owner. */
+export function ownerSentence(report: ReportInput): string | undefined {
+  const ids = report.criteria.filter((c) => c.status === 'owner').map((c) => c.id)
+  if (ids.length === 0) return undefined
+  const head = ids.length === 1 ? '1 criterion is' : `${ids.length} criteria are`
+  return `${head} yours to check: ${ids.join(', ')}.`
+}
+
 export function renderReport(report: ReportInput): string {
   const rows = report.criteria.map(
     (c) =>
-      `| ${c.id} | ${c.status === 'pass' ? '✔ pass' : '✘ fail'} | ${c.evidence.replaceAll('|', '\\|').replaceAll('\n', ' ')} |`,
+      `| ${c.id} | ${VERDICT_TEXT[c.status]} | ${c.evidence.replaceAll('|', '\\|').replaceAll('\n', ' ')} |`,
   )
+  const sentence = ownerSentence(report)
   return [
     report.summary,
     '',
+    ...(sentence === undefined ? [] : [sentence, '']),
     '| Criterion | Verdict | Evidence |',
     '| --- | --- | --- |',
     ...rows,
