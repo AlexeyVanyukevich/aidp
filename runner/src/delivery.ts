@@ -4,7 +4,12 @@ import type { PlanData, ReportData, RunView, Work } from './contract.js'
 import type { RunnerConfig } from './config.js'
 import type { Git } from './git.js'
 import { buildHandoff, type HandoffInput } from './phases/handoff.js'
-import { prepareRunDir, writeAllowedFiles, writeApprovedMigrations } from './phases/run-dir.js'
+import {
+  prepareRunDir,
+  writeAllowedFiles,
+  writeApprovedMigrations,
+  writeBaseBranch,
+} from './phases/run-dir.js'
 import { End, Release, runPaths, runSteps, type Outcome, type RunDeps } from './run-steps.js'
 import { ApiError } from './api.js'
 import { linkedForHandoff, removeLinked } from './linked.js'
@@ -156,6 +161,7 @@ export async function carryOut(
   return steps.carry({ repo: project.repo_path, branch }, async () => {
     if (run.kind !== 'delivery') throw new End('failed', 'a spec run is not a delivery run')
     prepareRunDir(runDir)
+    writeBaseBranch(runDir, project.base_branch)
     if (work.kind === 'resume') {
       if (work.allowed_files.length > 0) writeAllowedFiles(runDir, work.allowed_files)
       writeApproved()

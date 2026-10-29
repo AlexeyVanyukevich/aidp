@@ -525,6 +525,21 @@ describe('pausing and resuming', () => {
     expect(JSON.parse(readFileSync(join(dir, 'allowed-files.json'), 'utf8'))).toContain(M)
   })
 
+  it('writes the base branch to the run directory on start and on resume', async () => {
+    const started = withPlan(harness({}))
+    await carryOut(START as Extract<Work, { kind: 'start' }>, started.deps)
+    expect(readFileSync(join(started.home, 'runs', RUN.id, 'base-branch.txt'), 'utf8')).toBe('main')
+    const resumed = withPlan(harness({}))
+    await carryOut(
+      resume(checkpoint('build', 1, 'build-phase'), 'Go on.', ['src/retry.ts']) as Extract<
+        Work,
+        { kind: 'resume' }
+      >,
+      resumed.deps,
+    )
+    expect(readFileSync(join(resumed.home, 'runs', RUN.id, 'base-branch.txt'), 'utf8')).toBe('main')
+  })
+
   it('stops at the plan gate when the planner is not confident', async () => {
     const h = harness({ confidence: ['medium'] })
     expect(await carryOut(START as Extract<Work, { kind: 'start' }>, h.deps)).toBe('released')

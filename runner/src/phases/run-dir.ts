@@ -54,5 +54,10 @@ export function writeApprovedMigrations(dir: string, files: string[]): void {
   writeFileSync(join(dir, 'approved-migrations.json'), JSON.stringify(files))
 }
 
+/** The project's base branch: the guard compares a new migration's name with `origin/<base>`. */
+export function writeBaseBranch(dir: string, branch: string): void {
+  writeFileSync(join(dir, 'base-branch.txt'), branch)
+}
+
 /** Written by the event hook when the board pauses the run; the guard refuses everything after. */
 export const PAUSED_MARKER = 'paused'
