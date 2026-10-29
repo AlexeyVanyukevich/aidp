@@ -108,6 +108,13 @@ stages — `prepare`, `plan`, `build`, `tests`, `verify`, `push`, `pr` — with 
 tests → Verify rounds. A report with no `fail` pushes the branch and opens the pull request, or
 takes one already open for the branch. The worktree is removed when the run ends.
 
+**How the lint reads Requirements and Acceptance criteria.** Items only: a list marker at column
+0 followed by text. A line that starts with whitespace continues the item above it, joined with a
+newline that keeps its indentation, and ids and parentheses are read from the item's first line
+only. Every other non-blank line there, a lead-in sentence or a line of a fenced block, is a
+`prose_in_list` finding with the section and the line, which blocks approval. Open questions
+still reads every non-blank line.
+
 **The owner check.** A criterion that no agent in a run can check, such as one that needs a
 browser, carries the word `owner` in its parentheses: `- AC5 (R3, owner): Given … Then …`. The
 spec parser stores `owner: true` on it (a criterion stored without the field reads as `false`);
