@@ -97,6 +97,23 @@ describe('approving a spec', () => {
     ])
   })
 
+  it('stores a criterion with its continuation lines', async () => {
+    const spec = (
+      await save(
+        '## Requirements\n1. R1 – a\n\n## Acceptance criteria\n- AC1 (R1): Given x\n  When y Then z\n',
+      )
+    ).json()
+    expect((await approve(spec.id)).statusCode).toBe(200)
+    const stored = await getTestDb()
+      .selectFrom('specs')
+      .select('criteria')
+      .where('id', '=', spec.id)
+      .executeTakeFirstOrThrow()
+    expect(stored.criteria).toEqual([
+      { id: 'AC1', requirements: ['R1'], text: 'Given x\n  When y Then z', owner: false },
+    ])
+  })
+
   it('refuses a spec whose lint fails, listing the findings', async () => {
     const spec = (await save(GOOD_SPEC.replace(/- AC1.*\n/, ''))).json()
     const response = await approve(spec.id)

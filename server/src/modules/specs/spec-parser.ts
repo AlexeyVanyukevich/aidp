@@ -9,10 +9,12 @@ export type LintCode =
   | 'unknown_requirement'
   | 'duplicate_id'
   | 'unknown_marker'
+  | 'prose_in_list'
 
 export interface LintFinding {
   code: LintCode
   id?: string
+  section?: string
   text?: string
 }
 
@@ -33,33 +35,53 @@ const BARE_MARKER = /^(?:\d+[.)]|[-*+])$/
 const REQUIREMENT = /^(R\d+)\b\s*[–—:.)-]?\s*(.*)$/
 const CRITERION = /^(AC\d+)\s*\(([^)]*)\)\s*[:.–—-]?\s*(.*)$/
 
+type Entry = { kind: 'item'; first: string; tail: string } | { kind: 'prose'; text: string }
+
+const LISTED = new Set(['requirements', 'acceptance criteria'])
+
 /**
- * The lines under each `## heading`, keyed by the heading in lower case. A repeated heading
- * continues its section. Every section reads list items only, except Open questions, which reads
- * every non-blank line, so text there cannot go unseen.
+ * The entries under each `## heading`, keyed by the heading in lower case. A repeated heading
+ * continues its section. Requirements and Acceptance criteria read items, an indented line
+ * continuing the item above it; any other non-blank line there is prose. Other sections read
+ * list items only, except Open questions, which reads every non-blank line.
  */
-function sections(markdown: string): Map<string, string[]> {
-  const result = new Map<string, string[]>()
-  let current: string[] | undefined
-  let everyLine = false
+function sections(markdown: string): Map<string, Entry[]> {
+  const result = new Map<string, Entry[]>()
+  let current: Entry[] | undefined
+  let key = ''
+  let last: (Entry & { kind: 'item' }) | undefined
   for (const raw of markdown.replace(/\r\n?/g, '\n').split('\n')) {
     const line = raw.trimEnd()
     const heading = HEADING.exec(line)
     if (heading?.[1] !== undefined) {
-      const key = heading[1].toLowerCase()
+      key = heading[1].toLowerCase()
       current = result.get(key)
       if (current === undefined) {
         current = []
         result.set(key, current)
       }
-      everyLine = key === 'open questions'
+      last = undefined
       continue
     }
     if (current === undefined) continue
     const trimmed = line.trim()
+    if (trimmed === '') continue
     const item = ITEM.exec(line)
-    if (item?.[1] !== undefined) current.push(item[1].trim())
-    else if (everyLine && trimmed !== '' && !BARE_MARKER.test(trimmed)) current.push(trimmed)
+    if (LISTED.has(key)) {
+      if (/^\s/.test(line)) {
+        if (last !== undefined) last.tail += `\n${line}`
+        else current.push({ kind: 'prose', text: trimmed })
+      } else if (item?.[1] !== undefined) {
+        last = { kind: 'item', first: item[1].trim(), tail: '' }
+        current.push(last)
+      } else if (!BARE_MARKER.test(trimmed)) {
+        current.push({ kind: 'prose', text: trimmed })
+      }
+      continue
+    }
+    if (item?.[1] !== undefined) current.push({ kind: 'item', first: item[1].trim(), tail: '' })
+    else if (key === 'open questions' && !BARE_MARKER.test(trimmed))
+      current.push({ kind: 'item', first: trimmed, tail: '' })
   }
   return result
 }
@@ -72,25 +94,35 @@ export function parseSpec(markdown: string): ParsedSpec {
     if (seen.has(id)) findings.push({ code: 'duplicate_id', id })
     seen.add(id)
   }
+  const prose = (section: string, text: string) =>
+    findings.push({ code: 'prose_in_list', section, text })
 
   const requirements: { id: string; text: string }[] = []
-  const requirementItems = found.get('requirements') ?? []
-  if (requirementItems.length === 0) findings.push({ code: 'no_requirements' })
-  for (const item of requirementItems) {
-    const match = REQUIREMENT.exec(item)
+  const requirementEntries = found.get('requirements') ?? []
+  if (!requirementEntries.some((e) => e.kind === 'item')) findings.push({ code: 'no_requirements' })
+  for (const entry of requirementEntries) {
+    if (entry.kind === 'prose') {
+      prose('Requirements', entry.text)
+      continue
+    }
+    const match = REQUIREMENT.exec(entry.first)
     if (match?.[1] === undefined) {
-      findings.push({ code: 'requirement_without_id', text: item })
+      findings.push({ code: 'requirement_without_id', text: entry.first })
       continue
     }
     noteId(match[1])
-    requirements.push({ id: match[1], text: match[2] ?? '' })
+    requirements.push({ id: match[1], text: (match[2] ?? '') + entry.tail })
   }
 
   const criteria: SpecCriterion[] = []
-  for (const item of found.get('acceptance criteria') ?? []) {
-    const match = CRITERION.exec(item)
+  for (const entry of found.get('acceptance criteria') ?? []) {
+    if (entry.kind === 'prose') {
+      prose('Acceptance criteria', entry.text)
+      continue
+    }
+    const match = CRITERION.exec(entry.first)
     if (match?.[1] === undefined) {
-      findings.push({ code: 'criterion_without_id', text: item })
+      findings.push({ code: 'criterion_without_id', text: entry.first })
       continue
     }
     noteId(match[1])
@@ -102,7 +134,7 @@ export function parseSpec(markdown: string): ParsedSpec {
       if (!/^R\d+$/.test(token) && token !== 'owner')
         findings.push({ code: 'unknown_marker', id: match[1], text: token })
     }
-    criteria.push({ id: match[1], requirements: refs, text: match[3] ?? '', owner })
+    criteria.push({ id: match[1], requirements: refs, text: (match[3] ?? '') + entry.tail, owner })
   }
 
   const known = new Set(requirements.map((r) => r.id))
@@ -122,7 +154,9 @@ export function parseSpec(markdown: string): ParsedSpec {
     }
   }
 
-  const openQuestions = (found.get('open questions') ?? []).filter((q) => q !== '')
+  const openQuestions = (found.get('open questions') ?? [])
+    .flatMap((e) => (e.kind === 'item' ? [e.first] : []))
+    .filter((q) => q !== '')
 
   return {
     requirements,
