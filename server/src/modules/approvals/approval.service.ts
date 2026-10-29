@@ -19,6 +19,7 @@ import {
   type BatchQuestion,
   type BatchQuestionInput,
   type Finding,
+  type MigrationSiblings,
 } from './approval-rules.js'
 
 export interface OpenRequest {
@@ -35,6 +36,8 @@ export interface OpenRequest {
   files?: string[] | null
   /** A batch's questions, as the agent asked them (slice 3 spec, §6). */
   questions?: BatchQuestionInput[] | null
+  /** A migration request's siblings, read before the transaction opened. */
+  migrationSiblings?: MigrationSiblings
 }
 
 export interface ApprovalView {
@@ -113,7 +116,7 @@ export async function openApproval(
       .executeTakeFirst()
     if (existing !== undefined) return { id: existing.id, opened: false }
   }
-  const findings = checkRequest(request)
+  const findings = checkRequest(request, request.migrationSiblings)
   if (findings.length > 0)
     throw new ValidationError('The approval request is not valid', { findings })
 
