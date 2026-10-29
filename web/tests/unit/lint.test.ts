@@ -27,6 +27,10 @@ describe('lintMessage', () => {
       'AC2 names R9, which is not a requirement.',
     ],
     [{ code: 'duplicate_id', id: 'R1' }, 'R1 is used twice.'],
+    [
+      { code: 'unknown_marker', id: 'AC1', text: 'Owner' },
+      'AC1 has “Owner” in its parentheses, which is neither a requirement id nor owner.',
+    ],
     [{ code: 'something_new' }, 'something_new'],
   ])('%j', (finding, message) => {
     expect(lintMessage(finding)).toBe(message)

@@ -113,4 +113,6 @@ export interface SpecCriterion {
   id: string
   requirements: string[]
   text: string
+  /** Only the owner can check it. Absent in a criterion stored before the marker existed. */
+  owner?: boolean
 }

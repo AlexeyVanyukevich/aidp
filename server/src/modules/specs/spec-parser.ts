@@ -8,6 +8,7 @@ export type LintCode =
   | 'requirement_without_criterion'
   | 'unknown_requirement'
   | 'duplicate_id'
+  | 'unknown_marker'
 
 export interface LintFinding {
   code: LintCode
@@ -80,9 +81,15 @@ export function parseSpec(markdown: string): ParsedSpec {
       continue
     }
     noteId(match[1])
-    const refs = (match[2] ?? '').split(/[,\s]+/).filter((ref) => /^R\d+$/.test(ref))
+    const tokens = (match[2] ?? '').split(/[,\s]+/).filter((token) => token !== '')
+    const refs = tokens.filter((token) => /^R\d+$/.test(token))
+    const owner = tokens.includes('owner')
     if (refs.length === 0) findings.push({ code: 'criterion_without_requirement', id: match[1] })
-    criteria.push({ id: match[1], requirements: refs, text: match[3] ?? '' })
+    for (const token of tokens) {
+      if (!/^R\d+$/.test(token) && token !== 'owner')
+        findings.push({ code: 'unknown_marker', id: match[1], text: token })
+    }
+    criteria.push({ id: match[1], requirements: refs, text: match[3] ?? '', owner })
   }
 
   const known = new Set(requirements.map((r) => r.id))

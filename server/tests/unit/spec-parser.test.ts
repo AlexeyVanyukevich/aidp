@@ -26,11 +26,13 @@ describe('parseSpec on the template', () => {
         id: 'AC1',
         requirements: ['R1'],
         text: 'Given a 500 When delivering Then it is retried after 1s, 2s and 4s',
+        owner: false,
       },
       {
         id: 'AC2',
         requirements: ['R2'],
         text: 'Given four failures When the last fails Then the delivery is dead',
+        owner: false,
       },
     ])
     expect(spec.openQuestions).toEqual([])
@@ -149,5 +151,69 @@ describe('the lint', () => {
       ),
     )
     expect(spec.openQuestions).toEqual([])
+  })
+})
+
+const CASES: {
+  marks: string
+  requirements: string[]
+  owner: boolean
+  findings: { code: string; text?: string }[]
+}[] = [
+  { marks: '(R1)', requirements: ['R1'], owner: false, findings: [] },
+  { marks: '(R1, owner)', requirements: ['R1'], owner: true, findings: [] },
+  { marks: '(R1 owner)', requirements: ['R1'], owner: true, findings: [] },
+  { marks: '(owner, R1, R2)', requirements: ['R1', 'R2'], owner: true, findings: [] },
+  {
+    marks: '(R1, Owner)',
+    requirements: ['R1'],
+    owner: false,
+    findings: [{ code: 'unknown_marker', text: 'Owner' }],
+  },
+  {
+    marks: '(R1, ownr)',
+    requirements: ['R1'],
+    owner: false,
+    findings: [{ code: 'unknown_marker', text: 'ownr' }],
+  },
+  {
+    marks: '(owner)',
+    requirements: [],
+    owner: true,
+    findings: [{ code: 'criterion_without_requirement' }],
+  },
+  { marks: '(R1, )', requirements: ['R1'], owner: false, findings: [] },
+  { marks: '( R1)', requirements: ['R1'], owner: false, findings: [] },
+  {
+    marks: '(r1)',
+    requirements: [],
+    owner: false,
+    findings: [{ code: 'criterion_without_requirement' }, { code: 'unknown_marker', text: 'r1' }],
+  },
+]
+
+describe('parseSpec on the owner marker', () => {
+  it.each(CASES)('reads $marks', ({ marks, requirements, owner, findings }) => {
+    const spec = parseSpec(
+      `## Requirements\n1. R1 – a\n2. R2 – b\n\n## Acceptance criteria\n- AC1 ${marks}: Given x When y Then z\n- AC2 (R2): Given x When y Then z\n`,
+    )
+    const own = spec.criteria.find((c) => c.id === 'AC1')
+    expect(own?.requirements).toEqual(requirements)
+    expect(own?.owner).toBe(owner)
+    const named = spec.findings.filter((f) => f.id === 'AC1')
+    expect(named.map(({ code, text }) => (text === undefined ? { code } : { code, text }))).toEqual(
+      findings,
+    )
+    expect(spec.findings.some((f) => f.code === 'unknown_requirement')).toBe(false)
+  })
+
+  const withMarks = (marks: string) =>
+    `## Requirements\n1. R1 – a\n\n## Acceptance criteria\n- AC1 ${marks}: Given x When y Then z\n\n## Open questions\n`
+
+  it.each([
+    ['(R1, Owner)', false],
+    ['(R1, owner)', true],
+  ])('approvable for %s is %s', (marks, approvable) => {
+    expect(parseSpec(withMarks(marks)).approvable).toBe(approvable)
   })
 })
