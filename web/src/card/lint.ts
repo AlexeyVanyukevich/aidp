@@ -51,6 +51,13 @@ export function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`
 }
 
+/** The PR tab's sentence naming the criteria left to the owner, or undefined when there are none. */
+export function ownerSentence(ids: string[]): string | undefined {
+  if (ids.length === 0) return undefined
+  const noun = plural(ids.length, 'criterion', 'criteria')
+  return `${noun} ${ids.length === 1 ? 'is' : 'are'} yours to check: ${ids.join(', ')}.`
+}
+
 export function lintSummary(lint: SpecView['lint']): string {
   return `The spec lints clean: ${plural(lint.requirements.length, 'requirement')}, ${plural(
     lint.criteria.length,
