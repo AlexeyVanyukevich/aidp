@@ -26,27 +26,40 @@ export interface ParsedSpec {
 }
 
 const HEADING = /^##\s+(.+?)\s*#*\s*$/
-// A list item at the start of a line: `1.`, `1)`, `-`, `*` or `+`. Indented continuation lines
-// are not items and are ignored.
+// A list item at the start of a line: `1.`, `1)`, `-`, `*` or `+`, followed by whitespace.
 const ITEM = /^(?:\d+[.)]|[-*+])\s+(.*)$/
+// A list marker with no text.
+const BARE_MARKER = /^(?:\d+[.)]|[-*+])$/
 const REQUIREMENT = /^(R\d+)\b\s*[–—:.)-]?\s*(.*)$/
 const CRITERION = /^(AC\d+)\s*\(([^)]*)\)\s*[:.–—-]?\s*(.*)$/
 
-/** The list items under each `## heading`, keyed by the heading in lower case. */
+/**
+ * The lines under each `## heading`, keyed by the heading in lower case. A repeated heading
+ * continues its section. Every section reads list items only, except Open questions, which reads
+ * every non-blank line, so text there cannot go unseen.
+ */
 function sections(markdown: string): Map<string, string[]> {
   const result = new Map<string, string[]>()
   let current: string[] | undefined
+  let everyLine = false
   for (const raw of markdown.replace(/\r\n?/g, '\n').split('\n')) {
     const line = raw.trimEnd()
     const heading = HEADING.exec(line)
     if (heading?.[1] !== undefined) {
-      current = []
-      result.set(heading[1].toLowerCase(), current)
+      const key = heading[1].toLowerCase()
+      current = result.get(key)
+      if (current === undefined) {
+        current = []
+        result.set(key, current)
+      }
+      everyLine = key === 'open questions'
       continue
     }
     if (current === undefined) continue
+    const trimmed = line.trim()
     const item = ITEM.exec(line)
     if (item?.[1] !== undefined) current.push(item[1].trim())
+    else if (everyLine && trimmed !== '' && !BARE_MARKER.test(trimmed)) current.push(trimmed)
   }
   return result
 }

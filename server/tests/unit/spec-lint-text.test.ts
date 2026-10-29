@@ -51,6 +51,15 @@ describe('lintReply', () => {
       'Saved v3. It cannot be approved yet:\n- Open question: How many times?\nFix these and save again.',
     ],
     [
+      'a plain line under Open questions',
+      spec(
+        '1. R1 – It retries',
+        '- AC1 (R1): Given a 503 Then it retries',
+        'Shell cwd was reset to /tmp/x',
+      ),
+      'Saved v3. It cannot be approved yet:\n- Open question: Shell cwd was reset to /tmp/x\nFix these and save again.',
+    ],
+    [
       // Task 4's recording: Opus, told only the sections' names, bolded its ids.
       'ids in bold, which the parser does not read as ids',
       spec('- **R1** It retries', '- **AC1 (R1)** Given a 503 Then it retries'),
