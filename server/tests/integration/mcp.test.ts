@@ -192,6 +192,65 @@ describe('the board MCP server', () => {
     expect(artifact).toMatchObject({ kind: 'verify_report', data: report })
   })
 
+  it('lists the owner verdict in the save_report description', async () => {
+    const { client } = await session()
+    const { tools } = await client.listTools()
+    const description = tools.find((t) => t.name === 'save_report')?.description ?? ''
+    expect(description).toContain('owner')
+    expect(description).toContain('fail when you can see the work is wrong')
+    expect(description).toContain('never gets pass')
+  })
+
+  it('reads a stored criterion without an owner field as not an owner check', async () => {
+    const { client } = await session()
+    const report = { summary: 's', criteria: [{ id: 'AC1', status: 'owner', evidence: 'x' }] }
+    const result = await client.callTool({ name: 'save_report', arguments: report })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('- owner_on_unmarked_criterion AC1')
+  })
+
+  it.each([
+    ['pass', 'owner', undefined],
+    ['fail', 'owner', undefined],
+    ['pass', 'fail', undefined],
+    ['fail', 'fail', undefined],
+    ['owner', 'owner', '- owner_on_unmarked_criterion AC1'],
+    ['pass', 'pass', '- pass_on_owner_check AC2'],
+  ] as const)('save_report with AC1 %s and AC2 %s', async (a, b, refusal) => {
+    const { client, runId, taskId } = await session()
+    await getTestDb()
+      .updateTable('specs')
+      .set({
+        criteria: JSON.stringify([
+          { id: 'AC1', requirements: ['R1'], text: 'a', owner: false },
+          { id: 'AC2', requirements: ['R1'], text: 'b', owner: true },
+        ]),
+      })
+      .where('task_id', '=', taskId)
+      .execute()
+    const report = {
+      summary: 's',
+      criteria: [
+        { id: 'AC1', status: a, evidence: 'x' },
+        { id: 'AC2', status: b, evidence: 'x' },
+      ],
+    }
+    const result = await client.callTool({ name: 'save_report', arguments: report })
+    const saved = await getTestDb()
+      .selectFrom('artifacts')
+      .select('id')
+      .where('run_id', '=', runId)
+      .execute()
+    if (refusal === undefined) {
+      expect(result.isError).toBeFalsy()
+      expect(saved).toHaveLength(1)
+    } else {
+      expect(result.isError).toBe(true)
+      expect(text(result)).toContain(refusal)
+      expect(saved).toEqual([])
+    }
+  })
+
   it('logs a declared step as a message event of the phase agent', async () => {
     const { client, runId, phaseId } = await session()
     await client.callTool({

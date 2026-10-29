@@ -302,14 +302,14 @@ export function registerBoardTools(server: McpServer, ctx: ToolContext): void {
     'save_report',
     {
       description:
-        'Save the verify report: a pass or fail verdict, with evidence, on every acceptance criterion.',
+        'Save the verify report: a verdict, with evidence, on every acceptance criterion. A criterion the spec marks as an owner check (owner in its parentheses) gets fail when you can see the work is wrong, and otherwise owner, with evidence of what you did check; it never gets pass. An owner verdict sends the criterion to the owner at the pull request, not back to Build. Every other criterion gets pass or fail, never owner.',
       inputSchema: {
         summary: z.string().min(1).max(4000),
         criteria: z
           .array(
             z.object({
               id: z.string(),
-              status: z.enum(['pass', 'fail']),
+              status: z.enum(['pass', 'fail', 'owner']),
               evidence: z.string().min(1),
             }),
           )
