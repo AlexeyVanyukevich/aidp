@@ -4,6 +4,7 @@ import { BoardApi } from './api.js'
 import { decide, denyOutput } from './hooks/guard.js'
 import { hookToEvent, pausedBy } from './hooks/hook-event.js'
 import { readLinked } from './linked.js'
+import { readMigrationSiblings } from './hooks/migration-siblings.js'
 import { PAUSED_MARKER } from './phases/run-dir.js'
 import { EventSink } from './sink.js'
 
@@ -54,6 +55,9 @@ async function guard(): Promise<void> {
   const runDir = env('BOARD_RUN_DIR')
   const allowedPath = join(runDir, 'allowed-files.json')
   const approvedPath = join(runDir, 'approved-migrations.json')
+  const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd()
+  const basePath = join(runDir, 'base-branch.txt')
+  const base = existsSync(basePath) ? readFileSync(basePath, 'utf8').trim() : null
   const verdict = decide(
     {
       tool_name: typeof input.tool_name === 'string' ? input.tool_name : '',
@@ -72,8 +76,9 @@ async function guard(): Promise<void> {
         : [],
       paused: existsSync(join(runDir, PAUSED_MARKER)),
       linked: readLinked(runDir),
-      cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(),
+      cwd,
       exists: existsSync,
+      migrationSiblings: (directory) => readMigrationSiblings(cwd, base, directory),
     },
   )
   if (!verdict.allow) process.stdout.write(denyOutput(verdict.reason))
