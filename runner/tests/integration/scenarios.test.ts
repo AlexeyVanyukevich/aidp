@@ -530,6 +530,13 @@ describe('a command sent to the background', () => {
     )
     expect(files).not.toContain('foreground.txt')
     expect(files).not.toContain('background.txt')
+    const gates = (await eventsOf('tool_call')).filter((e) => e.tool === 'files_gate')
+    expect(gates.map((e) => e.status)).toEqual(['error', 'ok'])
+    const paths = (gates[0]!.payload as { violations: { path: string }[] }).violations.map(
+      (v) => v.path,
+    )
+    expect(paths).toContain('foreground.txt')
+    expect(paths).not.toContain('background.txt')
   })
 })
 

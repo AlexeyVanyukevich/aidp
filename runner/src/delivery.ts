@@ -177,6 +177,20 @@ export async function carryOut(
       allowed: readAllowed(runDir) ?? [],
       approvedMigrations: readApproved(runDir),
     })
+    await deps.sink.send([
+      newEvent(
+        { runId: run.id, phaseId: null, type: 'tool_call', agent: 'runner' },
+        {
+          tool: 'files_gate',
+          target:
+            found.length === 0
+              ? 'every changed path is allowed'
+              : `${found.length} ${found.length === 1 ? 'path' : 'paths'} the run does not allow`,
+          status: found.length === 0 ? 'ok' : 'error',
+          payload: { violations: found },
+        },
+      ),
+    ])
     if (found.length === 0) return true
     writeFileSync(join(runDir, GATE_REPORT), formatViolations(found, changed.mergeBase))
     if (state.attempt >= MAX_ATTEMPTS) {
