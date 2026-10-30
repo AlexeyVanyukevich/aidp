@@ -265,7 +265,7 @@ the run; the claim carries both, and the runner writes `approved-migrations.json
 `allowed-files.json`, where the guard reads it. Outside Build the guard still refuses to create
 a migration.
 
-*Order.* A migration's name is its file name without its last extension; its siblings are the
+_Order._ A migration's name is its file name without its last extension; its siblings are the
 other migrations directly in its directory, in the run's worktree and on `origin/<base>` as last
 fetched (`index.*` files excluded). Migrations apply in name order, compared by UTF-16 code unit
 as the migrator's own sort does, so a new migration (a path not in the worktree) whose name is
