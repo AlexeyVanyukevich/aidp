@@ -66,7 +66,10 @@ checkout path, are written to `linked.json` in the run directory; the run's link
 there, and a failed fetch or worktree blocks the run as `step_failed`. A run that ends with any
 outcome but `released` removes each checkout and then the `<run>-linked` directory, and so does a
 cleanup claimed after a Cancel; a paused run keeps them. A resume past `prepare` makes any
-checkout that is missing again, fetching only for that (`runner/src/linked.ts`).
+checkout that is missing again, fetching only for that (`runner/src/linked.ts`). A resume in
+the Plan stage does not restore: the Plan-stage refresh (see "The plan gate") remakes the
+checkouts from the claim's current `links`, so a link added since the run began gets one, a link
+removed since loses its, and `linked.json` lists exactly the current links.
 
 Every `claude` process of every phase, first or resumed, gets one `--add-dir <checkout>` per
 checkout in `linked.json`, which is how Claude Code lets it read outside its worktree. The handoff
@@ -195,6 +198,39 @@ characters, the most a `plan` approval's `context_md` holds: `save_plan` refuses
 whatever its confidence, and asks the planner to shorten it. If the board refuses the gate's
 request with a 4xx answer, the run fails with a sentence naming the field and the problem.
 
+_The Plan-stage refresh._ Every resume of a run whose checkpoint stage is `plan` and that holds no
+kept plan (an answer in words at the gate, Approve plan, an answer to the planner's own question,
+or Resume of a run blocked there) first moves the run to the current base, before any planner
+process or Build starts. In order, the runner: runs `git fetch origin <base>` in the project's
+`repo_path`; writes the worktree's HEAD to `plan-base.txt` if that file is missing; undoes every
+uncommitted path (staged, unstaged, untracked, never ignored), restoring a path HEAD tracks to its
+content at HEAD and deleting one it does not; fast-forwards the branch with `git merge --ff-only
+origin/<base>`; remakes the linked checkouts from the claim's current links; runs the setup
+command again (a `setup_command` event); and rewrites `excluded-paths.json` to the uncommitted
+list, or to an empty list for a project without a setup command. A failure of any step is a
+`step_failed` block at `plan`, with no phase process run. The Plan phase's branch has no commits of
+its own, which is why the undo and the fast-forward are safe there. A resume at any other stage,
+and a run holding a kept plan, refresh nothing. Approve plan does the refresh, then ends the phase
+and starts Build as before.
+
+_The base-moved note._ Each time a planner process starts, resumes or restarts, the runner writes
+the worktree's HEAD to `plan-base.txt` in the run directory: the commit the planner last read.
+When the refresh leads to continuing the planner's session and HEAD differs from that commit, the
+message starts with a note: the old and new commits, the number of commits between them, the paths
+changed between them (sorted, the first 100, then `and <k> more`), and a request to check the plan
+and save a revised one with `save_plan`; the owner's message follows unchanged. A planner session
+started afresh gets no note. A run paused before `plan-base.txt` existed resumes without error.
+
+_The saved answer._ Before the refresh, the runner writes the answer the resume is about to
+deliver to `pending-answer.json` (the words, or an approval), replacing any earlier one. If the
+refresh blocks, the owner's Resume carries only the nudge; when `pending-answer.json` exists the
+runner delivers the saved answer in its place and sends a runner `tool_call` event `saved_answer`
+(`delivered the owner's answer kept from before the block`, or `went on to Build on the Approve
+plan kept from before the block`), which the Timeline shows. Saved words are deleted as soon as
+`phases.resume` or `phases.restart` returns, whatever the process's result; a saved approval is
+deleted once the `build` checkpoint is sent; a refresh that blocks, or a process that fails to
+start, leaves the file. A message other than the nudge is never replaced.
+
 **Re-run.** A Failed card offers two choices, both the `rerun` move (Failed → Ready) with the
 latest approved spec. `POST /api/tasks/:id/actions/rerun` takes an optional body
 `{ "plan": "keep" | "again" }`; no body means `again`, `keep` with no plan to keep answers
@@ -272,7 +308,8 @@ runner `tool_call` event `files_gate`: `error` with `<n> paths the run does not 
 allowed`. When the gate passes it records the worktree's `HEAD` (`gate-head.txt`).
 
 _Excluded paths._ What the runner's own commands write is not the builder's. `excluded-paths.json`
-holds those paths: right after the setup command in `prepare` it is set to the uncommitted list,
+holds those paths: right after the setup command in `prepare` (and again in each Plan-stage
+refresh) it is set to the uncommitted list,
 and around each run of the test command the runner adds every uncommitted path that the run
 created. Exclusions apply to the uncommitted list only and go by path; a committed path is never
 excluded, so committing `git add -A` output of setup is a violation. Files the builder's own
