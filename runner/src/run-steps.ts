@@ -7,6 +7,7 @@ import type { RunnerConfig } from './config.js'
 import { GitError, type Git } from './git.js'
 import { prepareLinked, removeLinked, restoreLinked } from './linked.js'
 import type { PhaseDeps, PhaseInput, PhaseRecord, StepResult } from './phases/phase.js'
+import { readPlanBase, writeExcluded, writePlanBase } from './phases/run-dir.js'
 import { newEvent, type EventSink } from './sink.js'
 import { runTestCommand } from './test-command.js'
 
@@ -47,6 +48,26 @@ export interface RunDeps {
 export type Outcome = 'review' | 'failed' | 'cancelled' | 'released'
 
 export const INTERRUPTED = 'You were interrupted. Continue from where you stopped.'
+const NOTE_PATHS = 100
+
+/** What the planner is told when the base moved since it last read the code. */
+export function baseMovedNote(change: {
+  from: string
+  to: string
+  commits: number
+  paths: string[]
+}): string {
+  const listed = change.paths.slice(0, NOTE_PATHS)
+  const more = change.paths.length - listed.length
+  return [
+    `The base branch moved while the run was paused. You last read the code at ${change.from}; it is now at ${change.to}, ${change.commits} ${change.commits === 1 ? 'commit' : 'commits'} later.`,
+    'Paths changed between them:',
+    ...listed,
+    ...(more > 0 ? [`and ${more} more`] : []),
+    'Check your plan against these changes, and save a revised plan with save_plan if the plan changes.',
+  ].join('\n')
+}
+
 const SESSION_GONE = "the run's Claude Code session is gone; Re-run starts again from Plan"
 
 /** Ends the run: caught once, at the bottom. */
@@ -206,6 +227,37 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
   /** A resume past `prepare`: checkouts deleted while the run was paused are made again. */
   const restoreLinkedCheckouts = () => restoreLinked(deps.git, io.runDir)
 
+  /**
+   * A Plan-stage resume's refresh: the worktree and the linked checkouts move to the current
+   * base, the runner's own uncommitted changes are undone first, and setup runs again. Returns
+   * the note for a planner whose last read is not the new HEAD, or null.
+   */
+  const refreshBase = async (
+    repo: string,
+    base: string,
+    setupCommand: string | null,
+  ): Promise<string | null> => {
+    await deps.git.fetchBase(repo, base)
+    if (readPlanBase(io.runDir) === null) writePlanBase(io.runDir, await deps.git.head(io.worktree))
+    await deps.git.undoUncommitted(io.worktree, base)
+    await deps.git.fastForward(io.worktree, base)
+    await prepareLinkedCheckouts()
+    await runSetup(setupCommand)
+    writeExcluded(
+      io.runDir,
+      setupCommand === null ? [] : (await deps.git.changedPaths(io.worktree, base)).uncommitted,
+    )
+    const from = readPlanBase(io.runDir)
+    const to = await deps.git.head(io.worktree)
+    if (from === null || from === to) return null
+    return baseMovedNote({
+      from,
+      to,
+      commits: await deps.git.commitCount(io.worktree, from, to),
+      paths: await deps.git.changedBetween(io.worktree, from, to),
+    })
+  }
+
   /** The daemon is stopping: between steps, the run is blocked where it stands. */
   const stopIfShuttingDown = async () => {
     if (deps.shutdown?.aborted === true) await block('runner_stopped')
@@ -216,8 +268,16 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
    * that session is gone with nothing in it — starting it again. Returns once the process ended
    * by itself; a pause, a cancel or a stop leaves through `Release` or `End`.
    */
-  const phaseStep = async (name: PhaseOf, handoff: () => Promise<string>): Promise<StepResult> => {
+  const phaseStep = async (
+    name: PhaseOf,
+    handoff: () => Promise<string>,
+    options: { note?: string | null; delivered?: () => void } = {},
+  ): Promise<StepResult> => {
     let result: StepResult
+    // The planner's last read of the code, recorded before the process reads it again.
+    const recordRead = async () => {
+      if (name === 'plan') writePlanBase(io.runDir, await deps.git.head(io.worktree))
+    }
     if (state.phase === null) {
       // The ids first, so the checkpoint names the phase and session before the process starts.
       const ids = { phaseId: randomUUID(), sessionId: randomUUID() }
@@ -234,20 +294,28 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
       }
       const prompt = await handoff()
       await checkpoint()
+      await recordRead()
       result = await deps.phases.start(
         { runId: run.id, phase: name, attempt: state.attempt, handoff: prompt, ...io },
         phaseDeps,
         ids,
       )
     } else {
-      result = await deps.phases.resume(state.phase, state.message ?? INTERRUPTED, io, phaseDeps)
+      await recordRead()
+      const message = `${options.note == null ? '' : `${options.note}\n\n`}${state.message ?? INTERRUPTED}`
+      result = await deps.phases.resume(state.phase, message, io, phaseDeps)
       state.message = null
       if (result.sessionGone) {
         if (await deps.api.phaseHasMessages(run.id, state.phase.phaseId))
           throw new End('failed', SESSION_GONE)
-        result = await deps.phases.restart(state.phase, await handoff(), io, phaseDeps)
+        const prompt = await handoff()
+        await recordRead()
+        result = await deps.phases.restart(state.phase, prompt, io, phaseDeps)
       }
     }
+    // Whatever the process did, it has had the answer: a pause, a cancel or a stop must not
+    // leave it to be sent again.
+    options.delivered?.()
     state.phase = result.record
     await checkpoint()
     if (result.stopped === 'cancelled') throw new End('cancelled', 'cancelled by the owner')
@@ -332,6 +400,7 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
     runSetup,
     prepareLinkedCheckouts,
     restoreLinkedCheckouts,
+    refreshBase,
     stopIfShuttingDown,
     phaseStep,
     endPhase,

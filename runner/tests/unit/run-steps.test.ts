@@ -4,7 +4,15 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Checkpoint, RunWork } from '../../src/contract.js'
 import type { Git } from '../../src/git.js'
-import { End, Release, runPaths, runSteps, stateOf, type RunDeps } from '../../src/run-steps.js'
+import {
+  baseMovedNote,
+  End,
+  Release,
+  runPaths,
+  runSteps,
+  stateOf,
+  type RunDeps,
+} from '../../src/run-steps.js'
 
 const RUN = { id: 'run-1' } as RunWork
 const at = (stage: Checkpoint['stage'], session: Checkpoint['session']): Checkpoint => ({
@@ -86,5 +94,21 @@ describe('carry and the linked checkouts', () => {
     expect(result.outcome).toBe('released')
     expect(result.removed).toEqual([])
     expect(existsSync(result.path)).toBe(true)
+  })
+})
+
+describe('baseMovedNote', () => {
+  it('AC12: lists the first 100 paths, then how many more', () => {
+    const paths = Array.from({ length: 103 }, (_, i) => `p${String(i).padStart(3, '0')}.ts`)
+    const lines = baseMovedNote({ from: 'aaa', to: 'bbb', commits: 3, paths }).split('\n')
+    expect(lines.filter((l) => l.endsWith('.ts'))).toEqual(paths.slice(0, 100))
+    expect(lines).toContain('and 3 more')
+    expect(lines.join('\n')).toContain('aaa')
+    expect(lines.join('\n')).toContain('save_plan')
+  })
+  it('lists everything, with no more line, up to 100', () => {
+    const note = baseMovedNote({ from: 'a', to: 'b', commits: 1, paths: ['x.ts'] })
+    expect(note).not.toContain('more')
+    expect(note).toContain('1 commit ')
   })
 })

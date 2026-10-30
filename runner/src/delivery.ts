@@ -9,16 +9,27 @@ import { formatViolations, newlyChanged, violationsOf } from './files-gate.js'
 import {
   GATE_HEAD,
   GATE_REPORT,
+  clearPendingAnswer,
   prepareRunDir,
   readAllowed,
   readApproved,
   readExcluded,
+  readPendingAnswer,
   writeAllowedFiles,
   writeApprovedMigrations,
   writeBaseBranch,
   writeExcluded,
+  writePendingAnswer,
 } from './phases/run-dir.js'
-import { End, Release, runPaths, runSteps, type Outcome, type RunDeps } from './run-steps.js'
+import {
+  End,
+  INTERRUPTED,
+  Release,
+  runPaths,
+  runSteps,
+  type Outcome,
+  type RunDeps,
+} from './run-steps.js'
 import { ApiError } from './api.js'
 import { linkedForHandoff, removeLinked } from './linked.js'
 import { newEvent } from './sink.js'
@@ -38,6 +49,8 @@ const NO_COMMIT_TEXT = 'The build made no commit, so there was nothing to verify
 const FILES_GATE = 'files_gate'
 const FILES_GATE_TEXT =
   "The build changed files the run does not allow. Check that you changed only the plan's files, undo the rest, and commit."
+const SAVED_WORDS = "delivered the owner's answer kept from before the block"
+const SAVED_APPROVAL = 'went on to Build on the Approve plan kept from before the block'
 const PLAN_QUESTION =
   'The planner is not confident in this plan. Approve it, or say what to change.'
 
@@ -159,6 +172,18 @@ export async function carryOut(
     })
   }
 
+  const savedAnswerSent = (approval: boolean) =>
+    deps.sink.send([
+      newEvent(
+        { runId: run.id, phaseId: null, type: 'tool_call', agent: 'runner' },
+        {
+          tool: 'saved_answer',
+          target: approval ? SAVED_APPROVAL : SAVED_WORDS,
+          status: 'ok',
+        },
+      ),
+    ])
+
   const gateReport = () => {
     const file = join(runDir, GATE_REPORT)
     return existsSync(file) ? readFileSync(file, 'utf8') : FILES_GATE_TEXT
@@ -246,7 +271,13 @@ export async function carryOut(
       }
     }
 
-    if (work.kind === 'resume' && state.stage !== 'prepare') await steps.restoreLinkedCheckouts()
+    // A Plan-stage resume refreshes the base instead (and remakes the links there).
+    const refreshAtPlan =
+      work.kind === 'resume' && work.checkpoint.stage === 'plan' && kept === null
+    let refreshed = false
+
+    if (work.kind === 'resume' && state.stage !== 'prepare' && !refreshAtPlan)
+      await steps.restoreLinkedCheckouts()
 
     if (kept !== null) state.planId = kept.artifact_id
 
@@ -278,15 +309,43 @@ export async function carryOut(
             state.attempt = 1
             break
           }
-          // A plan the owner approved at the gate: the phase ends, and Build starts (spec §5).
-          if (state.phase !== null && state.message === null && work.kind === 'resume') {
-            await steps.endPhase(true)
-            await allowPlanFiles()
-            state.stage = 'build'
-            state.attempt = 1
-            break
+          let note: string | null = null
+          let answered = false
+          if (refreshAtPlan && !refreshed) {
+            refreshed = true
+            const saved = readPendingAnswer(runDir)
+            const nudge = state.message === INTERRUPTED
+            const replaced = nudge && saved !== null
+            if (replaced) state.message = saved.kind === 'words' ? saved.text : null
+            const approve = state.phase !== null && state.message === null
+            if (approve) writePendingAnswer(runDir, { kind: 'approved' })
+            else if (state.message !== null && !nudge) {
+              writePendingAnswer(runDir, { kind: 'words', text: state.message })
+            }
+            answered = approve || (state.message !== null && (!nudge || replaced))
+            note = await steps.refreshBase(
+              project.repo_path,
+              project.base_branch,
+              project.setup_command,
+            )
+            if (replaced) await savedAnswerSent(approve)
+            // A plan the owner approved at the gate: the phase ends, and Build starts (spec §5).
+            if (approve) {
+              await steps.endPhase(true)
+              await allowPlanFiles()
+              state.stage = 'build'
+              state.attempt = 1
+              await steps.checkpoint()
+              clearPendingAnswer(runDir)
+              break
+            }
           }
-          const result = await steps.phaseStep('plan', handoffFor('plan'))
+          const result = await steps.phaseStep('plan', handoffFor('plan'), {
+            note,
+            delivered: () => {
+              if (answered) clearPendingAnswer(runDir)
+            },
+          })
           if (!result.ok) await steps.failPhase('plan')
           const plan = await artifact('plan', { phaseId: result.record.phaseId })
           if (plan === undefined) {

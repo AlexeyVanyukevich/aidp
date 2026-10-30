@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { CLI_PATH } from '../self.js'
 import { AGENTS } from './agents.js'
@@ -82,3 +82,35 @@ export const readExcluded = (dir: string): string[] => readList(dir, EXCLUDED)
 export const readAllowed = (dir: string): string[] | null =>
   existsSync(join(dir, 'allowed-files.json')) ? readList(dir, 'allowed-files.json') : null
 export const readApproved = (dir: string): string[] => readList(dir, 'approved-migrations.json')
+
+const PLAN_BASE = 'plan-base.txt'
+const PENDING_ANSWER = 'pending-answer.json'
+
+/** The commit the planner last read from; null for a run paused before the file existed. */
+export function readPlanBase(dir: string): string | null {
+  const file = join(dir, PLAN_BASE)
+  return existsSync(file) ? readFileSync(file, 'utf8').trim() : null
+}
+export function writePlanBase(dir: string, commit: string): void {
+  writeFileSync(join(dir, PLAN_BASE), commit)
+}
+
+/** An answer taken from the owner and not yet delivered: words for the planner, or an approval. */
+export type PendingAnswer = { kind: 'words'; text: string } | { kind: 'approved' }
+
+export function writePendingAnswer(dir: string, answer: PendingAnswer): void {
+  writeFileSync(join(dir, PENDING_ANSWER), JSON.stringify(answer))
+}
+export function readPendingAnswer(dir: string): PendingAnswer | null {
+  try {
+    const value = JSON.parse(readFileSync(join(dir, PENDING_ANSWER), 'utf8')) as PendingAnswer
+    if (value.kind === 'approved') return value
+    if (value.kind === 'words' && typeof value.text === 'string') return value
+    return null
+  } catch {
+    return null
+  }
+}
+export function clearPendingAnswer(dir: string): void {
+  rmSync(join(dir, PENDING_ANSWER), { force: true })
+}
