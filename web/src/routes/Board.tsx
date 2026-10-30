@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type DragEvent, type FormEvent } from 'react'
-import { Outlet, useLocation, useParams } from 'react-router'
+import { Link, Outlet, useLocation, useParams } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Field, Input, Notice } from '@zellige/react'
 import { api } from '../api'
@@ -84,6 +84,9 @@ export function Board() {
         <h1 ref={heading} tabIndex={-1}>
           {name}
         </h1>
+        <Link to={`/p/${key}/settings`} aria-label={`Settings of ${key}`}>
+          Settings
+        </Link>
         <form onSubmit={submit} className="new-task">
           <Field label="New task title" error={titleMissing ? 'Enter a title.' : undefined}>
             <Input ref={titleInput} value={title} onChange={(e) => setTitle(e.target.value)} />

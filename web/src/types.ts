@@ -17,7 +17,6 @@ export interface ProjectView {
   repo_path: string
   github_repo: string
   base_branch: string
-  test_command: string
   setup_command: string | null
 }
 export interface ProjectLink {
@@ -26,8 +25,16 @@ export interface ProjectLink {
   note: string
 }
 /** What the list returns: a project with the projects it links to, ordered by key. */
+export interface TestCommand {
+  id: string
+  name: string
+  command: string
+  is_default: boolean
+}
 export interface ProjectWithLinks extends ProjectView {
   links: ProjectLink[]
+  /** Every test command, ordered by lower-case name. */
+  test_commands: TestCommand[]
 }
 export interface TaskCard {
   id: string
@@ -52,6 +59,10 @@ export interface TaskView {
   state: TaskState
   position: number
   budget_usd: number | null
+  /** The project test command the owner chose; null follows the project's default. */
+  test_command_id: string | null
+  /** What the latest delivery run that started tests with; null when none has. */
+  tested_with: string | null
   project: { key: string; name: string; github_repo: string }
   /** The question the card waits on: open, or expired and blocking it; a batch's count. */
   approval: { id: string; kind: ApprovalKind; status: ApprovalStatus; questions: number } | null
