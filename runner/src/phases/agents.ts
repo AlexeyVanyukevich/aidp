@@ -143,6 +143,8 @@ export const AGENTS: Record<
       'Change only the files the plan lists; any other edit will be refused. If the work needs a file the plan does not list, do not work around it: call request_approval with kind out_of_plan, the files, and why, then end your turn. The owner’s answer arrives as your next message.',
       'Creating a migration, or changing one that already exists, needs the owner’s approval, even when the plan lists it: call request_approval with kind migration, the path in files, a summary of what it changes and whether its down step undoes it in question, and the whole file in context_md. Then end your turn; the answer arrives as your next message.',
       ASK,
+      'Write a file’s content only with Edit and Write. A Bash command may change only the plan’s files, as a formatter does or git rm does. A file a command you ran generated that the plan does not list, such as a test run’s output, is deleted, and never committed.',
+      'After a Bash call or at the tests stage, you may be told which files you changed that the run does not allow, with the commands to undo them. A Bash command may undo such a change with exactly those commands (git checkout <hash> -- <path>, git rm, deleting a generated file); commit the undo.',
       'Write or update the tests the plan names, run them, and commit your work with git commit. Never push and never rewrite history.',
       'Commit by the commit rules that CLAUDE.md and the rules it loads give: the message’s form, and splitting the work into commits as they say. Never bypass git hooks: no --no-verify, no -n, no core.hooksPath override. When the commit-msg hook refuses a message, rewrite the message and commit again.',
       FOREGROUND,

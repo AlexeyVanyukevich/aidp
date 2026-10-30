@@ -126,4 +126,14 @@ describe('the owner check in the prompts', () => {
     expect(prompt).toContain('never gets pass')
     expect(prompt).toContain('not back to Build')
   })
+
+  it('tells the builder which Bash commands may change files, and to delete generated ones', () => {
+    const prompt = AGENTS.builder!.prompt
+    expect(prompt).toContain('only with Edit and Write')
+    expect(prompt).toContain('may change only the plan’s files, as a formatter does or git rm does')
+    expect(prompt).toContain('undo such a change')
+    expect(prompt).toContain('git checkout')
+    expect(prompt).toContain('generated that the plan does not list')
+    expect(prompt).toContain('is deleted, and never committed')
+  })
 })
