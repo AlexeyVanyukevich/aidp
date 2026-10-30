@@ -1,14 +1,21 @@
 import { randomUUID } from 'node:crypto'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { PlanData, ReportData, RunView, Work } from './contract.js'
 import type { RunnerConfig } from './config.js'
 import type { Git } from './git.js'
 import { buildHandoff, type HandoffInput } from './phases/handoff.js'
+import { formatViolations, newlyChanged, violationsOf } from './files-gate.js'
 import {
+  GATE_REPORT,
   prepareRunDir,
+  readAllowed,
+  readApproved,
+  readExcluded,
   writeAllowedFiles,
   writeApprovedMigrations,
   writeBaseBranch,
+  writeExcluded,
 } from './phases/run-dir.js'
 import { End, Release, runPaths, runSteps, type Outcome, type RunDeps } from './run-steps.js'
 import { ApiError } from './api.js'
@@ -26,6 +33,10 @@ const MAX_ATTEMPTS = 3
 /** A checkpoint's failing report when the build made no commit: there is no report to name. */
 const NO_COMMIT = 'no_commit'
 const NO_COMMIT_TEXT = 'The build made no commit, so there was nothing to verify. Commit your work.'
+/** A checkpoint's failing report when the files gate refused the build: its text is in the run directory. */
+const FILES_GATE = 'files_gate'
+const FILES_GATE_TEXT =
+  "The build changed files the run does not allow. Check that you changed only the plan's files, undo the rest, and commit."
 const PLAN_QUESTION =
   'The planner is not confident in this plan. Approve it, or say what to change.'
 
@@ -67,10 +78,17 @@ export async function carryOut(
       .filter((p) => p.status === 'succeeded' && p.summary_md !== null)
       .map((p) => ({ phase: p.name, attempt: p.attempt, text: p.summary_md ?? '' }))
 
+  const uncommitted = async () =>
+    (await deps.git.changedPaths(worktree, project.base_branch)).uncommitted
+
   const tests = async () => {
+    // What the test command itself writes is the runner's doing, not the builder's.
+    const before = await uncommitted()
     const result = await deps.runTests(project.test_command, worktree, {
       timeoutMs: deps.config.testTimeoutMs,
     })
+    const made = newlyChanged(before, await uncommitted())
+    writeExcluded(runDir, [...new Set([...readExcluded(runDir), ...made])])
     await deps.sink.send([
       newEvent(
         { runId: run.id, phaseId: null, type: 'tool_call', agent: 'runner' },
@@ -121,7 +139,9 @@ export async function carryOut(
           ? undefined
           : state.failingId === NO_COMMIT
             ? NO_COMMIT_TEXT
-            : (await artifact('verify_report', { id: state.failingId }))?.body_md
+            : state.failingId === FILES_GATE
+              ? gateReport()
+              : (await artifact('verify_report', { id: state.failingId }))?.body_md
       return buildHandoff({
         ...common,
         plan: plan.body_md,
@@ -136,6 +156,40 @@ export async function carryOut(
       testOutput: testOutput ?? '',
       diff: await deps.git.diff(worktree, project.base_branch),
     })
+  }
+
+  const gateReport = () => {
+    const file = join(runDir, GATE_REPORT)
+    return existsSync(file) ? readFileSync(file, 'utf8') : FILES_GATE_TEXT
+  }
+
+  /**
+   * Whether the build changed only what the run allows. A violation writes the report and sends
+   * the run back to Build (or ends it, on the last attempt); the test command does not run.
+   */
+  const gate = async (): Promise<boolean> => {
+    const changed = await deps.git.changedPaths(worktree, project.base_branch)
+    if (readAllowed(runDir) === null) await allowPlanFiles()
+    const found = violationsOf({
+      committed: changed.committed,
+      uncommitted: changed.uncommitted,
+      excluded: readExcluded(runDir),
+      allowed: readAllowed(runDir) ?? [],
+      approvedMigrations: readApproved(runDir),
+    })
+    if (found.length === 0) return true
+    writeFileSync(join(runDir, GATE_REPORT), formatViolations(found, changed.mergeBase))
+    if (state.attempt >= MAX_ATTEMPTS) {
+      const names = found.map((v) => v.path).sort()
+      const listed = names.slice(0, 20).join(', ')
+      const more = names.length > 20 ? `, and ${names.length - 20} more` : ''
+      throw new End(
+        'failed',
+        `the build changed files the run does not allow, on attempt ${state.attempt}: ${listed}${more}`,
+      )
+    }
+    nextAttempt(FILES_GATE)
+    return false
   }
 
   const nextAttempt = (failingId: string) => {
@@ -190,6 +244,8 @@ export async function carryOut(
           await deps.git.prepareWorktree(project.repo_path, project.base_branch, branch, worktree)
           await steps.prepareLinkedCheckouts()
           await steps.runSetup(project.setup_command)
+          // What setup left in the worktree is the runner's doing, not the builder's.
+          writeExcluded(runDir, project.setup_command === null ? [] : await uncommitted())
           state.stage = kept === null ? 'plan' : 'build'
           if (kept !== null) await allowPlanFiles()
           state.attempt = 1
@@ -261,6 +317,7 @@ export async function carryOut(
         }
         case 'tests': {
           await steps.checkpoint()
+          if (!(await gate())) break
           const commits = await deps.git.newCommits(worktree, project.base_branch)
           await tests()
           await steps.stopIfShuttingDown()

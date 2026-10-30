@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { CLI_PATH } from '../self.js'
 import { AGENTS } from './agents.js'
@@ -61,3 +61,24 @@ export function writeBaseBranch(dir: string, branch: string): void {
 
 /** Written by the event hook when the board pauses the run; the guard refuses everything after. */
 export const PAUSED_MARKER = 'paused'
+
+/** The runner's record of paths its own commands wrote; the gate does not count them. */
+const EXCLUDED = 'excluded-paths.json'
+/** What the gate found, worded for the next Build; the checkpoint carries only the marker. */
+export const GATE_REPORT = 'files-gate-report.md'
+/** The worktree's HEAD when the gate passed; Verify may not move it. */
+export const GATE_HEAD = 'gate-head.txt'
+
+export function writeExcluded(dir: string, paths: string[]): void {
+  writeFileSync(join(dir, EXCLUDED), JSON.stringify(paths))
+}
+
+const readList = (dir: string, file: string): string[] =>
+  existsSync(join(dir, file)) ? (JSON.parse(readFileSync(join(dir, file), 'utf8')) as string[]) : []
+
+/** Nothing is excluded when the record is missing. */
+export const readExcluded = (dir: string): string[] => readList(dir, EXCLUDED)
+/** Null before there is a plan. */
+export const readAllowed = (dir: string): string[] | null =>
+  existsSync(join(dir, 'allowed-files.json')) ? readList(dir, 'allowed-files.json') : null
+export const readApproved = (dir: string): string[] => readList(dir, 'approved-migrations.json')

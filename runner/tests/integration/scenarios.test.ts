@@ -14,7 +14,7 @@ import { BoardApi } from '../../src/api.js'
 import { Daemon } from '../../src/daemon.js'
 import { Sweeper } from '../../../server/src/modules/runs/sweeper.js'
 import { loadRunnerConfig } from '../../src/config.js'
-import { targetRepository, useTestGitIdentity } from './target-repo.js'
+import { pushToMain, targetRepository, useTestGitIdentity } from './target-repo.js'
 
 const RUNNER_KEY = 'r'.repeat(40)
 const FAKE_CLAUDE = join(import.meta.dirname, '../fake/fake-claude')
@@ -78,6 +78,8 @@ beforeEach(async () => {
     db,
   )
   target = targetRepository()
+  // The setup scenarios write a marker the fake builder's `git add -A` would otherwise commit.
+  pushToMain(target.repo, { '.gitignore': 'setup.marker\n' }, 'ignore the setup marker')
   await db
     .insertInto('projects')
     .values({
@@ -503,7 +505,7 @@ describe('a run that asks', () => {
 // The backlog entry slice 3 took: a builder that backgrounded a command and ended its turn lost
 // the work. The guard refuses the background, so the work stays in the turn (slice 3 spec, §10).
 describe('a command sent to the background', () => {
-  it('is refused; the builder runs it in the foreground and commits', async () => {
+  it('is refused; the builder runs it in the foreground, and the files gate sends it round to remove what is outside the plan', async () => {
     const taskId = await approvedTask()
     const f = fleet({
       planner: [[{ tool: 'save_plan', args: PLAN }]],
@@ -514,6 +516,7 @@ describe('a command sent to the background', () => {
           { edit: 'src/retry.ts', content: 'export const delays = [1, 2, 4]\n' },
           { commit: 'back off' },
         ],
+        [{ bash: 'git rm -q foreground.txt' }, { commit: 'remove foreground.txt' }],
       ],
       verifier: [[report('pass')]],
     })
@@ -525,7 +528,7 @@ describe('a command sent to the background', () => {
       ['-C', target.remote, 'ls-tree', '-r', '--name-only', 'board/PAY-1-r1'],
       { encoding: 'utf8' },
     )
-    expect(files).toContain('foreground.txt')
+    expect(files).not.toContain('foreground.txt')
     expect(files).not.toContain('background.txt')
   })
 })
