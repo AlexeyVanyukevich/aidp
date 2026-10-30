@@ -8,6 +8,8 @@ export type BoardMessage =
   | { topic: 'run.event'; runId: string; taskId: string }
   | { topic: 'approval.requested'; taskId: string }
   | { topic: 'approval.answered'; taskId: string }
+  /** A project's test commands changed. */
+  | { topic: 'project.updated'; key: string }
   /** Sent in-process after the listening connection comes back: notices meanwhile are lost. */
   | { topic: 'resync' }
 

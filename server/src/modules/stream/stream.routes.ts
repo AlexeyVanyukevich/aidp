@@ -5,6 +5,7 @@ const FORWARDED = new Set([
   'run.event',
   'approval.requested',
   'approval.answered',
+  'project.updated',
   'resync',
 ])
 

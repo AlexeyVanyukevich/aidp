@@ -50,7 +50,10 @@ if (!projects.some((p) => p.key === 'SMOKE')) {
     repo_path: repoPath,
     github_repo: githubRepo,
     base_branch: 'main',
-    test_command: 'test -f SMOKE.md',
+  })
+  const [fallback] = await call<{ id: string }[]>('GET', '/api/projects/SMOKE/test-commands')
+  await call('PATCH', `/api/projects/SMOKE/test-commands/${fallback!.id}`, {
+    command: 'test -f SMOKE.md',
   })
 }
 const drafted = process.argv.includes('--draft')
