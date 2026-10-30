@@ -3,6 +3,7 @@ import { appUrl, expectAccessible, focusedText, runtime, SPEC } from './helpers'
 
 test('a task goes from the board to a pull request, with its steps and costs on the card', async ({
   page,
+  request,
 }) => {
   await page.goto(appUrl('/'))
   await expect(page).toHaveTitle('Projects · AI Delivery Platform')
@@ -14,12 +15,23 @@ test('a task goes from the board to a pull request, with its steps and costs on 
     ['Repository path', runtime().repoPath],
     ['GitHub repository', 'owner/pay'],
     ['Base branch', 'main'],
-    ['Test command', 'test -f src/retry.ts'],
   ]
   for (const [name, value] of fields)
     await page.getByRole('textbox', { name, exact: true }).fill(value)
   await page.getByRole('button', { name: 'Register' }).click()
   await expect(page.getByRole('status').filter({ hasText: 'PAY registered.' })).toBeVisible()
+  // A registered project tests with `npm test`; this repository checks for a file instead.
+  const commands = (await (
+    await request.get(appUrl('/api/projects/PAY/test-commands'))
+  ).json()) as {
+    id: string
+    is_default: boolean
+  }[]
+  const patched = await request.patch(
+    appUrl(`/api/projects/PAY/test-commands/${commands.find((c) => c.is_default)!.id}`),
+    { data: { command: 'test -f src/retry.ts' } },
+  )
+  expect(patched.ok()).toBe(true)
   await expectAccessible(page)
 
   await page.getByRole('link', { name: 'PAY Payments' }).click()
