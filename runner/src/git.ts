@@ -51,6 +51,31 @@ export class Git {
     return this.run('git', ['-C', dir, 'diff', `origin/${base}...HEAD`])
   }
 
+  /**
+   * What the branch changed, as paths relative to the worktree root: `committed` is the net
+   * difference from the merge-base with `origin/<base>`; `uncommitted` is staged, unstaged and
+   * untracked (never ignored) paths. Every listing runs with `-z`, so a path comes back exactly
+   * as stored, never quoted.
+   */
+  async changedPaths(
+    dir: string,
+    base: string,
+  ): Promise<{ mergeBase: string; committed: string[]; uncommitted: string[] }> {
+    const list = async (args: string[]) =>
+      (await this.run('git', ['-C', dir, ...args])).split('\0').filter((p) => p !== '')
+    const mergeBase = (
+      await this.run('git', ['-C', dir, 'merge-base', 'HEAD', `origin/${base}`])
+    ).trim()
+    const committed = await list(['diff', '-z', '--name-only', '--no-renames', mergeBase, 'HEAD'])
+    const tracked = await list(['diff', '-z', '--name-only', '--no-renames', 'HEAD'])
+    const untracked = await list(['ls-files', '-z', '--others', '--exclude-standard'])
+    return {
+      mergeBase,
+      committed: [...new Set(committed)].sort(),
+      uncommitted: [...new Set([...tracked, ...untracked])].sort(),
+    }
+  }
+
   async push(dir: string, branch: string): Promise<void> {
     await this.run('git', ['-C', dir, 'push', '-u', 'origin', branch])
   }
