@@ -71,12 +71,23 @@ interface Script {
   /** The worktree's HEAD once each Verify that ends ok has run, in turn. */
   verifyHeads?: string[]
   setupCommand?: string
+  /** The exit code of each run of the setup command, in turn; 0 when unlisted. */
+  setupExits?: number[]
+  /** The commit, commit count and paths the fast-forward moves the base by. */
+  moveTo?: { head: string; commits?: number; paths?: string[] }
+  /** Which refresh step fails with a GitError. */
+  fails?: 'fetch' | 'ff' | 'link'
+  /** The phase calls throw instead of returning. */
+  phaseThrows?: boolean
 }
 
 function harness(script: Script) {
   const sent: RunnerEvent[] = []
   const artifacts: ArtifactView[] = []
   const calls: string[] = []
+  /** The refresh's git steps and setup runs, with the phase calls, in the order they happened. */
+  const order: string[] = []
+  let setups = 0
   const gitCalls: string[] = []
   /** Where each push and pull request was made. */
   const writes: string[] = []
@@ -181,6 +192,7 @@ function harness(script: Script) {
   const handoffs: Record<string, string> = {}
   const phases: Phases = {
     start: async (input, _deps, ids) => {
+      order.push('phase')
       calls.push(`start ${input.phase}-${input.attempt}`)
       handoffs[`${input.phase}-${input.attempt}`] = input.handoff
       return act({
@@ -196,10 +208,13 @@ function harness(script: Script) {
       })
     },
     resume: async (record, message) => {
+      order.push('phase')
+      if (script.phaseThrows === true) throw new Error('process did not start')
       calls.push(`resume ${record.phase}-${record.attempt}: ${message}`)
       return act(record)
     },
     restart: async (record) => {
+      order.push('phase')
       calls.push(`restart ${record.phase}-${record.attempt}`)
       return act(record)
     },
@@ -249,7 +264,23 @@ function harness(script: Script) {
     removeWorktree: async (repo: string) => {
       gitCalls.push(repo === '/repo' ? 'remove' : `remove linked ${repo}`)
     },
+    fetchBase: async () => {
+      order.push('fetch')
+      if (script.fails === 'fetch') throw new GitError('git fetch origin main', 'no network')
+    },
+    undoUncommitted: async () => {
+      order.push('undo')
+      tree.uncommitted = []
+    },
+    fastForward: async () => {
+      order.push('ff')
+      if (script.fails === 'ff') throw new GitError('git merge --ff-only origin/main', 'diverged')
+      headNow = script.moveTo?.head ?? headNow
+    },
+    commitCount: async () => script.moveTo?.commits ?? 3,
+    changedBetween: async () => script.moveTo?.paths ?? ['a.ts'],
     prepareDetachedWorktree: async (repo: string, base: string, dir: string) => {
+      if (script.fails === 'link') throw new GitError(`git -C ${repo} fetch origin ${base}`, 'gone')
       gitCalls.push(`linked ${repo} ${base} ${dir}`)
     },
     pruneWorktrees: async () => undefined,
@@ -265,9 +296,11 @@ function harness(script: Script) {
     setToken: () => undefined,
     phases,
     runTests: async (command) => {
-      if (command === script.setupCommand && !setupRan) {
+      if (command === script.setupCommand) {
+        order.push('setup')
         setupRan = true
         tree.uncommitted = [...(script.afterSetup ?? [])]
+        return { ...runResult, exitCode: script.setupExits?.[setups++] ?? 0 }
       } else {
         tree.uncommitted = [...tree.uncommitted, ...(script.testWrites?.[tests] ?? [])]
         tests += 1
@@ -297,6 +330,7 @@ function harness(script: Script) {
     sent,
     artifacts,
     calls,
+    order,
     gitCalls,
     writes,
     handoffs,
@@ -1007,6 +1041,320 @@ describe('the files gate', () => {
       expect(
         JSON.parse(readFileSync(join(RUN_DIR(h.home), 'excluded-paths.json'), 'utf8')),
       ).toEqual(['package-lock.json'])
+    })
+  })
+})
+
+describe('a Plan-stage resume refreshes the base first', () => {
+  const SETUP = 'npm ci'
+  const WITH_SETUP: RunWork = { ...RUN, project: { ...RUN.project, setup_command: SETUP } }
+  const claim = (
+    message: string | null,
+    run: RunWork = WITH_SETUP,
+    cp = checkpoint('plan', 1, 'plan-phase'),
+  ) => ({ ...resume(cp, message), run }) as Extract<Work, { kind: 'resume' }>
+  const seed = (h: ReturnType<typeof harness>, files: Record<string, string>) => {
+    mkdirSync(RUN_DIR(h.home), { recursive: true })
+    for (const [name, text] of Object.entries(files))
+      writeFileSync(join(RUN_DIR(h.home), name), text)
+  }
+  const file = (h: ReturnType<typeof harness>, name: string) => join(RUN_DIR(h.home), name)
+  const NOTE_FOR_B = (h: ReturnType<typeof harness>) =>
+    h.calls.find((c) => c.startsWith('resume plan-1'))!
+  const answerEvents = (h: ReturnType<typeof harness>) =>
+    h.of('tool_call').filter((e) => e.tool === 'saved_answer')
+
+  const MOVE = { head: 'def456', commits: 3, paths: ['a.ts', 'b.ts'] }
+
+  it.each<[string, string | null, boolean]>([
+    ['words at the gate', 'Split step 2.', true],
+    ['Approve plan', null, false],
+    ['an answer to the planner’s own question', 'The owner answered your question:\n\nBlue', true],
+    ['Resume after a block', INTERRUPTED, true],
+  ])(
+    'AC1, AC2: %s fetches, fast-forwards and sets up once, before any phase',
+    async (_n, message, planner) => {
+      const h = withPlan(harness({ setupCommand: SETUP, moveTo: MOVE }))
+      await carryOut(claim(message), h.deps)
+      const refresh = h.order.filter((o) => o !== 'phase')
+      expect(refresh.slice(0, 4)).toEqual(['fetch', 'undo', 'ff', 'setup'])
+      expect(h.order.filter((o) => o === 'fetch')).toHaveLength(1)
+      expect(h.order.filter((o) => o === 'ff')).toHaveLength(1)
+      expect(h.order.filter((o) => o === 'setup')).toHaveLength(1)
+      expect(h.order.indexOf('phase')).toBeGreaterThan(h.order.indexOf('setup'))
+      expect(h.calls.some((c) => c.startsWith('resume plan'))).toBe(planner)
+      if (!planner) expect(h.calls.slice(0, 2)).toEqual(['end plan-1 ok', 'start build-1'])
+    },
+  )
+
+  it.each<[string, Checkpoint, RunWork]>([
+    ['Build', checkpoint('build', 1, 'build-phase'), WITH_SETUP],
+    ['tests', checkpoint('tests', 1), WITH_SETUP],
+    ['Verify', checkpoint('verify', 1, 'verify-phase'), WITH_SETUP],
+    [
+      'a kept plan',
+      checkpoint('plan', 1),
+      { ...WITH_SETUP, kept_plan: { artifact_id: 'plan-1', from_run: 1 } },
+    ],
+  ])('AC3: a resume in %s does no refresh', async (_n, cp, run) => {
+    const h = withPlan(harness({ setupCommand: SETUP, moveTo: MOVE }))
+    await carryOut(claim(INTERRUPTED, run, cp), h.deps)
+    expect(h.order.filter((o) => ['fetch', 'undo', 'ff', 'setup'].includes(o))).toEqual([])
+  })
+
+  it('AC3: a Build resume gets its message unchanged and writes no plan-base.txt', async () => {
+    const h = withPlan(harness({ moveTo: MOVE }))
+    await carryOut(claim('Blue', RUN, checkpoint('build', 1, 'build-phase')), h.deps)
+    expect(h.calls[0]).toBe('resume build-1: Blue')
+    expect(existsSync(file(h, 'plan-base.txt'))).toBe(false)
+  })
+
+  it.each<[string, Script, string]>([
+    ['the fetch', { fails: 'fetch' }, 'git fetch origin main'],
+    ['the fast-forward', { fails: 'ff' }, 'git merge --ff-only origin/main'],
+    ['a linked project’s checkout', { fails: 'link' }, 'git -C /chr fetch origin main'],
+  ])('AC6, AC9: %s failing blocks the run at plan, with no phase', async (_n, script, command) => {
+    const h = withPlan(harness(script))
+    const run: RunWork = {
+      ...RUN,
+      links: [
+        {
+          key: 'CHR',
+          name: 'c',
+          note: '',
+          repo_path: '/chr',
+          github_repo: 'o/c',
+          base_branch: 'main',
+        },
+      ],
+    }
+    expect(await carryOut(claim('Go', run), h.deps)).toBe('released')
+    expect(h.of('error').at(-1)).toMatchObject({
+      payload: { blocks: true, cause: 'step_failed', stage: 'plan', command },
+    })
+    expect(h.checkpoints().at(-1)?.stage).toBe('plan')
+    expect(h.order).not.toContain('phase')
+  })
+
+  it('AC7: remakes the checkouts from the current links, not restoring the stale one', async () => {
+    const h = withPlan(harness({ confidence: ['medium'] }))
+    const link = (key: string) => ({
+      key,
+      name: key,
+      note: 'n',
+      repo_path: `/${key.toLowerCase()}`,
+      github_repo: `o/${key}`,
+      base_branch: 'main',
+    })
+    const path = join(h.home, 'worktrees', `${RUN.id}-linked`)
+    seed(h, { 'linked.json': JSON.stringify([{ ...link('ZLC'), path: join(path, 'ZLC') }]) })
+    const run: RunWork = { ...RUN, links: [link('CHR'), link('ZLR')] }
+    // No session: the planner starts, and its handoff names the checkouts.
+    const work = claim('Go', run, checkpoint('plan', 1))
+    expect(await carryOut(work, h.deps)).toBe('released')
+    expect(h.gitCalls).toContain(`linked /chr main ${join(path, 'CHR')}`)
+    expect(h.gitCalls).toContain(`linked /zlr main ${join(path, 'ZLR')}`)
+    expect(h.gitCalls.filter((c) => c.startsWith('linked /zlc'))).toEqual([])
+    const listed = JSON.parse(readFileSync(file(h, 'linked.json'), 'utf8')) as { key: string }[]
+    expect(listed.map((c) => c.key)).toEqual(['CHR', 'ZLR'])
+    expect(h.handoffs['plan-1']).toContain('CHR')
+    expect(h.handoffs['plan-1']).toContain('ZLR')
+    expect(h.handoffs['plan-1']).not.toContain('ZLC')
+  })
+
+  it('AC8: a run with no linked.json gets its link checked out and listed', async () => {
+    const h = withPlan(harness({ confidence: ['medium'] }))
+    const run: RunWork = {
+      ...RUN,
+      links: [
+        {
+          key: 'CHR',
+          name: 'c',
+          note: '',
+          repo_path: '/chr',
+          github_repo: 'o/c',
+          base_branch: 'main',
+        },
+      ],
+    }
+    await carryOut(claim('Go', run), h.deps)
+    expect(h.gitCalls.some((c) => c.startsWith('linked /chr'))).toBe(true)
+    expect(readFileSync(file(h, 'linked.json'), 'utf8')).toContain('"CHR"')
+  })
+
+  it('AC10: runs setup once as a tool_call and records what it left as excluded', async () => {
+    const h = withPlan(harness({ setupCommand: SETUP, afterSetup: ['package-lock.json'] }))
+    await carryOut(claim('Go'), h.deps)
+    expect(h.of('tool_call').filter((e) => e.tool === 'setup_command')).toHaveLength(1)
+    expect(JSON.parse(readFileSync(file(h, 'excluded-paths.json'), 'utf8'))).toEqual([
+      'package-lock.json',
+    ])
+  })
+
+  it('AC10: a project without setup gets an empty excluded list', async () => {
+    const h = withPlan(harness({}))
+    seed(h, { 'excluded-paths.json': '["old"]' })
+    await carryOut(claim('Go', RUN), h.deps)
+    expect(JSON.parse(readFileSync(file(h, 'excluded-paths.json'), 'utf8'))).toEqual([])
+  })
+
+  it('AC10: a failing setup blocks at plan with no phase', async () => {
+    const h = withPlan(harness({ setupCommand: SETUP, setupExits: [1] }))
+    expect(await carryOut(claim('Go'), h.deps)).toBe('released')
+    expect(h.of('error').at(-1)).toMatchObject({
+      payload: { cause: 'step_failed', stage: 'plan', command: SETUP },
+    })
+    expect(h.order).not.toContain('phase')
+  })
+
+  describe('the base-moved note', () => {
+    it.each<[string, Record<string, string>]>([
+      ['plan-base.txt names the old commit', { 'plan-base.txt': 'abc123' }],
+      ['a run paused before the file existed', {}],
+    ])('AC11: %s: the session gets the note, then the message', async (_n, files) => {
+      const h = withPlan(harness({ moveTo: MOVE }))
+      seed(h, files)
+      await carryOut(claim('Split step 2.', RUN), h.deps)
+      const message = h.calls.find((c) => c.startsWith('resume plan-1'))!
+      expect(message).toContain('abc123')
+      expect(message).toContain('def456')
+      expect(message).toContain('3 commits')
+      expect(message).toContain('a.ts\nb.ts')
+      expect(message.endsWith('\n\nSplit step 2.')).toBe(true)
+      expect(readFileSync(file(h, 'plan-base.txt'), 'utf8')).toBe('def456')
+    })
+
+    it('AC13: with the base unmoved the message is exactly the incoming one', async () => {
+      const h = withPlan(harness({}))
+      seed(h, { 'plan-base.txt': 'abc123' })
+      await carryOut(claim('Split step 2.', RUN), h.deps)
+      expect(h.calls[0]).toBe('resume plan-1: Split step 2.')
+    })
+
+    it.each<[string, Record<string, string>]>([
+      ['with plan-base.txt naming A', { 'plan-base.txt': 'abc123' }],
+      ['with no plan-base.txt', {}],
+    ])(
+      'AC14: a refresh that moved HEAD and blocked still gives the note next time, %s',
+      async (_n, files) => {
+        const h = withPlan(harness({ setupCommand: SETUP, setupExits: [1, 0], moveTo: MOVE }))
+        seed(h, files)
+        expect(await carryOut(claim('Split step 2.'), h.deps)).toBe('released')
+        expect(h.order).not.toContain('phase')
+        expect(await carryOut(claim('Split step 2.'), h.deps)).toBe('review')
+        const message = NOTE_FOR_B(h)
+        expect(message).toContain('abc123')
+        expect(message).toContain('def456')
+        expect(message.endsWith('\n\nSplit step 2.')).toBe(true)
+      },
+    )
+
+    it('AC15: Approve plan with a moved base refreshes, then starts Build with no planner resume', async () => {
+      const h = withPlan(harness({ moveTo: MOVE }))
+      await carryOut(claim(null, RUN), h.deps)
+      expect(h.order[0]).toBe('fetch')
+      expect(h.calls.some((c) => c.startsWith('resume'))).toBe(false)
+      expect(h.handoffs['build-1']).toContain('<plan>')
+    })
+  })
+
+  describe('the saved answer', () => {
+    const SAVED_WORDS = JSON.stringify({ kind: 'words', text: 'Split step 2.' })
+    const WORDS_TARGET = "delivered the owner's answer kept from before the block"
+    const APPROVAL_TARGET = 'went on to Build on the Approve plan kept from before the block'
+
+    it('AC16: the planner gets the saved words in place of the nudge, announced, and the file goes', async () => {
+      const h = withPlan(harness({}))
+      seed(h, { 'pending-answer.json': SAVED_WORDS })
+      await carryOut(claim(INTERRUPTED, RUN), h.deps)
+      expect(h.calls[0]).toBe('resume plan-1: Split step 2.')
+      expect(answerEvents(h)).toHaveLength(1)
+      expect(answerEvents(h)[0]).toMatchObject({
+        target: WORDS_TARGET,
+        status: 'ok',
+        agent: 'runner',
+      })
+      expect(existsSync(file(h, 'pending-answer.json'))).toBe(false)
+    })
+
+    it('AC17: saved approval goes to Build; the file goes once the build checkpoint is sent', async () => {
+      const h = withPlan(harness({}))
+      seed(h, { 'pending-answer.json': JSON.stringify({ kind: 'approved' }) })
+      let atBuildCheckpoint: boolean | undefined
+      const send = h.deps.sink.send.bind(h.deps.sink)
+      h.deps.sink.send = async (events) => {
+        const result = await send(events)
+        if (
+          atBuildCheckpoint === undefined &&
+          events.some(
+            (e) => e.type === 'checkpoint' && (e.payload as { stage?: string }).stage === 'build',
+          )
+        )
+          atBuildCheckpoint = existsSync(file(h, 'pending-answer.json'))
+        return result
+      }
+      await carryOut(claim(INTERRUPTED, RUN), h.deps)
+      expect(h.calls.some((c) => c.startsWith('resume'))).toBe(false)
+      expect(h.calls.slice(0, 2)).toEqual(['end plan-1 ok', 'start build-1'])
+      expect(answerEvents(h)[0]).toMatchObject({ target: APPROVAL_TARGET })
+      // The file was still there when the checkpoint was sent, and gone afterwards.
+      expect(atBuildCheckpoint).toBe(true)
+      expect(existsSync(file(h, 'pending-answer.json'))).toBe(false)
+    })
+
+    it('AC18: words are cleared after a normal return, and a shutdown-stopped process gives a plain nudge next', async () => {
+      const done = withPlan(harness({}))
+      await carryOut(claim('Split step 2.', RUN), done.deps)
+      expect(existsSync(file(done, 'pending-answer.json'))).toBe(false)
+
+      const h = withPlan(harness({ acts: { 'plan-1': ['shutdown'] } }))
+      expect(await carryOut(claim('Split step 2.', RUN), h.deps)).toBe('released')
+      expect(existsSync(file(h, 'pending-answer.json'))).toBe(false)
+      const again = withPlan(harness({}))
+      seed(again, {})
+      await carryOut(claim(INTERRUPTED, RUN), again.deps)
+      expect(again.calls[0]).toBe(`resume plan-1: ${INTERRUPTED}`)
+      expect(answerEvents(again)).toEqual([])
+    })
+
+    it('AC19: a process that fails to start leaves the answer in the file', async () => {
+      const h = withPlan(harness({ phaseThrows: true }))
+      await carryOut(claim('Split step 2.', RUN), h.deps)
+      expect(JSON.parse(readFileSync(file(h, 'pending-answer.json'), 'utf8'))).toEqual({
+        kind: 'words',
+        text: 'Split step 2.',
+      })
+    })
+
+    it('AC16: a blocked refresh keeps the answer, and the next Resume delivers it', async () => {
+      const h = withPlan(harness({ setupCommand: SETUP, setupExits: [1, 0] }))
+      await carryOut(claim('Split step 2.'), h.deps)
+      expect(existsSync(file(h, 'pending-answer.json'))).toBe(true)
+      await carryOut(claim(INTERRUPTED), h.deps)
+      expect(h.calls[0]).toBe('resume plan-1: Split step 2.')
+    })
+
+    it('AC20: a message other than the nudge is delivered, not the saved one', async () => {
+      const h = withPlan(harness({ fails: 'ff' }))
+      seed(h, { 'pending-answer.json': SAVED_WORDS })
+      await carryOut(claim('Something else.', RUN), h.deps)
+      expect(JSON.parse(readFileSync(file(h, 'pending-answer.json'), 'utf8'))).toEqual({
+        kind: 'words',
+        text: 'Something else.',
+      })
+      const ok = withPlan(harness({}))
+      seed(ok, { 'pending-answer.json': SAVED_WORDS })
+      await carryOut(claim('Something else.', RUN), ok.deps)
+      expect(ok.calls[0]).toBe('resume plan-1: Something else.')
+      expect(answerEvents(ok)).toEqual([])
+    })
+
+    it('AC21: a nudge with nothing saved reaches the planner as the nudge, after any note', async () => {
+      const h = withPlan(harness({ moveTo: MOVE }))
+      seed(h, { 'plan-base.txt': 'abc123' })
+      await carryOut(claim(INTERRUPTED, RUN), h.deps)
+      expect(h.calls[0]!.endsWith(`\n\n${INTERRUPTED}`)).toBe(true)
+      expect(answerEvents(h)).toEqual([])
     })
   })
 })
