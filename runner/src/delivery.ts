@@ -7,6 +7,7 @@ import type { Git } from './git.js'
 import { buildHandoff, type HandoffInput } from './phases/handoff.js'
 import { formatViolations, newlyChanged, violationsOf } from './files-gate.js'
 import {
+  GATE_HEAD,
   GATE_REPORT,
   prepareRunDir,
   readAllowed,
@@ -191,7 +192,11 @@ export async function carryOut(
         },
       ),
     ])
-    if (found.length === 0) return true
+    if (found.length === 0) {
+      // Verify may not move the branch that is pushed: the push stage compares against this.
+      writeFileSync(join(runDir, GATE_HEAD), await deps.git.head(worktree))
+      return true
+    }
     writeFileSync(join(runDir, GATE_REPORT), formatViolations(found, changed.mergeBase))
     if (state.attempt >= MAX_ATTEMPTS) {
       const names = found.map((v) => v.path).sort()
@@ -355,6 +360,17 @@ export async function carryOut(
         }
         case 'push': {
           await steps.checkpoint()
+          // Absent only for a run started before the gate existed.
+          const gateHead = join(runDir, GATE_HEAD)
+          if (existsSync(gateHead)) {
+            const built = readFileSync(gateHead, 'utf8').trim()
+            const now = await deps.git.head(worktree)
+            if (now !== built)
+              throw new End(
+                'failed',
+                `Verify changed the branch: HEAD is ${now}, Build ended on ${built}`,
+              )
+          }
           await deps.git.push(worktree, branch)
           state.stage = 'pr'
           break

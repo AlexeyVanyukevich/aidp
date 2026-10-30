@@ -956,6 +956,25 @@ describe('the files gate', () => {
     })
   })
 
+  it('AC19: pushes nothing and fails the run when Verify moved HEAD', async () => {
+    const h = harness({ verifyHeads: ['def456'] })
+    expect(await carryOut(start, h.deps)).toBe('failed')
+    expect(h.writes).toEqual([])
+    expect(h.gitCalls).not.toContain(`push ${BRANCH}`)
+    expect(h.runEnd()).toMatchObject({
+      payload: {
+        outcome: 'failed',
+        reason: 'Verify changed the branch: HEAD is def456, Build ended on abc123',
+      },
+    })
+  })
+
+  it('AC19: pushes as today when HEAD is where the gate left it', async () => {
+    const h = harness({ verifyHeads: ['abc123'] })
+    expect(await carryOut(start, h.deps)).toBe('review')
+    expect(h.gitCalls).toContain(`push ${BRANCH}`)
+  })
+
   describe('exclusions', () => {
     it('AC6: a file the runner’s test run wrote is excluded on the next attempt', async () => {
       const h = harness({
