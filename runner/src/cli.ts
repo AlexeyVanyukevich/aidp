@@ -1,11 +1,14 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { BoardApi } from './api.js'
+import { realExec } from './exec.js'
+import { formatViolations, violationsOf } from './files-gate.js'
+import { Git } from './git.js'
 import { decide, denyOutput } from './hooks/guard.js'
 import { hookToEvent, pausedBy } from './hooks/hook-event.js'
 import { readLinked } from './linked.js'
 import { readMigrationSiblings } from './hooks/migration-siblings.js'
-import { PAUSED_MARKER } from './phases/run-dir.js'
+import { PAUSED_MARKER, readAllowed, readApproved, readExcluded } from './phases/run-dir.js'
 import { EventSink } from './sink.js'
 
 function env(name: string): string {
@@ -20,6 +23,38 @@ async function readStdin(): Promise<Record<string, unknown>> {
   for await (const chunk of process.stdin) chunks.push(chunk as Buffer)
   const text = Buffer.concat(chunks).toString('utf8').trim()
   return text === '' ? {} : (JSON.parse(text) as Record<string, unknown>)
+}
+
+/**
+ * After a Bash call in Build: the files it left changed that the run does not allow, worded for
+ * the builder; null when there are none, and null for any reason of the board's own, since a hook
+ * blocks only for a violation it actually found.
+ */
+async function filesFeedback(
+  input: Record<string, unknown>,
+  runDir: string,
+): Promise<string | null> {
+  try {
+    if (process.env.BOARD_PHASE !== 'build' || input.tool_name !== 'Bash') return null
+    const allowed = readAllowed(runDir)
+    const basePath = join(runDir, 'base-branch.txt')
+    if (allowed === null || !existsSync(basePath)) return null
+    const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd()
+    const changed = await new Git(realExec, 'gh').changedPaths(
+      cwd,
+      readFileSync(basePath, 'utf8').trim(),
+    )
+    const found = violationsOf({
+      committed: changed.committed,
+      uncommitted: changed.uncommitted,
+      excluded: readExcluded(runDir),
+      allowed,
+      approvedMigrations: readApproved(runDir),
+    })
+    return found.length === 0 ? null : formatViolations(found, changed.mergeBase)
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -47,6 +82,10 @@ async function event(name: string): Promise<void> {
     await sink.send([hookToEvent(name, input, ctx)])
   } catch (error) {
     process.stderr.write(`board-cli: event not recorded: ${String(error)}\n`)
+  }
+  if (name === 'PostToolUse') {
+    const reason = await filesFeedback(input, runDir)
+    if (reason !== null) process.stdout.write(JSON.stringify({ decision: 'block', reason }))
   }
 }
 
