@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Dialog, Notice, Tabs } from '@zellige/react'
+import { Button, Dialog, Field, Notice, Select, Tabs } from '@zellige/react'
 import { api } from '../api'
 import { columns, LABELS, stepPatch } from '../board/columns'
 import { isConflict } from '../errors'
 import { Loaded } from '../Loaded'
 import { useDocumentTitle } from '../page'
+import { testCommandsKey } from '../stream'
 import type { TaskState, TaskView } from '../types'
 import { ApprovalsTab } from './ApprovalsTab'
 import { actionsFor, blockText, initialTab, stateAnnouncement } from './blocks'
@@ -14,6 +15,7 @@ import { CostTab } from './CostTab'
 import { PlanTab } from './PlanTab'
 import { PrTab } from './PrTab'
 import { SpecTab } from './SpecTab'
+import { testCommandLine } from './testCommandLine'
 import { TimelineTab } from './TimelineTab'
 import './card.css'
 
@@ -124,6 +126,14 @@ export function CardDrawer() {
         onSuccess: () => setMessage(`${card.key} moved ${direction} in ${where}.`),
       })
   }
+
+  const choose = useMutation({
+    mutationFn: (testCommandId: string | null) =>
+      api.patchTask(taskId, { test_command_id: testCommandId }),
+    onMutate: () => setProblem(undefined),
+    onError: fail,
+    onSettled: refresh,
+  })
 
   const items = (t: TaskView) => [
     { id: 'spec', label: 'Spec', panel: <SpecTab task={t} onFrozen={leave} /> },
@@ -239,11 +249,66 @@ export function CardDrawer() {
               <Notice tone="danger" className="announce" ref={problemBox} tabIndex={-1}>
                 {problem?.text}
               </Notice>
+              <TestCommandChoice
+                task={t}
+                onChoose={(id, said) => choose.mutate(id, { onSuccess: () => setMessage(said) })}
+              />
               <Tabs label={`${t.key} sections`} items={items(t)} value={tab} onChange={setTab} />
             </div>
           )
         }}
       </Loaded>
     </Dialog>
+  )
+}
+
+/**
+ * The command a task's run tests with: a choice until the card is Done, and then what the last
+ * started run used. The choice saves at once; focus stays on the select.
+ */
+function TestCommandChoice({
+  task,
+  onChoose,
+}: {
+  task: TaskView
+  onChoose: (id: string | null, said: string) => void
+}) {
+  const commands = useQuery({
+    queryKey: testCommandsKey(task.project.key),
+    queryFn: () => api.testCommands(task.project.key),
+  })
+  const line = testCommandLine(task.state, task.tested_with)
+  if (task.state === 'done') return line === null ? null : <p className="muted">{line}</p>
+
+  const list = commands.data ?? []
+  const fallback = list.find((c) => c.is_default)
+  const change = (value: string) => {
+    if (value === '') {
+      onChoose(
+        null,
+        `${task.key} will test with the project default (${fallback?.name ?? 'tests'}).`,
+      )
+      return
+    }
+    const chosen = list.find((c) => c.id === value)
+    onChoose(value, `${task.key} will test with ${chosen?.name ?? 'that command'}.`)
+  }
+  return (
+    <>
+      <Field
+        label="Test command"
+        hint="Project default follows the project if its default changes; a named command does not. A run that has started keeps the command it started with."
+      >
+        <Select value={task.test_command_id ?? ''} onChange={(e) => change(e.target.value)}>
+          <option value="">{`Project default (${fallback?.name ?? 'tests'})`}</option>
+          {list.map((command) => (
+            <option key={command.id} value={command.id}>
+              {command.name}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      {line !== null && <p className="muted">{line}</p>}
+    </>
   )
 }
