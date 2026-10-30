@@ -104,6 +104,10 @@ export interface RunWork {
     repo_path: string
     github_repo: string
     base_branch: string
+    /**
+     * A delivery run's value is the run's fixed text, set at its first claim, not the
+     * project's; a spec run's is the task's chosen command, else the project's default.
+     */
     test_command: string
     setup_command: string | null
   }

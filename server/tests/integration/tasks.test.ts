@@ -241,3 +241,92 @@ describe('the description', () => {
     expect(response.statusCode).toBe(status)
   })
 })
+
+describe('the test command a task chose', () => {
+  const addCommand = async (project: string, name: string, command: string) =>
+    (
+      await getTestDb()
+        .insertInto('project_test_commands')
+        .values({ project_id: project, name, command })
+        .returning('id')
+        .executeTakeFirstOrThrow()
+    ).id
+  const patch = (id: string, payload: unknown) =>
+    app.inject({ method: 'PATCH', url: `/api/tasks/${id}`, payload: payload as object })
+  const get = async (id: string) =>
+    (await app.inject({ method: 'GET', url: `/api/tasks/${id}` })).json()
+
+  it('is set, cleared and survives a rename', async () => {
+    const { id } = await seedTask(getTestDb(), projectId, { state: 'ready' })
+    const unit = await addCommand(projectId, 'unit', 'npm run unit')
+    expect((await patch(id, { test_command_id: unit })).statusCode).toBe(200)
+    expect((await get(id)).test_command_id).toBe(unit)
+    await getTestDb()
+      .updateTable('project_test_commands')
+      .set({ name: 'renamed' })
+      .where('id', '=', unit)
+      .execute()
+    expect((await get(id)).test_command_id).toBe(unit)
+    expect((await patch(id, { test_command_id: null })).statusCode).toBe(200)
+    expect((await get(id)).test_command_id).toBeNull()
+  })
+
+  it('refuses a command of another project, naming the field', async () => {
+    const { id } = await seedTask(getTestDb(), projectId, { state: 'ready' })
+    const other = await seedProject(getTestDb(), { key: 'OTH' })
+    const foreign = await addCommand(other.id, 'unit', 'x')
+    const response = await patch(id, { test_command_id: foreign })
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({ details: { field: 'test_command_id' } })
+  })
+
+  it('is fixed once the task is Done', async () => {
+    const { id } = await seedTask(getTestDb(), projectId, { state: 'done' })
+    const unit = await addCommand(projectId, 'unit', 'x')
+    const response = await patch(id, { test_command_id: unit })
+    expect(response.statusCode).toBe(409)
+    expect(response.json().error).toBe('conflict')
+    expect((await get(id)).test_command_id).toBeNull()
+  })
+
+  type Run = { status: 'failed' | 'queued' | 'cancelled'; started: boolean; command: string | null }
+  const testedWith: [string, Run[], string | null][] = [
+    ['no run', [], null],
+    [
+      'one started run',
+      [{ status: 'failed', started: true, command: 'npm run unit' }],
+      'npm run unit',
+    ],
+    ['a queued run never started', [{ status: 'queued', started: false, command: null }], null],
+    [
+      'a started run and a re-run cancelled unstarted',
+      [
+        { status: 'failed', started: true, command: 'npm run unit' },
+        { status: 'cancelled', started: false, command: null },
+      ],
+      'npm run unit',
+    ],
+  ]
+  it.each(testedWith)('reads tested_with for %s', async (_name, runs, expected) => {
+    const { id } = await seedTask(getTestDb(), projectId, { state: 'failed' })
+    await getTestDb()
+      .insertInto('specs')
+      .values({ task_id: id, version: 1, body_md: GOOD_SPEC, status: 'approved' })
+      .execute()
+    for (const [index, run] of runs.entries())
+      await getTestDb()
+        .insertInto('runs')
+        .values({
+          task_id: id,
+          kind: 'delivery',
+          number: index + 1,
+          spec_version: 1,
+          status: run.status,
+          test_command: run.command,
+          started_at: run.started ? new Date() : null,
+          created_at: new Date(Date.now() + index * 1000),
+        })
+        .execute()
+    expect((await get(id)).tested_with).toBe(expected)
+  })
+})

@@ -1,7 +1,7 @@
 import type { Kysely } from 'kysely'
 import type { Database } from '../../db/schema.js'
 import { publish } from '../../shared/bus.js'
-import { ConflictError, NotFoundError } from '../../shared/errors.js'
+import { ConflictError, NotFoundError, ValidationError } from '../../shared/errors.js'
 import type { TaskState } from '../../shared/vocabulary.js'
 import type { CostService } from '../costs/cost.service.js'
 import type { ProjectRepository, ProjectView } from '../projects/project.repository.js'
@@ -76,6 +76,7 @@ export class TaskService {
       description_md?: string
       budget_usd?: number | null
       position?: number
+      test_command_id?: string | null
       state?: 'done'
     },
   ): Promise<TaskView> {
@@ -84,6 +85,19 @@ export class TaskService {
     // A draft reads the description it started with; later runs read the approved spec.
     if (fields.description_md !== undefined && !DESCRIBABLE.includes(task.state))
       throw new ConflictError(`The description is fixed in ${task.state}`, { state: task.state })
+    if (fields.test_command_id !== undefined) {
+      if (task.state === 'done')
+        throw new ConflictError('The test command of a finished task is fixed', {
+          state: task.state,
+        })
+      if (fields.test_command_id !== null) {
+        const project = await this.project(task.project.key)
+        if ((await this.projects.testCommand(project.id, fields.test_command_id)) === undefined)
+          throw new ValidationError('No such test command in this project', {
+            field: 'test_command_id',
+          })
+      }
+    }
     // Review is the owner's drag; any other state asks for `mark_done`, which refuses what it must.
     if (state === 'done')
       await moveTask(this.db, id, task.state === 'review' ? 'drag_done' : 'mark_done')

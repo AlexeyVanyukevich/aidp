@@ -133,26 +133,82 @@ describe('POST /api/runner/claim', () => {
     expect((await claim()).json()).toEqual({ work: null })
   })
 
-  it('hands over the test command as changed by PATCH', async () => {
-    const patched = await buildTestApp({
-      clock: () => now,
-      repoInspector: {
-        inspect: async () => ({ isGitRepo: true, remotes: [] }),
-        commandExists: async () => true,
-      },
-    })
-    try {
-      await seedQueuedRun(getTestDb())
-      const response = await patched.inject({
-        method: 'PATCH',
-        url: '/api/projects/PAY',
-        payload: { test_command: 'true' },
+  const addCommand = async (projectId: string, name: string, command: string) =>
+    (
+      await getTestDb()
+        .insertInto('project_test_commands')
+        .values({ project_id: projectId, name, command })
+        .returning('id')
+        .executeTakeFirstOrThrow()
+    ).id
+  const choose = (taskId: string, id: string | null) =>
+    getTestDb().updateTable('tasks').set({ test_command_id: id }).where('id', '=', taskId).execute()
+  const stored = async (runId: string) =>
+    (
+      await getTestDb()
+        .selectFrom('runs')
+        .select('test_command')
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow()
+    ).test_command
+
+  it('fixes the chosen command at the first claim, and a resume keeps it', async () => {
+    const { projectId, taskId, runId } = await seedQueuedRun(getTestDb())
+    const unit = await addCommand(projectId, 'unit', 'npm run unit')
+    await choose(taskId, unit)
+    expect((await claim()).json().work.run.project.test_command).toBe('npm run unit')
+    expect(await stored(runId)).toBe('npm run unit')
+
+    await getTestDb()
+      .updateTable('project_test_commands')
+      .set({ command: 'npm run unit2' })
+      .where('id', '=', unit)
+      .execute()
+    await choose(taskId, null)
+    await getTestDb()
+      .updateTable('runs')
+      .set({ status: 'queued', pending: 'resume', queued_at: now, resume_message: 'go' })
+      .where('id', '=', runId)
+      .execute()
+    const resume = (await claim()).json().work
+    expect(resume.kind).toBe('resume')
+    expect(resume.run.project.test_command).toBe('npm run unit')
+  })
+
+  it('carries the default when the task chose nothing, or its choice was removed', async () => {
+    const { projectId, taskId } = await seedQueuedRun(getTestDb())
+    expect((await claim()).json().work.run.project.test_command).toBe('npm test')
+
+    const second = await seedQueuedRun(getTestDb(), { projectId, number: 2 })
+    const unit = await addCommand(projectId, 'unit', 'npm run unit')
+    await choose(second.taskId, unit)
+    await getTestDb().deleteFrom('project_test_commands').where('id', '=', unit).execute()
+    expect(taskId).not.toBe(second.taskId)
+    expect((await claim()).json().work.run.project.test_command).toBe('npm test')
+  })
+
+  it('reads a spec run’s command at claim and stores nothing', async () => {
+    const db = getTestDb()
+    const project = await seedProject(db)
+    const unit = await addCommand(project.id, 'unit', 'unit')
+    const task = await seedTask(db, project.id, { state: 'spec_draft' })
+    await choose(task.id, unit)
+    const run = await db
+      .insertInto('runs')
+      .values({
+        task_id: task.id,
+        kind: 'spec',
+        number: 1,
+        spec_version: null,
+        status: 'queued',
+        queued_at: new Date(),
       })
-      expect(response.statusCode).toBe(200)
-      expect((await claim()).json().work.run.project.test_command).toBe('true')
-    } finally {
-      await patched.close()
-    }
+      .returning('id')
+      .executeTakeFirstOrThrow()
+    const work = (await claim()).json().work
+    expect(work.run.kind).toBe('spec')
+    expect(work.run.project.test_command).toBe('unit')
+    expect(await stored(run.id)).toBeNull()
   })
 
   it('hands over the oldest queued run with everything the runner needs, once', async () => {
