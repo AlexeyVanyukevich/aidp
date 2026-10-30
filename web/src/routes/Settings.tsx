@@ -106,7 +106,6 @@ function TestCommands({
     if (landing.to === 'name') addName.current?.focus()
     else if (landing.to === 'list') listBox.current?.focus()
     else editButtons.current.get(landing.id)?.focus()
-    setLanding(undefined)
   }, [landing])
 
   useEffect(() => {
