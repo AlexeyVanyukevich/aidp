@@ -135,18 +135,15 @@ for an owner-check criterion names the hand check, plus whatever a run can still
 records no result of the hand check.
 
 **The setup command.** A project may carry a `setup_command` (at most 500 characters), set when
-it is registered or later with `PATCH /api/projects/:key`, whose body is either or both of
-`setup_command` (string or null) and `test_command` (string), at least one: any other field, or an
-empty body, is refused with 400, and an unknown key answers 404. A null or blank `setup_command`
-clears it; a `test_command` cannot be cleared, and a blank, null or over-500-character one is
-refused naming the field. A command whose first word does not resolve in `repo_path` is refused
-with `validation_error` on its field, and the fields present are written all or none: the test
-command is checked first, so a body with both invalid names `test_command`. The Projects page
-shows each project's test command with an `Edit test command of <KEY>` button, which opens a form
-(`Test command of <KEY>`, `Save`, `Cancel`) beside the setup command's. Saving announces the new
-command in the page's shared announcement region and returns focus to the button; a refusal
-stays on the field, and any other failure is written into the form's own alert. The next claim
-carries the changed command to the runner. In the `prepare`
+it is registered or later with `PATCH /api/projects/:key`, whose body is `setup_command` (string
+or null) alone: any other field, or an empty body, is refused with 400,
+and an unknown key answers 404. A null or blank `setup_command` clears it. A command whose first
+word does not resolve in `repo_path` is refused with `validation_error` on its field. The
+Projects page shows each project's setup command with an `Edit setup command of <KEY>` button,
+which opens a form (`Setup command of <KEY>`, `Save`, `Cancel`). A refusal stays on the field,
+and any other failure is written into the form's own alert. The next claim carries the changed
+command to the runner.
+In the `prepare`
 stage of every spec run and delivery run, once the worktree is checked out, the runner runs it
 with `sh -c` in the worktree, bounded by `TEST_TIMEOUT_MS`, before any phase starts: it is how
 the repository's dependencies — and so the `charter` rules `CLAUDE.md` imports — are there when
@@ -155,6 +152,67 @@ test command's payload (exit code, timeout, the end of the output). A null comma
 One that exits non-zero or times out blocks the run as `step_failed`, carrying the command and
 the last 4,096 characters of its output; the checkpoint stays in `prepare`, and Resume recreates
 the worktree and runs the command again.
+
+**Test commands.** A project keeps several named test commands in `project_test_commands` (`id`,
+`project_id`, `name`, `command`, `is_default`, `created_at`), deleted with the project. A unique
+index on (`project_id`, `lower(name)`) keeps names distinct ignoring case, and a partial unique
+index on `project_id` where `is_default` keeps one default. Every project has exactly one default
+at all times: registration inserts `tests` running `npm test` (unchecked against the repository,
+and `POST /api/projects` refuses a `test_command`), making another the default clears the old one
+in the same transaction, and the default cannot be removed. `GET /api/projects` lists each
+project's `test_commands` (`{ id, name, command, is_default }`, ordered by `lower(name)`) and has
+no `test_command`. Four routes manage them: `GET /api/projects/:key/test-commands`; `POST` with
+`{ name, command }`, which adds a non-default command and answers 201; `PATCH
+/api/projects/:key/test-commands/:id` with at least one of `name`, `command` and `is_default`
+(only `true`), written all or none; and `DELETE`, which answers 204, or `409 conflict` for the
+default. A name is trimmed, 1 to 40 characters and unique in the project; a command is non-blank,
+at most 500 characters, and its first word must resolve in `repo_path`. A refusal is
+`validation_error` naming `name` or `command`, the name checked first; a name the unique index
+refuses when two adds race is the same refusal, never a 500. An id of another project is 404.
+Every add, edit, default change and removal publishes `project.updated` (with the project's key)
+in its transaction, which the stream forwards; a removal also publishes `task.updated` for each
+task it reset.
+
+A task refers to its command by `tasks.test_command_id` (null means the project's default; the
+foreign key sets it null when the command is removed, in any state), so renaming or editing a
+command keeps the choice. `PATCH /api/tasks/:id` accepts it as a uuid or null: an id of another
+project is `validation_error` naming `test_command_id`, and a task in Done answers `409 conflict`.
+At the first claim of a delivery run the server stores the chosen command's text, else the
+default's, in `runs.test_command`; every claim of that run, start or resume, carries that text as
+`run.project.test_command`, so a later choice, edit, default change or removal does not reach a
+started run. A spec run's claim carries the task's chosen command, else the default, read at claim
+and not stored. `GET /api/tasks/:id` carries `test_command_id` and `tested_with`, the
+`test_command` of the task's latest delivery run that has started (a newer run that never started
+does not hide an older one), or null.
+
+The settings page, at `/p/<KEY>/settings`, has one `main`: a `Board of <KEY>` link, the h1
+`<KEY> settings` (which takes focus on arrival), a status region, and the list read through the
+loading wrapper (`This project could not be loaded.` with Retry on failure). Loaded, it holds an
+h2 `Test commands` over the list's alert region and the list `Test commands of <KEY>`, then an h2
+`Add a test command` over a form with its own alert region; every live region is in the page
+before anything is written into it. Each item shows the name, the command and, on the default,
+`Default`, with `Edit <name>`, and, off the default, `Make <name> the default` and `Remove
+<name>`. Edit replaces the item with a form (`Name of <name>`, `Command of <name>`, Save, Cancel)
+and moves focus to its Name field; Save or Cancel returns focus to the item's Edit button. The
+status region announces `<name> added.`, `<name> saved.`, `<name> is now the default.` and `<name>
+removed. Tasks that chose it now use the default.`; focus stays on the add form's Name field after
+an add, moves to the item's Edit button after Make default, and to the list after a removal. A
+refusal naming `name` or `command` sets `aria-invalid` and `aria-describedby` on that field and
+focuses it; any other failure is written into the alert of the form or list it came from, which
+takes focus. The board's header links to the page (`Settings of <KEY>`). On the Projects page each
+project shows `Default test command: <name> (<command>)`, and the stream's `project.updated`
+refreshes the project list and the project's test-command list.
+
+On a card that is not Done, a `Test command` select sits between the actions and the tabs, with
+a hint that a named command does not follow a changed default and a started run keeps its
+command. Its options are `Project default (<default name>)`, then the project's commands in the
+list's order, refreshed by `project.updated`. Choosing saves at once with `PATCH /api/tasks/:id`
+and announces `<KEY> will test with <name>.` or `<KEY> will test with the project default
+(<name>).` in the card's status region, focus staying on the select; a failure goes into the
+card's problem region, which takes focus, and the select shows the saved choice again. In
+Running, Needs approval, Blocked and Review with a `tested_with`, `This run tests with <command>.`
+sits under the select. A Done card shows `Tested with: <command>` or `No run tested this task.`
+in place of the select.
 
 The run's `settings.json` sets Claude Code's `attribution` to `{ "commit": "", "pr": "" }`, so
 the runs' commits and pull requests carry no `Co-Authored-By` trailer or generated-by line.
