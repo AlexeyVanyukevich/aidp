@@ -36,6 +36,7 @@ const RUN: RunWork = {
     setup_command: null,
   },
 }
+const RUN_DIR = (home: string) => join(home, 'runs', RUN.id)
 const START: Work = { kind: 'start', run: RUN }
 const BRANCH = 'board/PAY-1-r2'
 
@@ -57,6 +58,19 @@ interface Script {
   worktreeGone?: boolean
   /** What the board answers to the gate's event, instead of accepting it. */
   refuse?: ApiError
+  /** The worktree as a resumed run finds it. */
+  initial?: { committed?: string[]; uncommitted?: string[] }
+  /** The worktree after each build that ends ok, in turn: its committed and uncommitted paths. */
+  trees?: { committed?: string[]; uncommitted?: string[] }[]
+  /** Paths each run of the test command writes, in turn. */
+  testWrites?: string[][]
+  /** The 1-based calls of `changedPaths` that fail with a GitError. */
+  changedFails?: number[]
+  /** Paths the worktree holds once setup has run. */
+  afterSetup?: string[]
+  /** The worktree's HEAD once each Verify that ends ok has run, in turn. */
+  verifyHeads?: string[]
+  setupCommand?: string
 }
 
 function harness(script: Script) {
@@ -71,6 +85,23 @@ function harness(script: Script) {
   let verifies = 0
   let builds = 0
   let pushes = 0
+  let changedCalls = 0
+  let tests = 0
+  let setupRan = false
+  let headNow = 'abc123'
+  /** The commands the runner ran as the project's test command. */
+  const testRuns: string[] = []
+  const runResult = {
+    exitCode: 0,
+    timedOut: false,
+    output: 'tests ok',
+    truncated: false,
+    durationMs: 5,
+  }
+  const tree = {
+    committed: [...(script.initial?.committed ?? [])],
+    uncommitted: [...(script.initial?.uncommitted ?? [])],
+  }
 
   const api = {
     issueToken: async () => 'token',
@@ -105,8 +136,16 @@ function harness(script: Script) {
         },
       })
     }
-    if (what === 'ok' && record.phase === 'build') builds += 1
+    if (what === 'ok' && record.phase === 'build') {
+      builds += 1
+      const next = script.trees?.[builds - 1]
+      if (next !== undefined) {
+        tree.committed = next.committed ?? []
+        tree.uncommitted = next.uncommitted ?? []
+      }
+    }
     if (what === 'ok' && record.phase === 'verify') {
+      headNow = script.verifyHeads?.[verifies] ?? headNow
       const verdict = script.verdicts?.[verifies++] ?? 'pass'
       if (verdict !== 'no-report')
         artifacts.push({
@@ -175,7 +214,17 @@ function harness(script: Script) {
     },
     newCommits: async () => script.commits?.[builds - 1] ?? 1,
     diff: async () => '+change',
-    head: async () => 'abc123',
+    head: async () => headNow,
+    changedPaths: async () => {
+      changedCalls += 1
+      if (script.changedFails?.includes(changedCalls))
+        throw new GitError('git -C wt merge-base HEAD origin/main', 'fatal: bad revision')
+      return {
+        mergeBase: 'b'.repeat(40),
+        committed: [...tree.committed],
+        uncommitted: [...tree.uncommitted],
+      }
+    },
     currentBranch: async () => BRANCH,
     deleteBranch: async () => {
       gitCalls.push('delete branch')
@@ -215,13 +264,17 @@ function harness(script: Script) {
     sink: new EventSink(api, join(home, 'events.ndjson'), () => 'token'),
     setToken: () => undefined,
     phases,
-    runTests: async () => ({
-      exitCode: 0,
-      timedOut: false,
-      output: 'tests ok',
-      truncated: false,
-      durationMs: 5,
-    }),
+    runTests: async (command) => {
+      if (command === script.setupCommand && !setupRan) {
+        setupRan = true
+        tree.uncommitted = [...(script.afterSetup ?? [])]
+      } else {
+        tree.uncommitted = [...tree.uncommitted, ...(script.testWrites?.[tests] ?? [])]
+        tests += 1
+        testRuns.push(command)
+      }
+      return runResult
+    },
     config: {
       boardUrl: 'http://b',
       runnerKey: 'k',
@@ -248,6 +301,8 @@ function harness(script: Script) {
     writes,
     handoffs,
     home,
+    testRuns,
+    changed: () => changedCalls,
     of: (type: string) => sent.filter((e) => e.type === type),
     runEnd: () => sent.find((e) => e.type === 'run_end'),
     checkpoints: () =>
@@ -757,5 +812,151 @@ describe('a delivery run of a project that links another', () => {
     )
     expect(h.gitCalls).toEqual(['remove linked /zlc', 'remove'])
     expect(existsSync(path)).toBe(false)
+  })
+})
+
+describe('the files gate', () => {
+  const start = START as Extract<Work, { kind: 'start' }>
+  const EXTRA = { committed: ['src/extra.ts'] }
+  const resumeAt = (cp: Checkpoint, allowed?: string[]) =>
+    resume(cp, INTERRUPTED, allowed) as Extract<Work, { kind: 'resume' }>
+  const gateFailure = (attempt: number): Checkpoint => ({
+    ...checkpoint('build', attempt),
+    failing_report_id: 'files_gate',
+  })
+
+  it('AC10: a commit outside the plan skips the test command and sends Build round again', async () => {
+    const h = harness({ trees: [EXTRA, {}] })
+    expect(await carryOut(start, h.deps)).toBe('review')
+    expect(h.calls.filter((c) => c.startsWith('start'))).toEqual([
+      'start plan-1',
+      'start build-1',
+      'start build-2',
+      'start verify-2',
+    ])
+    expect(h.testRuns).toHaveLength(1)
+    expect(readFileSync(join(RUN_DIR(h.home), 'files-gate-report.md'), 'utf8')).toContain(
+      'src/extra.ts',
+    )
+    const second = h.checkpoints().find((c) => c.stage === 'build' && c.attempt === 2)
+    expect(second).toMatchObject({ failing_report_id: 'files_gate' })
+    for (const text of ['src/extra.ts', 'not in the plan', 'out_of_plan', 'migration'])
+      expect(h.handoffs['build-2']).toContain(text)
+  })
+
+  it('AC11: an untracked file and no commit hands the gate report, not the no-commit text', async () => {
+    const h = harness({ commits: [0, 1], trees: [{ uncommitted: ['src/extra.ts'] }, {}] })
+    expect(await carryOut(start, h.deps)).toBe('review')
+    expect(h.handoffs['build-2']).toContain('src/extra.ts')
+    expect(h.handoffs['build-2']).not.toContain('made no commit')
+  })
+
+  it('AC12: once the owner allows the file, the test command runs and Verify follows', async () => {
+    const h = withPlan(harness({ initial: EXTRA }))
+    const allowed = ['src/retry.ts', 'src/extra.ts']
+    const at = { ...checkpoint('tests', 2), failing_report_id: 'files_gate' }
+    expect(await carryOut(resumeAt(at, allowed), h.deps)).toBe('review')
+    expect(h.calls).toContain('start verify-2')
+    expect(h.testRuns).toHaveLength(1)
+  })
+
+  it('AC13: a Build resumed after a refusal is handed the report file, with no git command', async () => {
+    const h = withPlan(harness({ acts: { 'build-2': ['paused'] } }))
+    mkdirSync(RUN_DIR(h.home), { recursive: true })
+    writeFileSync(join(RUN_DIR(h.home), 'files-gate-report.md'), 'REPORT-TEXT-FROM-FILE')
+    expect(await carryOut(resumeAt(gateFailure(2)), h.deps)).toBe('released')
+    expect(h.handoffs['build-2']).toContain('REPORT-TEXT-FROM-FILE')
+    expect(h.changed()).toBe(0)
+  })
+
+  it('AC13: with the report file missing, the handoff tells the builder to check its files', async () => {
+    const h = withPlan(harness({ acts: { 'build-2': ['paused'] } }))
+    await carryOut(resumeAt(gateFailure(2)), h.deps)
+    expect(h.handoffs['build-2']).toContain("only the plan's files")
+  })
+
+  it('AC13: a run resumed at the tests stage runs the gate again', async () => {
+    const h = withPlan(harness({ initial: EXTRA, trees: [{}] }))
+    expect(await carryOut(resumeAt(checkpoint('tests', 1)), h.deps)).toBe('review')
+    expect(h.calls.filter((c) => c.startsWith('start'))).toEqual([
+      'start build-2',
+      'start verify-2',
+    ])
+    expect(h.handoffs['build-2']).toContain('src/extra.ts')
+    expect(h.testRuns).toHaveLength(1)
+  })
+
+  it('AC14: a failing git command blocks at the tests stage, and Resume runs the gate again', async () => {
+    const h = withPlan(harness({ changedFails: [1] }))
+    expect(await carryOut(resumeAt(checkpoint('tests', 1)), h.deps)).toBe('released')
+    expect(h.testRuns).toHaveLength(0)
+    expect(h.of('error').at(-1)).toMatchObject({
+      payload: {
+        blocks: true,
+        cause: 'step_failed',
+        stage: 'tests',
+        command: 'git -C wt merge-base HEAD origin/main',
+      },
+    })
+    expect(h.runEnd()).toBeUndefined()
+    expect(await carryOut(resumeAt(checkpoint('tests', 1)), h.deps)).toBe('review')
+    expect(h.testRuns).toHaveLength(1)
+  })
+
+  const many = Array.from({ length: 22 }, (_, i) => `p${String(i).padStart(2, '0')}.ts`)
+  it('AC15: ends the run on the third refusal, naming up to 20 paths', async () => {
+    const h = harness({ trees: [EXTRA, EXTRA, { committed: many }] })
+    expect(await carryOut(start, h.deps)).toBe('failed')
+    expect(h.calls.filter((c) => c.startsWith('start build'))).toHaveLength(3)
+    expect(h.runEnd()).toMatchObject({
+      payload: {
+        reason: `the build changed files the run does not allow, on attempt 3: ${many.slice(0, 20).join(', ')}, and 2 more`,
+      },
+    })
+  })
+
+  it('AC15: names the paths when attempts 1 and 2 failed at Verify', async () => {
+    const h = harness({ trees: [{}, {}, EXTRA], verdicts: ['fail', 'fail'] })
+    expect(await carryOut(start, h.deps)).toBe('failed')
+    expect(h.runEnd()).toMatchObject({
+      payload: {
+        reason: 'the build changed files the run does not allow, on attempt 3: src/extra.ts',
+      },
+    })
+  })
+
+  describe('exclusions', () => {
+    it('AC6: a file the runner’s test run wrote is excluded on the next attempt', async () => {
+      const h = harness({
+        trees: [{}, { uncommitted: ['coverage.txt'] }],
+        testWrites: [['coverage.txt']],
+        verdicts: ['fail', 'pass'],
+      })
+      expect(await carryOut(start, h.deps)).toBe('review')
+      expect(
+        JSON.parse(readFileSync(join(RUN_DIR(h.home), 'excluded-paths.json'), 'utf8')),
+      ).toEqual(['coverage.txt'])
+      expect(h.testRuns).toHaveLength(2)
+    })
+
+    it('AC7: before any runner test run, a file the builder’s own test run left is a violation', async () => {
+      const h = harness({ trees: [{ uncommitted: ['coverage.txt'] }, {}] })
+      expect(await carryOut(start, h.deps)).toBe('review')
+      expect(h.handoffs['build-2']).toContain('`coverage.txt` – not in the plan (uncommitted)')
+      expect(h.handoffs['build-2']).toContain('delete the file if a command you ran generated it')
+    })
+
+    it('records what setup left in the worktree as excluded', async () => {
+      const setup = 'npm ci'
+      const h = harness({ setupCommand: setup, afterSetup: ['package-lock.json'] })
+      const work = {
+        kind: 'start',
+        run: { ...RUN, project: { ...RUN.project, setup_command: setup } },
+      } as Extract<Work, { kind: 'start' }>
+      expect(await carryOut(work, h.deps)).toBe('review')
+      expect(
+        JSON.parse(readFileSync(join(RUN_DIR(h.home), 'excluded-paths.json'), 'utf8')),
+      ).toEqual(['package-lock.json'])
+    })
   })
 })
