@@ -252,6 +252,43 @@ from the current `origin/<base>`, and Build and Verify meet any drift as in any 
 the builder to ask with `request_approval` kind `out_of_plan`. Allowing the change adds the files
 to the allowed list for the rest of the run.
 
+_The files gate._ The guard checks only the file tools, so a change written through `Bash` (a
+script, `sed -i`) is checked afterwards, on what the worktree holds. At the start of the `tests`
+stage, before the commit count and the test command, the runner lists the paths the branch
+changes: _committed_ is the net difference from the merge-base with `origin/<base>` as last
+fetched (`git diff -z --name-only --no-renames`, so deletions and both sides of a rename count and
+a path restored to its fork-point content does not), _uncommitted_ is staged, unstaged and
+untracked paths, never ignored ones. Every listing runs with `-z`, so a path with non-ASCII
+characters or quotes comes back as stored. A path that is not in the run's allowed files, or is a
+migration the owner has not approved (even if the plan lists it), is a violation. With any, the
+runner writes `files-gate-report.md` in the run directory, does not run the test command, and sends Build round again with
+the failing report `files_gate` in the checkpoint; `handoffFor('build')` reads the report from
+the file, or uses a fixed text when it is missing. The report wins over a build with no commit,
+and a run resumed at the `tests` stage runs the gate again. It shares Verify's three attempts;
+a violation on attempt 3 ends the run `failed` with `the build changed files the run does not
+allow, on attempt 3: <paths>` (the first 20 paths, then `and <n> more`). Each gate run sends a
+runner `tool_call` event `files_gate`: `error` with `<n> paths the run does not allow` and the
+`violations` (`path`, `reason`, `committed`) in its payload, or `ok` with `every changed path is
+allowed`. When the gate passes it records the worktree's `HEAD` (`gate-head.txt`).
+
+_Excluded paths._ What the runner's own commands write is not the builder's. `excluded-paths.json`
+holds those paths: right after the setup command in `prepare` it is set to the uncommitted list,
+and around each run of the test command the runner adds every uncommitted path that the run
+created. Exclusions apply to the uncommitted list only and go by path; a committed path is never
+excluded, so committing `git add -A` output of setup is a violation. Files the builder's own
+commands create before the runner's first test run are not excluded: on attempt 1 they count
+until the builder deletes them, which is the cost of a builder that runs the tests itself.
+
+_Feedback on Bash._ After each `Bash` call in Build, the PostToolUse hook runs the same
+computation and, with any violation, writes `{"decision":"block","reason":…}` with the report's
+text, so the builder learns at once, with the commands that undo it (`git checkout <hash> -- <path>`
+with the merge-base's full hash, `git rm`, deleting a generated file). In every other case
+(another phase or tool, no violation, no `allowed-files.json` yet, or a failing git command or
+run-directory file) it writes nothing; it records its event and exits 0 whatever happens.
+
+_A git failure._ A `GitError` in the gate blocks the run at the `tests` stage with `step_failed`;
+the test command does not run, and Resume runs the gate again.
+
 **Migration approval.** A migration is a file under a `migrations/` directory whose name does not
 start with `index.`; the registry (`index.*`) is an ordinary file, held to the plan alone. In
 Build the guard refuses to create one, or to change one already in the worktree, even when the
@@ -263,7 +300,10 @@ The Approvals tab shows the summary, the path, and the file as plain text in a m
 Allowing adds the path to the run's approved migrations and its allowed files for the rest of
 the run; the claim carries both, and the runner writes `approved-migrations.json` beside
 `allowed-files.json`, where the guard reads it. Outside Build the guard still refuses to create
-a migration.
+a migration. The files gate holds a migration the owner has not approved to the same rule for
+a change written through `Bash`: it is a violation even when the plan lists it, with the reason
+"a migration the owner has not approved", and the report tells the builder to ask with kind
+`migration`.
 
 _Order._ A migration's name is its file name without its last extension; its siblings are the
 other migrations directly in its directory, in the run's worktree and on `origin/<base>` as last
@@ -338,6 +378,15 @@ which a `-p` process loses when its turn ends), and — once the run is paused �
 `--no-verify` or `-n` (alone or inside a cluster such as `-an`), and `git -c core.hooksPath=…
 commit`, with a reason saying the commit-msg hook must not be skipped; text inside a `-m` value
 never matches.
+
+The guard sees what a tool is asked to do, not what a `Bash` command writes, so Build's file list
+is also checked on the worktree: by the files gate before the test command, and by the PostToolUse
+hook after each `Bash` call (see "Out-of-plan edits"). Both read the changed paths through `git`
+with `-z`, and nothing is fetched. Before the push, the runner compares the worktree's `HEAD` with
+the one recorded when the gate passed; if Verify committed, the run ends `failed` with `Verify
+changed the branch: HEAD is <sha>, Build ended on <sha>` and nothing is pushed (a run started
+before the gate existed has no record and pushes as before). A `Bash` write outside the worktree
+is not caught.
 
 The guard reads `linked.json`. Edit, Write, MultiEdit and NotebookEdit on a path inside a linked
 checkout or a linked project's `repo_path` are refused, naming the project's key and saying linked
