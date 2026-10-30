@@ -12,6 +12,10 @@ export interface TaskView {
   state: TaskState
   position: number
   budget_usd: number | null
+  /** The project test command the owner chose; null follows the project's default. */
+  test_command_id: string | null
+  /** What the latest delivery run that started tests with; null when none has. */
+  tested_with: string | null
   project: { key: string; name: string; github_repo: string }
   /** The question the card waits on: open, or expired and blocking it; a batch's count. */
   approval: { id: string; kind: ApprovalKind; status: ApprovalStatus; questions: number } | null
@@ -54,6 +58,7 @@ export class TaskRepository {
         'tasks.state',
         'tasks.position',
         'tasks.budget_usd',
+        'tasks.test_command_id',
         'projects.key as project_key',
         'projects.name as project_name',
         'projects.github_repo',
@@ -65,6 +70,14 @@ export class TaskRepository {
       .selectFrom('runs')
       .select(['id', 'kind', 'status', 'block', 'failure_reason'])
       .where('task_id', '=', id)
+      .orderBy('created_at', 'desc')
+      .executeTakeFirst()
+    const tested = await this.db
+      .selectFrom('runs')
+      .select('test_command')
+      .where('task_id', '=', id)
+      .where('kind', '=', 'delivery')
+      .where('started_at', 'is not', null)
       .orderBy('created_at', 'desc')
       .executeTakeFirst()
     const approval =
@@ -87,6 +100,8 @@ export class TaskRepository {
       state: row.state,
       position: row.position,
       budget_usd: row.budget_usd === null ? null : Number(row.budget_usd),
+      test_command_id: row.test_command_id,
+      tested_with: tested?.test_command ?? null,
       project: { key: row.project_key, name: row.project_name, github_repo: row.github_repo },
       approval:
         approval === undefined
@@ -189,6 +204,7 @@ export class TaskRepository {
       description_md?: string
       budget_usd?: number | null
       position?: number
+      test_command_id?: string | null
     },
   ): Promise<void> {
     await this.db

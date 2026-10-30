@@ -35,6 +35,10 @@ export interface RunWork {
     repo_path: string
     github_repo: string
     base_branch: string
+    /**
+     * A delivery run's value is the run's own fixed text, set at its first claim and unchanged
+     * by later choices, edits or default changes; a spec run's is read at claim.
+     */
     test_command: string
     setup_command: string | null
   }
@@ -160,9 +164,14 @@ export class RunnerService {
           return 'skipped' as const
         }
         if (run.kind === 'delivery') await moveTask(trx, run.task_id, 'claim')
+        // Fixed at the first claim: a later choice, edit or default change does not reach it.
+        const fixed =
+          run.kind === 'delivery'
+            ? { test_command: await this.chosenCommand(trx, run.task_id) }
+            : {}
         await trx
           .updateTable('runs')
-          .set({ ...claimedRun, started_at: now })
+          .set({ ...claimedRun, ...fixed, started_at: now })
           .where('id', '=', run.id)
           .execute()
         return { kind: 'start' as const, run: await this.work(trx, run.id) }
@@ -251,6 +260,28 @@ export class RunnerService {
     )
   }
 
+  /** The text of the task's chosen test command, else of its project's default. */
+  private async chosenCommand(trx: Transaction<Database>, taskId: string): Promise<string> {
+    const row = await trx
+      .selectFrom('tasks')
+      .select((eb) => [
+        eb
+          .selectFrom('project_test_commands as c')
+          .select('c.command')
+          .whereRef('c.id', '=', 'tasks.test_command_id')
+          .as('chosen'),
+        eb
+          .selectFrom('project_test_commands as d')
+          .select('d.command')
+          .whereRef('d.project_id', '=', 'tasks.project_id')
+          .where('d.is_default', '=', true)
+          .as('fallback'),
+      ])
+      .where('tasks.id', '=', taskId)
+      .executeTakeFirstOrThrow()
+    return row.chosen ?? row.fallback ?? 'npm test'
+  }
+
   private async work(trx: Transaction<Database>, runId: string): Promise<RunWork> {
     const row = await trx
       .selectFrom('runs')
@@ -268,6 +299,7 @@ export class RunnerService {
         'runs.number as run_number',
         'runs.spec_version',
         'runs.note',
+        'runs.test_command as run_test_command',
         'projects.id as project_id',
         'specs.version',
         'tasks.id as task_id',
@@ -279,7 +311,6 @@ export class RunnerService {
         'projects.repo_path',
         'projects.github_repo',
         'projects.base_branch',
-        'projects.test_command',
         'projects.setup_command',
         'specs.body_md',
         'specs.criteria',
@@ -342,7 +373,7 @@ export class RunnerService {
         repo_path: row.repo_path,
         github_repo: row.github_repo,
         base_branch: row.base_branch,
-        test_command: row.test_command,
+        test_command: row.run_test_command ?? (await this.chosenCommand(trx, row.task_id)),
         setup_command: row.setup_command,
       },
       links,
