@@ -1,11 +1,11 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { realExec } from '../../src/exec.js'
 import { Git, GitError } from '../../src/git.js'
-import { targetRepository, useTestGitIdentity } from './target-repo.js'
+import { pushToMain, targetRepository, useTestGitIdentity } from './target-repo.js'
 
 const FAKE_GH = join(import.meta.dirname, '../fake/fake-gh')
 const git = (args: string[], cwd?: string) => execFileSync('git', args, { cwd, encoding: 'utf8' })
@@ -72,5 +72,72 @@ describe('Git', () => {
     expect(error).toBeInstanceOf(GitError)
     expect((error as GitError).command).toBe('git -C /does/not/exist fetch origin main')
     expect((error as GitError).output).not.toBe('')
+  })
+
+  describe('changedPaths', () => {
+    const fresh = async (base: Record<string, string>) => {
+      const { repo } = targetRepository()
+      pushToMain(repo, base, 'base files')
+      const subject = new Git(realExec, FAKE_GH)
+      const worktree = join(mkdtempSync(join(tmpdir(), 'wt-')), 'run')
+      await subject.prepareWorktree(repo, 'main', 'board/PAY-1-r1', worktree)
+      return { repo, subject, worktree }
+    }
+    const write = (dir: string, path: string, content: string) => {
+      mkdirSync(join(dir, path, '..'), { recursive: true })
+      writeFileSync(join(dir, path), content)
+    }
+
+    it('lists the net committed paths and the uncommitted ones, unquoted, with the merge-base', async () => {
+      const { subject, worktree } = await fresh({
+        '.gitignore': 'e\n',
+        a: '1\n',
+        b: '1\n',
+        c: '1\n',
+        f: 'file f\n',
+        h: '1\n',
+        'docs/café.md': '1\n',
+      })
+      write(worktree, 'a', '2\n')
+      write(worktree, 'docs/café.md', '2\n')
+      git(['mv', 'f', 'g'], worktree)
+      git(['rm', '-q', 'h'], worktree)
+      git(['add', '-A'], worktree)
+      git(['commit', '-q', '-m', 'work'], worktree)
+      write(worktree, 'b', '2\n')
+      git(['add', 'b'], worktree)
+      write(worktree, 'c', '2\n')
+      write(worktree, 'd', '1\n')
+      write(worktree, 'notes/ünï "q".txt', '1\n')
+      write(worktree, 'e', '1\n')
+
+      const changed = await subject.changedPaths(worktree, 'main')
+
+      expect(changed.mergeBase).toBe(git(['merge-base', 'HEAD', 'origin/main'], worktree).trim())
+      expect(changed.mergeBase).toMatch(/^[0-9a-f]{40}$/)
+      expect([...changed.committed].sort()).toEqual(['a', 'docs/café.md', 'f', 'g', 'h'])
+      expect([...changed.uncommitted].sort()).toEqual(['b', 'c', 'd', 'notes/ünï "q".txt'])
+    })
+
+    it('leaves out a path a later commit restores and a path only the base moved', async () => {
+      const { repo, subject, worktree } = await fresh({ x: '1\n', y: '1\n' })
+      write(worktree, 'x', '2\n')
+      git(['commit', '-q', '-am', 'change x'], worktree)
+      write(worktree, 'x', '1\n')
+      git(['commit', '-q', '-am', 'restore x'], worktree)
+      pushToMain(repo, { y: '2\n' }, 'base moves')
+      git(['fetch', '-q', 'origin', 'main'], worktree)
+
+      const changed = await subject.changedPaths(worktree, 'main')
+
+      expect(changed.committed).toEqual([])
+      expect(changed.uncommitted).toEqual([])
+    })
+
+    it('rejects with a GitError when origin/<base> does not exist', async () => {
+      const { subject, worktree } = await fresh({ k: '1\n' })
+      const error = await subject.changedPaths(worktree, 'nope').catch((e: unknown) => e)
+      expect(error).toBeInstanceOf(GitError)
+    })
   })
 })

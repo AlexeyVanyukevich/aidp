@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 const git = (args: string[], cwd?: string) => execFileSync('git', args, { cwd, encoding: 'utf8' })
 
@@ -30,4 +30,15 @@ export function targetRepository(): { remote: string; repo: string } {
   git(['commit', '-q', '-m', 'initial'], repo)
   git(['push', '-q', 'origin', 'HEAD:main'], repo)
   return { remote, repo }
+}
+
+/** Writes `files` (path → content) in `repo`, commits them and pushes the result to the remote's main. */
+export function pushToMain(repo: string, files: Record<string, string>, message: string): void {
+  for (const [path, content] of Object.entries(files)) {
+    mkdirSync(dirname(join(repo, path)), { recursive: true })
+    writeFileSync(join(repo, path), content)
+  }
+  git(['add', '-A'], repo)
+  git(['commit', '-q', '-m', message], repo)
+  git(['push', '-q', 'origin', 'HEAD:main'], repo)
 }
