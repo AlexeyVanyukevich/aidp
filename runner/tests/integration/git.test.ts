@@ -140,4 +140,89 @@ describe('Git', () => {
       expect(error).toBeInstanceOf(GitError)
     })
   })
+
+  describe('refreshing a run to the current base', () => {
+    const subject = new Git(realExec, FAKE_GH)
+    const fresh = async () => {
+      const { repo } = targetRepository()
+      const worktree = join(mkdtempSync(join(tmpdir(), 'wt-')), 'run')
+      await subject.prepareWorktree(repo, 'main', 'board/PAY-1-r1', worktree)
+      return { repo, worktree }
+    }
+
+    it('AC4: undoes a changed, a staged and an untracked path, so the fast-forward succeeds', async () => {
+      const { repo, worktree } = await fresh()
+      writeFileSync(join(worktree, 'src/retry.ts'), 'setup changed\n')
+      writeFileSync(join(worktree, 'staged.txt'), 'setup staged\n')
+      git(['add', 'staged.txt'], worktree)
+      writeFileSync(join(worktree, 'lock.json'), 'setup untracked\n')
+      const before = git(['rev-parse', 'HEAD'], worktree).trim()
+
+      pushToMain(
+        repo,
+        { 'src/retry.ts': 'new\n', 'staged.txt': 'base staged\n', 'lock.json': 'base lock\n' },
+        'base moves',
+      )
+      await subject.fetchBase(repo, 'main')
+      await subject.undoUncommitted(worktree, 'main')
+      expect(readFileSync(join(worktree, 'src/retry.ts'), 'utf8')).toBe(
+        'export const delays = []\n',
+      )
+      expect(existsSync(join(worktree, 'staged.txt'))).toBe(false)
+      expect(existsSync(join(worktree, 'lock.json'))).toBe(false)
+      expect(git(['status', '--porcelain'], worktree)).toBe('')
+
+      await subject.fastForward(worktree, 'main')
+      const after = git(['rev-parse', 'HEAD'], worktree).trim()
+      expect(after).toBe(git(['rev-parse', 'origin/main'], repo).trim())
+      expect(await subject.commitCount(worktree, before, after)).toBe(1)
+      expect(await subject.changedBetween(worktree, before, after)).toEqual([
+        'lock.json',
+        'src/retry.ts',
+        'staged.txt',
+      ])
+    })
+
+    it('AC5: deletes an untracked file a failed setup left, then fast-forwards over a file of that name', async () => {
+      const { repo, worktree } = await fresh()
+      writeFileSync(join(worktree, 'generated.txt'), 'half-made\n')
+      pushToMain(repo, { 'generated.txt': 'from base\n' }, 'base adds it')
+      await subject.fetchBase(repo, 'main')
+      await expect(subject.fastForward(worktree, 'main')).rejects.toBeInstanceOf(GitError)
+      await subject.undoUncommitted(worktree, 'main')
+      await subject.fastForward(worktree, 'main')
+      expect(readFileSync(join(worktree, 'generated.txt'), 'utf8')).toBe('from base\n')
+    })
+
+    it('takes thousands of paths and odd names through stdin, and leaves ignored files', async () => {
+      const { worktree } = await fresh()
+      writeFileSync(join(worktree, '.gitignore'), 'node_modules/\n')
+      git(['add', '.gitignore'], worktree)
+      git(['commit', '-q', '-m', 'ignore'], worktree)
+      mkdirSync(join(worktree, 'node_modules'))
+      writeFileSync(join(worktree, 'node_modules/keep.js'), 'x')
+      mkdirSync(join(worktree, 'many'))
+      for (let i = 0; i < 3000; i += 1)
+        writeFileSync(join(worktree, 'many', `${'long-name-'.repeat(8)}${i}.txt`), 'x')
+      writeFileSync(join(worktree, '*.glob'), 'x')
+      writeFileSync(join(worktree, 'a file.txt'), 'x')
+      await subject.undoUncommitted(worktree, 'main')
+      expect(existsSync(join(worktree, 'many', `${'long-name-'.repeat(8)}0.txt`))).toBe(false)
+      expect(existsSync(join(worktree, '*.glob'))).toBe(false)
+      expect(existsSync(join(worktree, 'a file.txt'))).toBe(false)
+      expect(existsSync(join(worktree, 'node_modules/keep.js'))).toBe(true)
+    })
+
+    it('AC6: a fast-forward fails when the branch holds a commit of its own', async () => {
+      const { repo, worktree } = await fresh()
+      writeFileSync(join(worktree, 'own.txt'), 'x')
+      git(['add', '-A'], worktree)
+      git(['commit', '-q', '-m', 'own'], worktree)
+      pushToMain(repo, { 'other.txt': 'y' }, 'base moves')
+      await subject.fetchBase(repo, 'main')
+      await expect(subject.fastForward(worktree, 'main')).rejects.toMatchObject({
+        command: 'git -C ' + worktree + ' merge --ff-only origin/main',
+      })
+    })
+  })
 })

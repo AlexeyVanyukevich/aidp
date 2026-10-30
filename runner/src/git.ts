@@ -1,3 +1,5 @@
+import { rmSync } from 'node:fs'
+import { join } from 'node:path'
 import type { Exec } from './exec.js'
 
 export class GitError extends Error {
@@ -74,6 +76,79 @@ export class Git {
       committed: [...new Set(committed)].sort(),
       uncommitted: [...new Set([...tracked, ...untracked])].sort(),
     }
+  }
+
+  /** The remote's current base, fetched into `origin/<base>` of the project's repository. */
+  async fetchBase(repo: string, base: string): Promise<void> {
+    await this.run('git', ['-C', repo, 'fetch', 'origin', base])
+  }
+
+  /**
+   * Undoes every uncommitted path (staged, unstaged, untracked; never ignored): a path HEAD
+   * tracks goes back to its content at HEAD, in the index and the working tree; a path HEAD
+   * does not track is unstaged and deleted. Paths travel on stdin, NUL-separated, so a long
+   * list never meets the argument limit and a name is taken literally.
+   */
+  async undoUncommitted(dir: string, base: string): Promise<void> {
+    const { uncommitted } = await this.changedPaths(dir, base)
+    if (uncommitted.length === 0) return
+    const inHead = new Set(
+      (await this.run('git', ['-C', dir, 'ls-tree', '-r', '-z', '--name-only', 'HEAD']))
+        .split('\0')
+        .filter((p) => p !== ''),
+    )
+    const tracked = uncommitted.filter((p) => inHead.has(p))
+    const others = uncommitted.filter((p) => !inHead.has(p))
+    const stdin = (paths: string[]) => paths.map((p) => `${p}\0`).join('')
+    const literal = ['--literal-pathspecs', '-C', dir]
+    if (tracked.length > 0)
+      await this.run(
+        'git',
+        [
+          ...literal,
+          'restore',
+          '--source=HEAD',
+          '--staged',
+          '--worktree',
+          '--pathspec-from-file=-',
+          '--pathspec-file-nul',
+        ],
+        { input: stdin(tracked) },
+      )
+    if (others.length > 0) {
+      await this.run(
+        'git',
+        [...literal, 'reset', '-q', '--pathspec-from-file=-', '--pathspec-file-nul'],
+        { input: stdin(others) },
+      )
+      for (const p of others) rmSync(join(dir, p), { recursive: true, force: true })
+    }
+  }
+
+  /** Moves the run's branch to the fetched base; fails when the branch holds commits of its own. */
+  async fastForward(dir: string, base: string): Promise<void> {
+    await this.run('git', ['-C', dir, 'merge', '--ff-only', `origin/${base}`])
+  }
+
+  async commitCount(dir: string, from: string, to: string): Promise<number> {
+    return Number(
+      (await this.run('git', ['-C', dir, 'rev-list', '--count', `${from}..${to}`])).trim(),
+    )
+  }
+
+  /** The paths that differ between two commits, sorted. */
+  async changedBetween(dir: string, from: string, to: string): Promise<string[]> {
+    const out = await this.run('git', [
+      '-C',
+      dir,
+      'diff',
+      '-z',
+      '--name-only',
+      '--no-renames',
+      from,
+      to,
+    ])
+    return [...new Set(out.split('\0').filter((p) => p !== ''))].sort()
   }
 
   async push(dir: string, branch: string): Promise<void> {
