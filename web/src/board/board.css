@@ -75,3 +75,6 @@
   cursor: pointer;
   color: var(--zl-ink-soft);
 }
+.board-head h1 + a {
+  margin-inline-end: auto;
+}

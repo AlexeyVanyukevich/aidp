@@ -9,6 +9,7 @@ import type {
   ProjectWithLinks,
   RunView,
   SpecView,
+  TestCommand,
   TaskCard,
   TaskView,
   CostSummary,
@@ -60,8 +61,17 @@ export const api = {
     request<ProjectView>('POST', '/api/projects', input),
   setSetupCommand: (key: string, setup_command: string | null) =>
     request<ProjectView>('PATCH', `/api/projects/${key}`, { setup_command }),
-  setTestCommand: (key: string, test_command: string) =>
-    request<ProjectView>('PATCH', `/api/projects/${key}`, { test_command }),
+  testCommands: (key: string) =>
+    request<TestCommand[]>('GET', `/api/projects/${key}/test-commands`),
+  addTestCommand: (key: string, input: { name: string; command: string }) =>
+    request<TestCommand>('POST', `/api/projects/${key}/test-commands`, input),
+  updateTestCommand: (
+    key: string,
+    id: string,
+    input: { name?: string; command?: string; is_default?: true },
+  ) => request<TestCommand>('PATCH', `/api/projects/${key}/test-commands/${id}`, input),
+  removeTestCommand: (key: string, id: string) =>
+    request<void>('DELETE', `/api/projects/${key}/test-commands/${id}`),
   addLink: (key: string, input: { target: string; note: string }) =>
     request<{ key: string; target: string; note: string }>(
       'POST',
@@ -77,7 +87,13 @@ export const api = {
   task: (id: string) => request<TaskView>('GET', `/api/tasks/${id}`),
   patchTask: (
     id: string,
-    patch: { title?: string; description_md?: string; position?: number; state?: 'done' },
+    patch: {
+      title?: string
+      description_md?: string
+      position?: number
+      state?: 'done'
+      test_command_id?: string | null
+    },
   ) => request<TaskView>('PATCH', `/api/tasks/${id}`, patch),
   action: (id: string, action: 'cancel' | 'resume' | 'draft-spec') =>
     request<TaskView>('POST', `/api/tasks/${id}/actions/${action}`),
