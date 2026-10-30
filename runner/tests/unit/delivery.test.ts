@@ -925,6 +925,37 @@ describe('the files gate', () => {
     })
   })
 
+  it('AC16: sends a files_gate event with the violations, and an ok one when there are none', async () => {
+    const h = harness({ trees: [{ committed: ['src/extra.ts'], uncommitted: ['notes.txt'] }, {}] })
+    await carryOut(start, h.deps)
+    const gates = h.of('tool_call').filter((e) => e.tool === 'files_gate')
+    expect(gates).toHaveLength(2)
+    expect(gates[0]).toMatchObject({
+      agent: 'runner',
+      status: 'error',
+      target: '2 paths the run does not allow',
+      payload: {
+        violations: [
+          { path: 'src/extra.ts', reason: 'not in the plan', committed: true },
+          { path: 'notes.txt', reason: 'not in the plan', committed: false },
+        ],
+      },
+    })
+    expect(gates[1]).toMatchObject({
+      status: 'ok',
+      target: 'every changed path is allowed',
+      payload: { violations: [] },
+    })
+  })
+
+  it('AC16: words one violation in the singular', async () => {
+    const h = harness({ trees: [{ committed: ['src/extra.ts'] }, {}] })
+    await carryOut(start, h.deps)
+    expect(h.of('tool_call').find((e) => e.tool === 'files_gate')).toMatchObject({
+      target: '1 path the run does not allow',
+    })
+  })
+
   describe('exclusions', () => {
     it('AC6: a file the runner’s test run wrote is excluded on the next attempt', async () => {
       const h = harness({
