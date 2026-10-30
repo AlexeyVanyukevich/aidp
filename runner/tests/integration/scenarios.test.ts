@@ -80,7 +80,7 @@ beforeEach(async () => {
   target = targetRepository()
   // The setup scenarios write a marker the fake builder's `git add -A` would otherwise commit.
   pushToMain(target.repo, { '.gitignore': 'setup.marker\n' }, 'ignore the setup marker')
-  await db
+  const pay = await db
     .insertInto('projects')
     .values({
       key: 'PAY',
@@ -88,7 +88,16 @@ beforeEach(async () => {
       repo_path: target.repo,
       github_repo: 'owner/pay',
       base_branch: 'main',
-      test_command: 'test -f src/retry.ts',
+    })
+    .returning('id')
+    .executeTakeFirstOrThrow()
+  await db
+    .insertInto('project_test_commands')
+    .values({
+      project_id: pay.id,
+      name: 'tests',
+      command: 'test -f src/retry.ts',
+      is_default: true,
     })
     .execute()
 })
@@ -696,10 +705,13 @@ describe('a spec run end to end', () => {
         repo_path: zlc.repo,
         github_repo: 'owner/zellige',
         base_branch: 'main',
-        test_command: 'true',
       })
       .returning('id')
       .executeTakeFirstOrThrow()
+    await db
+      .insertInto('project_test_commands')
+      .values({ project_id: linked.id, name: 'tests', command: 'true', is_default: true })
+      .execute()
     await db
       .insertInto('project_links')
       .values({ project_id: pay!.id, linked_project_id: linked.id, note: 'the component kit' })

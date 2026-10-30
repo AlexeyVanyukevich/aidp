@@ -30,9 +30,17 @@ export interface ProjectsTable {
   repo_path: string
   github_repo: string
   base_branch: string
-  test_command: string
   setup_command: string | null
   next_task_number: Generated<number>
+  created_at: Generated<Date>
+}
+
+export interface ProjectTestCommandsTable {
+  id: Generated<string>
+  project_id: string
+  name: string
+  command: string
+  is_default: Generated<boolean>
   created_at: Generated<Date>
 }
 
@@ -45,6 +53,8 @@ export interface TasksTable {
   state: TaskState
   position: number
   budget_usd: ColumnType<string | null, number | null | undefined, number | null>
+  /** The project test command the owner chose; null follows the project's default. */
+  test_command_id: ColumnType<string | null, string | null | undefined, string | null>
   created_at: Generated<Date>
   updated_at: Timestamp
 }
@@ -72,6 +82,8 @@ export interface RunsTable {
   spec_version: number | null
   /** What the owner asked a redraft to change. */
   note: ColumnType<string | null, string | null | undefined, string | null>
+  /** The text tests run with, fixed at the first claim of a delivery run. */
+  test_command: ColumnType<string | null, string | null | undefined, string | null>
   status: RunStatus
   current_phase: PhaseName | null
   branch: string | null
@@ -195,6 +207,7 @@ export interface ProjectLinksTable {
 export interface Database {
   projects: ProjectsTable
   project_links: ProjectLinksTable
+  project_test_commands: ProjectTestCommandsTable
   tasks: TasksTable
   specs: SpecsTable
   runs: RunsTable

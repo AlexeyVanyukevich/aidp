@@ -5,6 +5,7 @@ import * as draftedSpecs from './003_drafted_specs.js'
 import * as setupCommand from './004_setup_command.js'
 import * as planKeptFrom from './005_plan_kept_from.js'
 import * as projectLinks from './006_project_links.js'
+import * as projectTestCommands from './007_project_test_commands.js'
 
 /**
  * Listed rather than discovered from disk: a file provider imports at runtime, which fails
@@ -18,4 +19,5 @@ export const migrations: Record<string, Migration> = {
   '004_setup_command': setupCommand,
   '005_plan_kept_from': planKeptFrom,
   '006_project_links': projectLinks,
+  '007_project_test_commands': projectTestCommands,
 }

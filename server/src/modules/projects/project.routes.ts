@@ -3,11 +3,14 @@ import type { TypeBoxTypeProvider } from '@fastify/type-provider-typebox'
 import { ProjectRepository } from './project.repository.js'
 import { ProjectService } from './project.service.js'
 import {
+  AddTestCommandBody,
   CreateProjectBody,
   LinkBody,
   LinkParams,
   ProjectKeyParams,
+  TestCommandParams,
   UpdateProjectBody,
+  UpdateTestCommandBody,
 } from './project.schemas.js'
 
 export function registerProjects(instance: FastifyInstance): void {
@@ -42,6 +45,38 @@ export function registerProjects(instance: FastifyInstance): void {
     { schema: { params: LinkParams } },
     async (request, reply) => {
       await service.removeLink(request.params.key, request.params.target)
+      reply.status(204)
+    },
+  )
+
+  app.get(
+    '/api/projects/:key/test-commands',
+    { schema: { params: ProjectKeyParams } },
+    async (request) => service.testCommands(request.params.key),
+  )
+
+  app.post(
+    '/api/projects/:key/test-commands',
+    { schema: { params: ProjectKeyParams, body: AddTestCommandBody } },
+    async (request, reply) => {
+      const added = await service.addTestCommand(request.params.key, request.body)
+      reply.status(201)
+      return added
+    },
+  )
+
+  app.patch(
+    '/api/projects/:key/test-commands/:id',
+    { schema: { params: TestCommandParams, body: UpdateTestCommandBody } },
+    async (request) =>
+      service.updateTestCommand(request.params.key, request.params.id, request.body),
+  )
+
+  app.delete(
+    '/api/projects/:key/test-commands/:id',
+    { schema: { params: TestCommandParams } },
+    async (request, reply) => {
+      await service.removeTestCommand(request.params.key, request.params.id)
       reply.status(204)
     },
   )

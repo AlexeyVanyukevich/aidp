@@ -19,7 +19,8 @@ export async function seedProject(
     test_command: string
   }> = {},
 ): Promise<{ id: string; key: string }> {
-  return db
+  const { test_command, ...columns } = overrides
+  const project = await db
     .insertInto('projects')
     .values({
       key: 'PAY',
@@ -27,11 +28,20 @@ export async function seedProject(
       repo_path: `/repos/${overrides.key ?? 'PAY'}`,
       github_repo: 'owner/pay',
       base_branch: 'main',
-      test_command: 'npm test',
-      ...overrides,
+      ...columns,
     })
     .returning(['id', 'key'])
     .executeTakeFirstOrThrow()
+  await db
+    .insertInto('project_test_commands')
+    .values({
+      project_id: project.id,
+      name: 'tests',
+      command: test_command ?? 'npm test',
+      is_default: true,
+    })
+    .execute()
+  return project
 }
 
 export async function seedTask(

@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { sql } from 'kysely'
 import { Migrator } from 'kysely/migration'
 import { closeTestDb, getTestDb, resetDb } from './helpers.js'
@@ -15,19 +15,19 @@ import {
 beforeEach(resetDb)
 afterAll(closeTestDb)
 
+/** Raw, because the column `test_command` exists only in a database migrated below 007. */
 async function project() {
-  return getTestDb()
-    .insertInto('projects')
-    .values({
-      key: 'PAY',
-      name: 'Payments',
-      repo_path: '/tmp/pay',
-      github_repo: 'owner/pay',
-      base_branch: 'main',
-      test_command: 'npm test',
-    })
-    .returning('id')
-    .executeTakeFirstOrThrow()
+  const db = getTestDb()
+  const { rows } = await sql<{
+    n: number
+  }>`select count(*)::int as n from information_schema.columns
+    where table_name = 'projects' and column_name = 'test_command'`.execute(db)
+  const old = rows[0]?.n === 1
+  const result = await sql<{ id: string }>`
+    insert into projects (key, name, repo_path, github_repo, base_branch ${old ? sql`, test_command` : sql``})
+    values ('PAY', 'Payments', '/tmp/pay', 'owner/pay', 'main' ${old ? sql`, 'npm test'` : sql``})
+    returning id`.execute(db)
+  return result.rows[0]!
 }
 
 describe('the initial migration', () => {
@@ -144,7 +144,6 @@ describe('the initial migration', () => {
           repo_path: '/tmp/p',
           github_repo: 'o/p',
           base_branch: 'main',
-          test_command: 'npm test',
           ...change,
         })
         .execute(),
@@ -365,5 +364,74 @@ describe('running migrations', () => {
       getTestDb(),
     )
     expect(row.rows).toEqual([])
+  })
+})
+
+describe('the project-test-commands migration', () => {
+  afterEach(async () => {
+    expect((await migrator().migrateToLatest()).error).toBeUndefined()
+  })
+
+  async function seedOld() {
+    expect((await migrator().migrateTo('006_project_links')).error).toBeUndefined()
+    const db = getTestDb()
+    await sql`insert into projects (key, name, repo_path, github_repo, base_branch, test_command)
+      values ('PAY', 'P', '/tmp/p', 'o/p', 'main', 'npm run pay'),
+             ('ZLC', 'Z', '/tmp/z', 'o/z', 'main', 'make check')`.execute(db)
+    const { rows } = await sql<{ id: string }>`
+      insert into tasks (project_id, number, title, state, position, updated_at)
+      select id, 1, 'A', 'running', 1, now() from projects where key = 'PAY' returning id`.execute(
+      db,
+    )
+    const taskId = rows[0]!.id
+    await sql`insert into specs (task_id, version, body_md, status) values (${taskId}, 1, 'x', 'approved')`.execute(
+      db,
+    )
+    await sql`insert into runs (task_id, kind, number, spec_version, status, started_at)
+      values (${taskId}, 'delivery', 1, 1, 'failed', now())`.execute(db)
+    await sql`insert into runs (task_id, kind, number, spec_version, status)
+      values (${taskId}, 'delivery', 2, 1, 'queued')`.execute(db)
+  }
+
+  it('moves each test command into a default row, fixes started runs, and reverses', async () => {
+    await seedOld()
+    expect((await migrator().migrateToLatest()).error).toBeUndefined()
+    const db = getTestDb()
+    const commands = await sql<{ key: string; name: string; command: string; is_default: boolean }>`
+      select p.key, c.name, c.command, c.is_default from project_test_commands c
+      join projects p on p.id = c.project_id order by p.key`.execute(db)
+    expect(commands.rows).toEqual([
+      { key: 'PAY', name: 'tests', command: 'npm run pay', is_default: true },
+      { key: 'ZLC', name: 'tests', command: 'make check', is_default: true },
+    ])
+    expect(await columns()).not.toContain('projects.test_command')
+    const runs = await sql<{ number: number; test_command: string | null }>`
+      select number, test_command from runs order by number`.execute(db)
+    expect(runs.rows).toEqual([
+      { number: 1, test_command: 'npm run pay' },
+      { number: 2, test_command: null },
+    ])
+
+    expect((await migrator().migrateTo('006_project_links')).error).toBeUndefined()
+    const back = await sql<{ key: string; test_command: string }>`
+      select key, test_command from projects order by key`.execute(db)
+    expect(back.rows).toEqual([
+      { key: 'PAY', test_command: 'npm run pay' },
+      { key: 'ZLC', test_command: 'make check' },
+    ])
+  })
+
+  it.each([
+    ['a second default', 'other', 'true'],
+    ['a name differing only in case', 'TESTS', 'false'],
+  ])('refuses %s for a project', async (_name, name, isDefault) => {
+    const { id } = await project()
+    const db = getTestDb()
+    await sql`insert into project_test_commands (project_id, name, command, is_default)
+      values (${id}, 'tests', 'npm test', true)`.execute(db)
+    await expect(
+      sql`insert into project_test_commands (project_id, name, command, is_default)
+        values (${id}, ${name}, 'x', ${isDefault === 'true'})`.execute(db),
+    ).rejects.toThrow(/project_test_commands_(default|name)/)
   })
 })

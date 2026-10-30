@@ -82,10 +82,20 @@ export async function registerProject(
         repo_path: project.path,
         github_repo: project.repo,
         base_branch: 'main',
-        test_command: 'test -f src/retry.ts',
       },
     })
     expect(registered.ok()).toBe(true)
+    // A registered project tests with `npm test`; the journeys' repository checks a file.
+    const commands = (await (
+      await request.get(appUrl(`/api/projects/${project.key}/test-commands`))
+    ).json()) as { id: string; is_default: boolean }[]
+    const patched = await request.patch(
+      appUrl(
+        `/api/projects/${project.key}/test-commands/${commands.find((c) => c.is_default)!.id}`,
+      ),
+      { data: { command: 'test -f src/retry.ts' } },
+    )
+    expect(patched.ok()).toBe(true)
   }
 }
 
