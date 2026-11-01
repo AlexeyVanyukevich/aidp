@@ -1167,7 +1167,7 @@ describe('claiming a re-run', () => {
     })
   })
 
-  const answerPlanGate = (runId: string, text: string) =>
+  const answerPlanGate = (runId: string, text: string, answeredAt: Date = now) =>
     db()
       .insertInto('approval_requests')
       .values({
@@ -1178,7 +1178,7 @@ describe('claiming a re-run', () => {
         context_md: 'plan one',
         status: 'answered',
         answer: JSON.stringify({ text }),
-        answered_at: now,
+        answered_at: answeredAt,
       })
       .execute()
 
@@ -1192,19 +1192,23 @@ describe('claiming a re-run', () => {
     ])
   })
 
-  it('hands a run that keeps its plan no plan answers', async () => {
+  it('hands a run that keeps its plan the answers, and no previous plans', async () => {
     const { taskId, runId } = await failedRun1()
     await answerPlanGate(runId, 'keep tests in tests/unit')
     expect((await rerun(taskId, 'keep')).statusCode).toBe(200)
-    expect((await claim()).json().work.run.plan_answers).toEqual([])
+    const run = (await claim()).json().work.run
+    expect(run.plan_answers).toEqual([
+      { run: 1, approved: false, text: 'keep tests in tests/unit' },
+    ])
+    expect(run.previous_plans).toEqual([])
   })
 
-  it('leaves the current run own answers out when it resumes', async () => {
+  it('carries the current run own answers when it resumes', async () => {
     const { taskId, runId } = await failedRun1()
     await answerPlanGate(runId, 'from run one')
     expect((await rerun(taskId, 'again')).statusCode).toBe(200)
     const work = (await claim()).json().work
-    await answerPlanGate(work.run.id, 'from run two')
+    await answerPlanGate(work.run.id, 'from run two', at(1))
     await db()
       .updateTable('runs')
       .set({
@@ -1225,7 +1229,10 @@ describe('claiming a re-run', () => {
       .execute()
     const resumed = (await claim()).json().work
     expect(resumed.kind).toBe('resume')
-    expect(resumed.run.plan_answers).toEqual([{ run: 1, approved: false, text: 'from run one' }])
+    expect(resumed.run.plan_answers).toEqual([
+      { run: 1, approved: false, text: 'from run one' },
+      { run: 2, approved: false, text: 'from run two' },
+    ])
   })
 })
 

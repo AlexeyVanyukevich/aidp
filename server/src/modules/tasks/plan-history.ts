@@ -13,6 +13,8 @@ export interface PlanRecord {
   confidence: string | null
   /** The number of the run this plan was copied from, when a Re-run kept it. */
   copiedFromRun: number | null
+  /** The criteria this plan withdraws at the plan gate; absent reads as none. */
+  withdrawn?: { criterion: string; answer: string }[]
 }
 
 /** An answered `plan` approval. */
@@ -36,16 +38,12 @@ export interface PlanAnswer {
 }
 
 /**
- * The owner's worded answers at plan gates of earlier runs on this spec version, oldest answered
- * first, ties by approval id. Blank answers and the current run's own are left out.
+ * The owner's worded answers at plan gates of any run of this task on this spec version, oldest answered
+ * first, ties by approval id. Blank answers are left out; the current run's own are kept.
  */
-export function planAnswers(
-  approvals: PlanApprovalRecord[],
-  specVersion: number,
-  excludeRunId?: string,
-): PlanAnswer[] {
+export function planAnswers(approvals: PlanApprovalRecord[], specVersion: number): PlanAnswer[] {
   return approvals
-    .filter((a) => a.specVersion === specVersion && a.runId !== excludeRunId)
+    .filter((a) => a.specVersion === specVersion)
     .map((a) => ({ a, text: (a.answerText ?? '').trim() }))
     .filter(({ text }) => text !== '')
     .sort(
@@ -83,6 +81,15 @@ export function planToKeep(
   return newestFirst(plans.filter((p) => p.specVersion === specVersion)).find((p) =>
     isAccepted(p, approvals),
   )
+}
+
+/** The newest plan of one run that `isAccepted` accepts, or none. */
+export function acceptedPlanOf(
+  plans: PlanRecord[],
+  approvals: PlanApprovalRecord[],
+  runId: string,
+): PlanRecord | undefined {
+  return newestFirst(plans.filter((p) => p.runId === runId)).find((p) => isAccepted(p, approvals))
 }
 
 export interface PreviousPlan {

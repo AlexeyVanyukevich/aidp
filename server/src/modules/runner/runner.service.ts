@@ -330,12 +330,13 @@ export class RunnerService {
         : undefined
     let previous: RunWork['previous_plans'] = []
     let answers: RunWork['plan_answers'] = []
-    if (row.kind === 'delivery' && kept === undefined && row.spec_version !== null) {
+    if (row.kind === 'delivery' && row.spec_version !== null) {
       const { plans, approvals } = await loadPlanHistory(trx, row.task_id)
-      previous = previousPlans(plans, approvals, row.spec_version, runId).map(
-        ({ plan, accepted }) => ({ run: plan.runNumber, accepted, body_md: plan.bodyMd }),
-      )
-      answers = planAnswers(approvals, row.spec_version, runId)
+      if (kept === undefined)
+        previous = previousPlans(plans, approvals, row.spec_version, runId).map(
+          ({ plan, accepted }) => ({ run: plan.runNumber, accepted, body_md: plan.bodyMd }),
+        )
+      answers = planAnswers(approvals, row.spec_version)
     }
     const links = await trx
       .selectFrom('project_links')

@@ -157,3 +157,218 @@ describe('renderReport on owner verdicts', () => {
     expect(text).toContain('| AC4 | ✔ pass | e |')
   })
 })
+
+describe('checkPlan on withdrawals', () => {
+  const ANSWER = 'Drop AC2: the file is gone.'
+  const BASE: PlanInput = {
+    ...PLAN,
+    confidence: 'medium',
+    checks: [PLAN.checks[0]!],
+    withdrawn: [{ criterion: 'AC2', answer: ANSWER }],
+  }
+  const withEntry = (answer: string): PlanInput => ({
+    ...BASE,
+    withdrawn: [{ criterion: 'AC2', answer }],
+  })
+  interface Row {
+    name: string
+    plan: PlanInput
+    answers: string[]
+    expected: { code: string; id: string }[]
+  }
+  const ROWS: Row[] = [
+    { name: 'the base plan', plan: BASE, answers: [ANSWER], expected: [] },
+    {
+      name: 'an unknown id',
+      plan: { ...BASE, withdrawn: [...BASE.withdrawn!, { criterion: 'AC9', answer: ANSWER }] },
+      answers: [ANSWER],
+      expected: [{ code: 'unknown_withdrawn_criterion', id: 'AC9' }],
+    },
+    {
+      name: 'a duplicate id',
+      plan: { ...BASE, withdrawn: [...BASE.withdrawn!, { criterion: 'AC2', answer: ANSWER }] },
+      answers: [ANSWER],
+      expected: [{ code: 'duplicate_withdrawn_criterion', id: 'AC2' }],
+    },
+    {
+      name: 'confidence high',
+      plan: { ...BASE, confidence: 'high' },
+      answers: [ANSWER],
+      expected: [{ code: 'withdrawal_without_gate', id: 'high' }],
+    },
+    {
+      name: 'a check for the withdrawn criterion',
+      plan: { ...BASE, checks: PLAN.checks },
+      answers: [ANSWER],
+      expected: [{ code: 'withdrawn_criterion_with_check', id: 'AC2' }],
+    },
+    {
+      name: 'words the owner did not write',
+      plan: withEntry('Remove AC2 entirely.'),
+      answers: [ANSWER],
+      expected: [{ code: 'withdrawn_answer_not_found', id: 'AC2' }],
+    },
+    {
+      name: 'a blank answer',
+      plan: withEntry('   '),
+      answers: [ANSWER],
+      expected: [{ code: 'withdrawn_answer_not_found', id: 'AC2' }],
+    },
+    { name: 'an excerpt', plan: withEntry('the file is gone'), answers: [ANSWER], expected: [] },
+    {
+      name: 'a quote with other whitespace',
+      plan: withEntry('Drop AC2:\n  the file   is gone.'),
+      answers: [ANSWER],
+      expected: [],
+    },
+    {
+      name: 'an owner answer with a line break',
+      plan: BASE,
+      answers: ['Drop AC2:\nthe file is gone.'],
+      expected: [],
+    },
+  ]
+  it.each(ROWS)('$name', ({ plan, answers, expected }) => {
+    expect(checkPlan(plan, SPEC, answers)).toEqual(expected)
+  })
+})
+
+describe('renderPlan on withdrawals', () => {
+  it('lists each withdrawal after the checks, a line break written as a space', () => {
+    const text = renderPlan({
+      ...PLAN,
+      checks: [PLAN.checks[0]!],
+      withdrawn: [{ criterion: 'AC2', answer: 'Drop AC2:\nthe file is gone.' }],
+    })
+    expect(text.endsWith('\n\nWithdrawn by the owner:\n- AC2 — Drop AC2: the file is gone.')).toBe(
+      true,
+    )
+  })
+  it('renders a plan with no withdrawal as before', () => {
+    expect(renderPlan({ ...PLAN, withdrawn: [] })).toBe(renderPlan(PLAN))
+    expect(renderPlan(PLAN)).not.toContain('Withdrawn')
+  })
+})
+
+describe('checkReport on withdrawals', () => {
+  const criteria = [
+    { id: 'AC1', requirements: ['R1'], text: 'a' },
+    { id: 'AC2', requirements: ['R2'], text: 'b' },
+    { id: 'AC3', requirements: ['R2'], text: 'c', owner: true },
+  ]
+  type Status = 'pass' | 'fail' | 'owner' | 'withdrawn'
+  const report = (a: Status, b: Status, c: Status) => ({
+    summary: 's',
+    criteria: [
+      { id: 'AC1', status: a, evidence: 'e' },
+      { id: 'AC2', status: b, evidence: 'e' },
+      { id: 'AC3', status: c, evidence: 'e' },
+    ],
+  })
+  interface Row {
+    name: string
+    verdicts: [Status, Status, Status]
+    ids: string[]
+    expected: { code: string; id: string }[]
+  }
+  const ROWS: Row[] = [
+    { name: 'the base', verdicts: ['pass', 'withdrawn', 'owner'], ids: ['AC2'], expected: [] },
+    {
+      name: 'AC1 withdrawn',
+      verdicts: ['withdrawn', 'withdrawn', 'owner'],
+      ids: ['AC2'],
+      expected: [{ code: 'withdrawn_not_in_plan', id: 'AC1' }],
+    },
+    {
+      name: 'AC2 pass',
+      verdicts: ['pass', 'pass', 'owner'],
+      ids: ['AC2'],
+      expected: [{ code: 'withdrawn_criterion_judged', id: 'AC2' }],
+    },
+    {
+      name: 'AC2 fail',
+      verdicts: ['pass', 'fail', 'owner'],
+      ids: ['AC2'],
+      expected: [{ code: 'withdrawn_criterion_judged', id: 'AC2' }],
+    },
+    {
+      name: 'no accepted plan',
+      verdicts: ['pass', 'withdrawn', 'owner'],
+      ids: [],
+      expected: [{ code: 'withdrawn_not_in_plan', id: 'AC2' }],
+    },
+    {
+      name: 'an owner-marked criterion withdrawn',
+      verdicts: ['pass', 'withdrawn', 'withdrawn'],
+      ids: ['AC2', 'AC3'],
+      expected: [],
+    },
+    {
+      name: 'AC1 owner',
+      verdicts: ['owner', 'withdrawn', 'owner'],
+      ids: ['AC2'],
+      expected: [{ code: 'owner_on_unmarked_criterion', id: 'AC1' }],
+    },
+    {
+      name: 'AC3 pass',
+      verdicts: ['pass', 'withdrawn', 'pass'],
+      ids: ['AC2'],
+      expected: [{ code: 'pass_on_owner_check', id: 'AC3' }],
+    },
+  ]
+  it.each(ROWS)('$name', ({ verdicts, ids, expected }) => {
+    expect(checkReport(report(...verdicts), criteria, new Set(ids))).toEqual(expected)
+  })
+})
+
+describe('renderReport on withdrawals', () => {
+  type Status = 'pass' | 'owner' | 'withdrawn'
+  const report = (statuses: Record<string, Status>, answer: string) => ({
+    summary: 's',
+    criteria: Object.entries(statuses).map(([id, status]) => ({ id, status, evidence: 'e' })),
+    withdrawn: Object.entries(statuses)
+      .filter(([, status]) => status === 'withdrawn')
+      .map(([criterion]) => ({ criterion, answer })),
+  })
+  const HEAD = 'Withdrawn by the owner at the plan gate:'
+  interface Row {
+    name: string
+    input: ReturnType<typeof report>
+    contains: string[]
+    absent: string[]
+  }
+  const ROWS: Row[] = [
+    {
+      name: 'one withdrawal',
+      input: report({ AC5: 'pass', AC6: 'withdrawn' }, 'Drop AC6:\nthe file is gone.'),
+      contains: [
+        `${HEAD}\n- AC6 — Drop AC6: the file is gone.\n\n| Criterion`,
+        '| AC6 | ⊘ withdrawn | e |',
+      ],
+      absent: [],
+    },
+    {
+      name: 'two withdrawals in order',
+      input: report({ AC5: 'withdrawn', AC6: 'withdrawn' }, 'x'),
+      contains: [`${HEAD}\n- AC5 — x\n- AC6 — x\n`],
+      absent: [],
+    },
+    {
+      name: 'the owner sentence first',
+      input: report({ AC4: 'owner', AC6: 'withdrawn' }, 'x'),
+      contains: ['yours to check: AC4.\n\nWithdrawn by the owner at the plan gate:'],
+      absent: [],
+    },
+    {
+      name: 'no withdrawal',
+      input: report({ AC4: 'pass', AC6: 'owner' }, 'x'),
+      contains: ['| AC4 | ✔ pass | e |'],
+      absent: ['Withdrawn by the owner'],
+    },
+  ]
+  it.each(ROWS)('$name', ({ input, contains, absent }) => {
+    const text = renderReport(input)
+    for (const part of contains) expect(text).toContain(part)
+    for (const part of absent) expect(text).not.toContain(part)
+  })
+})

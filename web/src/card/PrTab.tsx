@@ -7,7 +7,12 @@ import { prStatus } from './blocks'
 import { ownerSentence } from './lint'
 import type { ReportData, TaskView } from '../types'
 
-const VERDICT_TONE = { pass: 'success', fail: 'danger', owner: 'warning' } as const
+const VERDICT_TONE = {
+  pass: 'success',
+  fail: 'danger',
+  owner: 'warning',
+  withdrawn: 'neutral',
+} as const
 
 export function PrTab({ task }: { task: TaskView }) {
   const runs = useQuery({ queryKey: ['runs', task.id], queryFn: () => api.runs(task.id) })

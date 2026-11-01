@@ -2,6 +2,17 @@ import type { Kysely } from 'kysely'
 import type { Database } from '../../db/schema.js'
 import { planToKeep, type PlanApprovalRecord, type PlanRecord } from './plan-history.js'
 
+function withdrawnOf(data: unknown): { criterion: string; answer: string }[] {
+  const list = (data as { withdrawn?: unknown } | null)?.withdrawn
+  if (!Array.isArray(list)) return []
+  return list.flatMap((entry: unknown) => {
+    const { criterion, answer } = (entry ?? {}) as { criterion?: unknown; answer?: unknown }
+    return typeof criterion === 'string' && typeof answer === 'string'
+      ? [{ criterion, answer }]
+      : []
+  })
+}
+
 /** Every plan of a task's delivery runs, and every `plan` approval the owner answered. */
 export async function loadPlanHistory(
   db: Kysely<Database>,
@@ -52,6 +63,7 @@ export async function loadPlanHistory(
       bodyMd: row.body_md,
       confidence: (row.data as { confidence?: string } | null)?.confidence ?? null,
       copiedFromRun: row.copied_from_run,
+      withdrawn: withdrawnOf(row.data),
     })),
     approvals: approvals.map((row) => ({
       id: row.id,

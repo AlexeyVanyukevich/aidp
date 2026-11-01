@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  acceptedPlanOf,
   isAccepted,
   planAnswers,
   planToKeep,
@@ -186,12 +187,11 @@ interface AnswerCase {
   name: string
   approvals: PlanApprovalRecord[]
   version: number
-  exclude: string | undefined
   expected: { run: number; approved: boolean; text: string }[]
 }
 const ANSWERS: AnswerCase[] = [
   {
-    name: 'AC1: spec version, approve flag, blank answers and the current run',
+    name: 'AC1: spec version, approve flag, blank answers; every run, the current one included',
     approvals: [
       answer('i1', 2, { answerText: 'two' }),
       answer('i2', 3, { optionId: 'approve', answerText: 'three' }),
@@ -200,10 +200,10 @@ const ANSWERS: AnswerCase[] = [
       answer('i5', 5, { specVersion: 2, answerText: 'five' }),
     ],
     version: 1,
-    exclude: 'run4',
     expected: [
       { run: 2, approved: false, text: 'two' },
       { run: 3, approved: true, text: 'three' },
+      { run: 4, approved: false, text: 'four' },
     ],
   },
   {
@@ -213,7 +213,6 @@ const ANSWERS: AnswerCase[] = [
       answer('i2', 3, { answerText: 'early', answeredAt: at(10) }),
     ],
     version: 1,
-    exclude: undefined,
     expected: [
       { run: 3, approved: false, text: 'early' },
       { run: 2, approved: false, text: 'late' },
@@ -226,7 +225,6 @@ const ANSWERS: AnswerCase[] = [
       answer('i1', 2, { answerText: 'lesser', answeredAt: at(5) }),
     ],
     version: 1,
-    exclude: undefined,
     expected: [
       { run: 2, approved: false, text: 'lesser' },
       { run: 3, approved: false, text: 'greater' },
@@ -236,20 +234,55 @@ const ANSWERS: AnswerCase[] = [
     name: 'AC4: whitespace-only text is dropped',
     approvals: [answer('i1', 2, { answerText: ' \n\t ' })],
     version: 1,
-    exclude: undefined,
     expected: [],
   },
   {
     name: 'AC4: text is trimmed',
     approvals: [answer('i1', 2, { answerText: '\n\n keep it \n\n' })],
     version: 1,
-    exclude: undefined,
     expected: [{ run: 2, approved: false, text: 'keep it' }],
   },
 ]
 
 describe('planAnswers', () => {
-  it.each(ANSWERS)('$name', ({ approvals, version, exclude, expected }) => {
-    expect(planAnswers(approvals, version, exclude)).toEqual(expected)
+  it.each(ANSWERS)('$name', ({ approvals, version, expected }) => {
+    expect(planAnswers(approvals, version)).toEqual(expected)
+  })
+})
+
+interface AcceptedCase {
+  name: string
+  plans: PlanRecord[]
+  approvals: PlanApprovalRecord[]
+  expected: string | undefined
+}
+const ACCEPTED: AcceptedCase[] = [
+  {
+    name: 'the newest accepted plan of the run wins',
+    plans: [
+      plan({ id: 'p1', confidence: 'high' }),
+      plan({ id: 'p2', confidence: 'medium' }),
+      plan({ id: 'p3', confidence: 'high', runId: 'r2' }),
+    ],
+    approvals: [],
+    expected: 'p1',
+  },
+  {
+    name: 'an unapproved medium plan is not accepted',
+    plans: [plan({ id: 'p1', confidence: 'medium' })],
+    approvals: [],
+    expected: undefined,
+  },
+  {
+    name: 'an approved medium plan is accepted',
+    plans: [plan({ id: 'p1', confidence: 'medium' })],
+    approvals: [approve('r1', 'body p1')],
+    expected: 'p1',
+  },
+]
+
+describe('acceptedPlanOf', () => {
+  it.each(ACCEPTED)('$name', ({ plans, approvals, expected }) => {
+    expect(acceptedPlanOf(plans, approvals, 'r1')?.id).toBe(expected)
   })
 })
