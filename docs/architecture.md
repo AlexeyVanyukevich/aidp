@@ -124,8 +124,8 @@ spec parser stores `owner: true` on it (a criterion stored without the field rea
 `owner` is not a requirement reference, so `(owner)` alone still gets
 `criterion_without_requirement`. Any other token in the parentheses that is not `R<n>` — `Owner`,
 `ownr`, `r1` — is an `unknown_marker` finding, which blocks approval like any lint finding; empty
-tokens left by stray separators are ignored. The verifier gives every criterion one of three
-verdicts through `save_report`: `pass` or `fail` for an ordinary criterion, and for an owner check
+tokens left by stray separators are ignored. The verifier gives every criterion one of
+three verdicts here (a fourth, `withdrawn`, is below) through `save_report`: `pass` or `fail` for an ordinary criterion, and for an owner check
 `fail` when it can see the work is wrong and otherwise `owner`, with the evidence of what it did
 check. `save_report` refuses `owner` on an unmarked criterion (`owner_on_unmarked_criterion`) and
 `pass` on an owner check (`pass_on_owner_check`), saving nothing. A report with no `fail` opens the
@@ -136,6 +136,28 @@ AC5, AC6." — before the report table in the pull request body and above the ta
 PR tab, where an `owner` verdict is a `warning` badge with the text `owner`. The planner's check
 for an owner-check criterion names the hand check, plus whatever a run can still check. The board
 records no result of the hand check.
+
+**Withdrawn criteria.** When the owner drops or changes an approved criterion in words at the
+plan gate, `save_plan` takes an optional `withdrawn` list of `{ criterion, answer }`, stored in
+the plan's `data` (a plan saved without it reads as an empty list). `answer` quotes the owner's
+words, whole or as an excerpt. The quote check collapses every run of whitespace, line breaks
+included, to one space on both sides and trims them, then looks for the answer as a substring of
+any worded plan-gate answer on the run's spec version, from any delivery run of the task, this
+one included. `save_plan` refuses, saving nothing, with these findings: `unknown_withdrawn_criterion`
+(an id the spec lacks), `duplicate_withdrawn_criterion`, `withdrawal_without_gate` (confidence
+`high` with a non-empty list, since a withdrawal takes effect only once the owner approves),
+`withdrawn_criterion_with_check` (a withdrawn id with a row in the checks) and
+`withdrawn_answer_not_found`. A withdrawn criterion needs no check. The rendered plan ends with
+`Withdrawn by the owner:` and one `- <id> — <answer>` line per entry. The verifier gives a
+criterion the verdict `withdrawn` only when the run's accepted plan (the newest plan of the run
+that counts as accepted, below) lists it; `save_report` refuses `withdrawn` otherwise
+(`withdrawn_not_in_plan`) and refuses any other verdict on a withdrawn criterion
+(`withdrawn_criterion_judged`). The server writes the report's own `withdrawn` list into its
+`data`, from the accepted plan; the agent cannot supply it. The report body and the pull request
+body show `⊘ withdrawn` and a block `Withdrawn by the owner at the plan gate:` with one line per
+entry, after the owner sentence and before the table; the PR tab shows a `neutral` badge with the
+text `withdrawn` and the same words as a paragraph and a list above the table. A report with
+`pass`, `owner` and `withdrawn` verdicts and no `fail` opens the pull request.
 
 **The setup command.** A project may carry a `setup_command` (at most 500 characters), set when
 it is registered or later with `PATCH /api/projects/:key`, whose body is `setup_command` (string
@@ -305,13 +327,16 @@ latest approved spec. `POST /api/tasks/:id/actions/rerun` takes an optional body
   say `accepted="no"` was never approved. Its new plan meets the plan gate like any plan. With no
   earlier plan on that version the handoff is unchanged.
 
-  The claim also carries `plan_answers: { run, approved, text }[]`, the owner's words at earlier
-  plan gates: the answered `plan` approvals of the task's other delivery runs on the same spec
-  version whose answer text is not blank, oldest answered first (ties by approval id), with the
-  text trimmed; `approved` is true exactly when the answer chose Approve plan. It is empty
-  wherever `previous_plans` is empty, and an older board's absent field counts as empty. Only
-  the Plan phase's handoff carries them, one `<plan_answer run="<n>" approved="yes|no">` tag
-  each after the `<previous_plan>` tags. Their trimmed texts total at most 20,000 characters,
+  The claim also carries `plan_answers: { run, approved, text }[]`, the owner's words at plan
+  gates: the answered `plan` approvals of the task's delivery runs on the same spec version
+  whose answer text is not blank, the run's own included and a run that holds a kept plan
+  included, oldest answered first (ties by approval id), with the text trimmed; `approved` is
+  true exactly when the answer chose Approve plan. An older board's absent field counts as
+  empty. The Plan phase's handoff leaves out the answers of the current run, which the planner's
+  resume message already carries; the Verify phase's handoff carries every one, with the same
+  `<plan_answer>` tags, so the verifier can read the words behind a withdrawal. Build's handoff
+  carries none. Each is one `<plan_answer run="<n>" approved="yes|no">` tag,
+  after the `<previous_plan>` tags. Their trimmed texts total at most 20,000 characters,
   counted before escaping: the runner keeps the newest whole, stops at the first that would
   overflow, leaves every older one out, and adds
   `<plan_answers_left_out count="<k>" runs="<r1>,<r2>,…"/>` after the last tag. The planner's
