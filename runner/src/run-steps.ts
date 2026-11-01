@@ -7,7 +7,14 @@ import type { RunnerConfig } from './config.js'
 import { GitError, type Git } from './git.js'
 import { prepareLinked, removeLinked, restoreLinked } from './linked.js'
 import type { PhaseDeps, PhaseInput, PhaseRecord, StepResult } from './phases/phase.js'
-import { readBase, writeBase, writeExcluded, type BasePhase } from './phases/run-dir.js'
+import {
+  readBase,
+  readPendingAnswer,
+  writeBase,
+  writeExcluded,
+  writePendingAnswer,
+  type BasePhase,
+} from './phases/run-dir.js'
 import { newEvent, type EventSink } from './sink.js'
 import { runTestCommand } from './test-command.js'
 
@@ -75,6 +82,9 @@ export function baseMovedNote(
     BASE_MOVED_LAST[phase],
   ].join('\n')
 }
+
+const SAVED_WORDS = "delivered the owner's answer kept from before the block"
+const SAVED_APPROVAL = 'went on to Build on the Approve plan kept from before the block'
 
 const SESSION_GONE = "the run's Claude Code session is gone; Re-run starts again from Plan"
 
@@ -268,6 +278,34 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
     })
   }
 
+  /** Tells the board a saved answer was delivered after the refresh. */
+  const savedAnswerSent = (approval: boolean) =>
+    deps.sink.send([
+      newEvent(
+        { runId: run.id, phaseId: null, type: 'tool_call', agent: 'runner' },
+        {
+          tool: 'saved_answer',
+          target: approval ? SAVED_APPROVAL : SAVED_WORDS,
+          status: 'ok',
+        },
+      ),
+    ])
+
+  /**
+   * A spec-stage resume's answer: kept before the refresh, which may block, and put back in
+   * place of a nudge. `answered`: the process gets an answer, to clear once it returns;
+   * `replaced`: that answer is the one kept from an earlier resume.
+   */
+  const keepWords = (): { answered: boolean; replaced: boolean } => {
+    const saved = readPendingAnswer(io.runDir)
+    const nudge = state.message === INTERRUPTED
+    const replaced = nudge && saved?.kind === 'words'
+    if (replaced) state.message = saved.text
+    else if (state.message !== null && !nudge)
+      writePendingAnswer(io.runDir, { kind: 'words', text: state.message })
+    return { answered: replaced || (state.message !== null && !nudge), replaced }
+  }
+
   /** The daemon is stopping: between steps, the run is blocked where it stands. */
   const stopIfShuttingDown = async () => {
     if (deps.shutdown?.aborted === true) await block('runner_stopped')
@@ -412,6 +450,8 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
     prepareLinkedCheckouts,
     restoreLinkedCheckouts,
     refreshBase,
+    savedAnswerSent,
+    keepWords,
     stopIfShuttingDown,
     phaseStep,
     endPhase,
