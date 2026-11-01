@@ -155,6 +155,54 @@ const SCRIPT = {
         ],
       ],
     },
+    // The owner drops AC2 in words at the plan gate; the revised plan quotes it, and the
+    // verifier gives AC2 `withdrawn`.
+    'Withdraw a criterion': {
+      planner: [
+        [
+          {
+            tool: 'save_plan',
+            args: {
+              ...PLAN,
+              confidence: 'medium',
+              checks: [
+                { criterion: 'AC1', how: 'read the delays' },
+                { criterion: 'AC2', how: 'read the banner' },
+              ],
+            },
+          },
+        ],
+        [
+          {
+            tool: 'save_plan',
+            args: {
+              ...PLAN,
+              confidence: 'medium',
+              withdrawn: [{ criterion: 'AC2', answer: 'Drop AC2: the banner is gone.' }],
+            },
+          },
+        ],
+      ],
+      builder: [BUILD],
+      verifier: [
+        [
+          {
+            tool: 'save_report',
+            args: {
+              summary: 'One is withdrawn',
+              criteria: [
+                { id: 'AC1', status: 'pass', evidence: 'src/retry.ts lists 1, 2 and 4' },
+                {
+                  id: 'AC2',
+                  status: 'withdrawn',
+                  evidence: 'the owner’s answer drops the banner',
+                },
+              ],
+            },
+          },
+        ],
+      ],
+    },
     'Push fails once': {
       planner: [[{ tool: 'save_plan', args: PLAN }]],
       builder: [BUILD],
