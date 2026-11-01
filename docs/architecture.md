@@ -140,8 +140,8 @@ records no result of the hand check.
 **Withdrawn criteria.** When the owner drops or changes an approved criterion in words at the
 plan gate, `save_plan` takes an optional `withdrawn` list of `{ criterion, answer }`, stored in
 the plan's `data` (a plan saved without it reads as an empty list). `answer` quotes the owner's
-words, whole or as an excerpt. The quote check collapses every run of whitespace, line breaks
-included, to one space on both sides and trims them, then looks for the answer as a substring of
+words, whole or as an excerpt. The quote check collapses whitespace: every run of it, line
+breaks included, becomes one space on both sides and trims them, then looks for the answer as a substring of
 any worded plan-gate answer on the run's spec version, from any delivery run of the task, this
 one included. `save_plan` refuses, saving nothing, with these findings: `unknown_withdrawn_criterion`
 (an id the spec lacks), `duplicate_withdrawn_criterion`, `withdrawal_without_gate` (confidence
