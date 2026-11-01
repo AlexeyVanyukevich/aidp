@@ -15,7 +15,7 @@ export interface HandoffInput {
   plan?: string
   /** A planner starting again: the plans of earlier runs, newest first. Never a `<plan>`. */
   previousPlans?: { run: number; accepted: boolean; text: string }[] | undefined
-  /** A planner starting again: the owner's words at earlier plan gates, oldest first. */
+  /** The owner's words at plan gates on this spec version, oldest first; Plan and Verify only. */
   planAnswers?: { run: number; approved: boolean; text: string }[] | undefined
   verifyReport?: string
   testOutput?: string
@@ -96,7 +96,8 @@ export function buildHandoff(input: HandoffInput): string {
     parts.push(
       `<previous_plan run="${previous.run}" accepted="${previous.accepted ? 'yes' : 'no'}">\n${escape(cut('previous plan', previous.text, 20_000))}\n</previous_plan>`,
     )
-  if (input.phase === 'plan') parts.push(...planAnswerTags(input.planAnswers ?? []))
+  if (input.phase === 'plan' || input.phase === 'verify')
+    parts.push(...planAnswerTags(input.planAnswers ?? []))
   if (input.plan !== undefined) parts.push(`<plan>\n${escape(input.plan)}\n</plan>`)
   if (input.verifyReport !== undefined)
     parts.push(`<verify_report>\n${escape(input.verifyReport)}\n</verify_report>`)

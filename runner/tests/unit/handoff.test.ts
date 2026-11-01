@@ -207,9 +207,16 @@ describe('buildHandoff with plan answers', () => {
     expect(buildHandoff(PLANNER)).not.toContain('<plan_answer')
   })
 
-  it.each(['build', 'verify'] as const)('AC10: a %s handoff carries no answer', (phase) => {
-    const text = buildHandoff({ ...BASE, phase, planAnswers: [ans(1, 10)] })
+  it('AC10: a build handoff carries no answer', () => {
+    const text = buildHandoff({ ...BASE, phase: 'build', planAnswers: [ans(1, 10)] })
     expect(text).not.toContain('<plan_answer')
+  })
+
+  it('AC7: a verify handoff carries the tags and the left-out tag as a plan handoff does', () => {
+    const answers = [1, 1, 2, 3, 4, 5].map((r) => ans(r, 4_000))
+    const text = buildHandoff({ ...BASE, phase: 'verify', planAnswers: answers })
+    expect(tagRuns(text)).toEqual([1, 2, 3, 4, 5])
+    expect(text).toContain('<plan_answers_left_out count="1" runs="1"/>')
   })
 })
 
