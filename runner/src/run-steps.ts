@@ -7,7 +7,7 @@ import type { RunnerConfig } from './config.js'
 import { GitError, type Git } from './git.js'
 import { prepareLinked, removeLinked, restoreLinked } from './linked.js'
 import type { PhaseDeps, PhaseInput, PhaseRecord, StepResult } from './phases/phase.js'
-import { readPlanBase, writeExcluded, writePlanBase } from './phases/run-dir.js'
+import { readBase, writeBase, writeExcluded, type BasePhase } from './phases/run-dir.js'
 import { newEvent, type EventSink } from './sink.js'
 import { runTestCommand } from './test-command.js'
 
@@ -50,13 +50,21 @@ export type Outcome = 'review' | 'failed' | 'cancelled' | 'released'
 export const INTERRUPTED = 'You were interrupted. Continue from where you stopped.'
 const NOTE_PATHS = 100
 
-/** What the planner is told when the base moved since it last read the code. */
-export function baseMovedNote(change: {
-  from: string
-  to: string
-  commits: number
-  paths: string[]
-}): string {
+const BASE_MOVED_LAST: Record<BasePhase, string> = {
+  plan: 'Check your plan against these changes, and save a revised plan with save_plan if the plan changes.',
+  spec: 'Check your questions and your draft against these changes, and save the spec again with save_spec if it changes.',
+}
+
+/** What the planner or spec-writer is told when the base moved since it last read the code. */
+export function baseMovedNote(
+  phase: BasePhase,
+  change: {
+    from: string
+    to: string
+    commits: number
+    paths: string[]
+  },
+): string {
   const listed = change.paths.slice(0, NOTE_PATHS)
   const more = change.paths.length - listed.length
   return [
@@ -64,7 +72,7 @@ export function baseMovedNote(change: {
     'Paths changed between them:',
     ...listed,
     ...(more > 0 ? [`and ${more} more`] : []),
-    'Check your plan against these changes, and save a revised plan with save_plan if the plan changes.',
+    BASE_MOVED_LAST[phase],
   ].join('\n')
 }
 
@@ -233,12 +241,14 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
    * the note for a planner whose last read is not the new HEAD, or null.
    */
   const refreshBase = async (
+    phase: BasePhase,
     repo: string,
     base: string,
     setupCommand: string | null,
   ): Promise<string | null> => {
     await deps.git.fetchBase(repo, base)
-    if (readPlanBase(io.runDir) === null) writePlanBase(io.runDir, await deps.git.head(io.worktree))
+    if (readBase(io.runDir, phase) === null)
+      writeBase(io.runDir, phase, await deps.git.head(io.worktree))
     await deps.git.undoUncommitted(io.worktree, base)
     await deps.git.fastForward(io.worktree, base)
     await prepareLinkedCheckouts()
@@ -247,10 +257,10 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
       io.runDir,
       setupCommand === null ? [] : (await deps.git.changedPaths(io.worktree, base)).uncommitted,
     )
-    const from = readPlanBase(io.runDir)
+    const from = readBase(io.runDir, phase)
     const to = await deps.git.head(io.worktree)
     if (from === null || from === to) return null
-    return baseMovedNote({
+    return baseMovedNote(phase, {
       from,
       to,
       commits: await deps.git.commitCount(io.worktree, from, to),
@@ -276,7 +286,8 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
     let result: StepResult
     // The planner's last read of the code, recorded before the process reads it again.
     const recordRead = async () => {
-      if (name === 'plan') writePlanBase(io.runDir, await deps.git.head(io.worktree))
+      if (name === 'plan' || name === 'spec')
+        writeBase(io.runDir, name, await deps.git.head(io.worktree))
     }
     if (state.phase === null) {
       // The ids first, so the checkpoint names the phase and session before the process starts.

@@ -97,18 +97,75 @@ describe('carry and the linked checkouts', () => {
   })
 })
 
+const MANY = Array.from({ length: 103 }, (_, i) => `p${String(i).padStart(3, '0')}.ts`)
+const PLAN_LAST =
+  'Check your plan against these changes, and save a revised plan with save_plan if the plan changes.'
+const SPEC_LAST =
+  'Check your questions and your draft against these changes, and save the spec again with save_spec if it changes.'
+
+interface NoteRow {
+  name: string
+  phase: 'plan' | 'spec'
+  commits: number
+  paths: string[]
+  expected: string
+}
+const NOTE_ROWS: NoteRow[] = [
+  {
+    name: 'plan, one commit',
+    phase: 'plan',
+    commits: 1,
+    paths: ['x.ts'],
+    expected: [
+      'The base branch moved while the run was paused. You last read the code at aaa; it is now at bbb, 1 commit later.',
+      'Paths changed between them:',
+      'x.ts',
+      PLAN_LAST,
+    ].join('\n'),
+  },
+  {
+    name: 'spec, three commits',
+    phase: 'spec',
+    commits: 3,
+    paths: ['a.ts', 'b.ts'],
+    expected: [
+      'The base branch moved while the run was paused. You last read the code at aaa; it is now at bbb, 3 commits later.',
+      'Paths changed between them:',
+      'a.ts',
+      'b.ts',
+      SPEC_LAST,
+    ].join('\n'),
+  },
+  {
+    name: 'plan, lists the first 100 paths then how many more',
+    phase: 'plan',
+    commits: 3,
+    paths: MANY,
+    expected: [
+      'The base branch moved while the run was paused. You last read the code at aaa; it is now at bbb, 3 commits later.',
+      'Paths changed between them:',
+      ...MANY.slice(0, 100),
+      'and 3 more',
+      PLAN_LAST,
+    ].join('\n'),
+  },
+  {
+    name: 'spec, lists the first 100 paths then how many more',
+    phase: 'spec',
+    commits: 3,
+    paths: MANY,
+    expected: [
+      'The base branch moved while the run was paused. You last read the code at aaa; it is now at bbb, 3 commits later.',
+      'Paths changed between them:',
+      ...MANY.slice(0, 100),
+      'and 3 more',
+      SPEC_LAST,
+    ].join('\n'),
+  },
+]
+
 describe('baseMovedNote', () => {
-  it('AC12: lists the first 100 paths, then how many more', () => {
-    const paths = Array.from({ length: 103 }, (_, i) => `p${String(i).padStart(3, '0')}.ts`)
-    const lines = baseMovedNote({ from: 'aaa', to: 'bbb', commits: 3, paths }).split('\n')
-    expect(lines.filter((l) => l.endsWith('.ts'))).toEqual(paths.slice(0, 100))
-    expect(lines).toContain('and 3 more')
-    expect(lines.join('\n')).toContain('aaa')
-    expect(lines.join('\n')).toContain('save_plan')
-  })
-  it('lists everything, with no more line, up to 100', () => {
-    const note = baseMovedNote({ from: 'a', to: 'b', commits: 1, paths: ['x.ts'] })
-    expect(note).not.toContain('more')
-    expect(note).toContain('1 commit ')
+  it.each(NOTE_ROWS)('AC9: $name', ({ phase, commits, paths, expected }) => {
+    expect(baseMovedNote(phase, { from: 'aaa', to: 'bbb', commits, paths })).toBe(expected)
   })
 })

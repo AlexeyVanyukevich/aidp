@@ -326,6 +326,7 @@ export async function carryOut(
             }
             answered = approve || (state.message !== null && (!nudge || replaced))
             note = await steps.refreshBase(
+              'plan',
               project.repo_path,
               project.base_branch,
               project.setup_command,
