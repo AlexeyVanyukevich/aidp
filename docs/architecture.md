@@ -90,8 +90,32 @@ The runner (`runner/src/drafting.ts`) checks out a detached worktree of `origin/
 branch, nothing is pushed — then runs one phase, `spec`: the spec-writer on Opus at high effort,
 with Read, Grep, Glob and the board's `get_task`, `get_spec`, `save_spec`, `log_step` and
 `request_approval`. Its handoff carries the task's description, and for a redraft the version and
-the note. Its instructions carry the Spec tab's template word for word and tell it to ask every
-open question in one batch. The phase pauses, blocks and resumes like any other.
+the note, then `<base branch="<base_branch>" commit="<sha>"/>`: the worktree's full HEAD when the
+handoff is built, at the first start and at a restart. Its instructions carry the Spec tab's
+template word for word and tell it to ask every open question in one batch. The phase pauses,
+blocks and resumes like any other.
+
+_The resume refresh._ Every resume whose checkpoint stage is `spec` — the owner's answer or the
+nudge after a block — first runs the Plan-stage refresh (see "The plan gate") before any
+spec-writer process starts, resumes or restarts: fetch, write `spec-base.txt` if it is missing,
+undo uncommitted paths, `git merge --ff-only origin/<base>`, remake the linked checkouts from the
+claim's current links, run the setup command again. A failure of any step is a `step_failed`
+block at `spec` with no process run. The refresh rewrites `excluded-paths.json` only because it
+reuses the Plan-stage refresh; nothing in a spec run reads that file. The spec-writer has no
+commits of its own, which makes the undo and the fast-forward safe. A run paused before
+`spec-base.txt` existed gets it written at the refresh, from the HEAD before the fast-forward.
+
+_The base-moved note._ Each time a spec-writer process starts, resumes or restarts, the runner
+writes the worktree's HEAD to `spec-base.txt` in the run directory (a spec run never writes
+`plan-base.txt`). When the refresh leads to continuing the spec-writer's session and HEAD differs
+from that commit, the message starts with the same note the planner gets, ending "Check your
+questions and your draft against these changes, and save the spec again with save_spec if it
+changes."; the resume's own message follows unchanged. A session started afresh gets no note.
+
+_The saved answer._ A resume whose message is not the nudge first writes it to
+`pending-answer.json` as words, so a refresh that blocks keeps the owner's answer. A later nudge
+resume delivers the saved words instead of the nudge and sends the runner `tool_call` event
+`saved_answer`. The file is deleted as soon as the resume or restart returns.
 
 `save_spec` is refused outside a spec run. A run's first save inserts the next version, linked
 to the run and superseding earlier drafts; its later saves rewrite that version. It answers with
