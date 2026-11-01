@@ -67,8 +67,8 @@ there, and a failed fetch or worktree blocks the run as `step_failed`. A run tha
 outcome but `released` removes each checkout and then the `<run>-linked` directory, and so does a
 cleanup claimed after a Cancel; a paused run keeps them. A resume past `prepare` makes any
 checkout that is missing again, fetching only for that (`runner/src/linked.ts`). A resume in
-the Plan stage does not restore: the Plan-stage refresh (see "The plan gate") remakes the
-checkouts from the claim's current `links`, so a link added since the run began gets one, a link
+the Plan stage, or in a spec run's `spec` stage, does not restore: the refresh (see "The plan
+gate" and "A spec run") remakes the checkouts from the claim's current `links`, so a link added since the run began gets one, a link
 removed since loses its, and `linked.json` lists exactly the current links.
 
 Every `claude` process of every phase, first or resumed, gets one `--add-dir <checkout>` per
@@ -289,8 +289,9 @@ origin/<base>`; remakes the linked checkouts from the claim's current links; run
 command again (a `setup_command` event); and rewrites `excluded-paths.json` to the uncommitted
 list, or to an empty list for a project without a setup command. A failure of any step is a
 `step_failed` block at `plan`, with no phase process run. The Plan phase's branch has no commits of
-its own, which is why the undo and the fast-forward are safe there. A resume at any other stage,
-and a run holding a kept plan, refresh nothing. Approve plan does the refresh, then ends the phase
+its own, which is why the undo and the fast-forward are safe there. A run holding a kept plan
+refreshes nothing, and a resume at Build or Verify refreshes nothing. A spec run's resume at the
+`spec` stage uses the same refresh (see "A spec run"). Approve plan does the refresh, then ends the phase
 and starts Build as before.
 
 _The base-moved note._ Each time a planner process starts, resumes or restarts, the runner writes
