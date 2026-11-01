@@ -261,3 +261,45 @@ describe('buildHandoff with linked projects', () => {
     )
   })
 })
+
+interface BaseRow {
+  name: string
+  phase: 'spec' | 'plan' | 'build' | 'verify'
+  base?: { branch: string; commit: string }
+  expected: string | null
+}
+const BASE_ROWS: BaseRow[] = [
+  {
+    name: 'spec with a base',
+    phase: 'spec',
+    base: { branch: 'main', commit: 'a'.repeat(40) },
+    expected: `<base branch="main" commit="${'a'.repeat(40)}"/>`,
+  },
+  { name: 'spec without a base', phase: 'spec', expected: null },
+  { name: 'plan', phase: 'plan', expected: null },
+  { name: 'build', phase: 'build', expected: null },
+  { name: 'verify', phase: 'verify', expected: null },
+]
+
+describe('buildHandoff base element', () => {
+  it.each(BASE_ROWS)('AC12: $name', ({ phase, base, expected }) => {
+    const text = buildHandoff({
+      taskKey: 'PAY-42',
+      title: 't',
+      phase,
+      attempt: 1,
+      description: 'd',
+      specVersion: 1,
+      specMd: 'body',
+      note: 'n',
+      budgetUsd: null,
+      summaries: [],
+      ...(base === undefined ? {} : { base }),
+    })
+    if (expected === null) expect(text).not.toContain('<base ')
+    else {
+      expect(text).toContain(expected)
+      expect(text.indexOf(expected)).toBeGreaterThan(text.indexOf('</note>'))
+    }
+  })
+})

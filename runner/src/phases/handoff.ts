@@ -15,6 +15,8 @@ export interface HandoffInput {
   plan?: string
   /** A planner starting again: the plans of earlier runs, newest first. Never a `<plan>`. */
   previousPlans?: { run: number; accepted: boolean; text: string }[] | undefined
+  /** Spec phase only: the base branch and the commit the worktree reads. */
+  base?: { branch: string; commit: string }
   /** The owner's words at plan gates on this spec version, oldest first; Plan and Verify only. */
   planAnswers?: { run: number; approved: boolean; text: string }[] | undefined
   verifyReport?: string
@@ -87,6 +89,8 @@ export function buildHandoff(input: HandoffInput): string {
   if (input.specVersion !== undefined && input.specMd !== undefined)
     parts.push(`<spec version="${input.specVersion}">\n${escape(input.specMd)}\n</spec>`)
   if (input.note !== undefined) parts.push(`<note>\n${escape(input.note)}\n</note>`)
+  if (input.phase === 'spec' && input.base !== undefined)
+    parts.push(`<base branch="${attr(input.base.branch)}" commit="${attr(input.base.commit)}"/>`)
   if (input.summaries.length > 0) {
     parts.push(
       `<context>\n${input.summaries.map((s) => `<summary phase="${s.phase}" attempt="${s.attempt}">${escape(s.text)}</summary>`).join('\n')}\n</context>`,
