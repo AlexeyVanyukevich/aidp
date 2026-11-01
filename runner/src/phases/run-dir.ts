@@ -83,16 +83,19 @@ export const readAllowed = (dir: string): string[] | null =>
   existsSync(join(dir, 'allowed-files.json')) ? readList(dir, 'allowed-files.json') : null
 export const readApproved = (dir: string): string[] => readList(dir, 'approved-migrations.json')
 
-const PLAN_BASE = 'plan-base.txt'
 const PENDING_ANSWER = 'pending-answer.json'
 
-/** The commit the planner last read from; null for a run paused before the file existed. */
-export function readPlanBase(dir: string): string | null {
-  const file = join(dir, PLAN_BASE)
+/** The two phases that read the code again after a pause, each with its own base file. */
+export type BasePhase = 'plan' | 'spec'
+const baseFile = (phase: BasePhase) => `${phase}-base.txt`
+
+/** The commit the phase last read from; null for a run paused before the file existed. */
+export function readBase(dir: string, phase: BasePhase): string | null {
+  const file = join(dir, baseFile(phase))
   return existsSync(file) ? readFileSync(file, 'utf8').trim() : null
 }
-export function writePlanBase(dir: string, commit: string): void {
-  writeFileSync(join(dir, PLAN_BASE), commit)
+export function writeBase(dir: string, phase: BasePhase, commit: string): void {
+  writeFileSync(join(dir, baseFile(phase)), commit)
 }
 
 /** An answer taken from the owner and not yet delivered: words for the planner, or an approval. */
