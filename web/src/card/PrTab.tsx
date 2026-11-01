@@ -65,6 +65,18 @@ export function PrTab({ task }: { task: TaskView }) {
               )}
             </section>
             {owned !== undefined && <p>{owned}</p>}
+            {report?.withdrawn !== undefined && report.withdrawn.length > 0 && (
+              <>
+                <p>Withdrawn by the owner at the plan gate:</p>
+                <ul>
+                  {report.withdrawn.map((w) => (
+                    <li key={w.criterion}>
+                      {w.criterion} — {w.answer}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
             {report && (
               <table>
                 <caption>Verify report</caption>

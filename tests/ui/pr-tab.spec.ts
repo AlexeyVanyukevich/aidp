@@ -66,4 +66,47 @@ test('a report with no owner verdict has no such sentence', async ({ page, reque
   const pr = await openPrTab(page, key, title)
   await expect(pr.getByRole('table', { name: 'Verify report' })).toBeVisible(RUN)
   await expect(pr.getByText('yours to check')).toHaveCount(0)
+  await expect(pr.getByText('Withdrawn by the owner')).toHaveCount(0)
+})
+
+const TWO_CRITERIA = SPEC.replace(
+  '\n## Open questions',
+  '- AC2 (R1): Given the banner When it shows Then it reads well\n\n## Open questions',
+)
+
+test('a withdrawn verdict shows as a badge, with the owner’s words above the table', async ({
+  page,
+  request,
+}) => {
+  const title = 'Withdraw a criterion'
+  const key = await approve(request, title, TWO_CRITERIA)
+  await page.goto(appUrl('/p/ASK'))
+  await page
+    .getByRole('region', { name: 'Needs approval' })
+    .getByRole('link', { name: new RegExp(`^${key} `) })
+    .click(RUN)
+  const card = page.getByRole('dialog', { name: title })
+  const panel = card.getByRole('tabpanel', { name: 'Approvals' })
+  await panel
+    .getByRole('textbox', { name: 'Changes to ask for' })
+    .fill('Drop AC2: the banner is gone.')
+  await panel.getByRole('button', { name: 'Send answer' }).click()
+  await panel.getByRole('button', { name: 'Approve plan' }).click(RUN)
+  await expect(card.getByText(`${key} · Review`)).toBeVisible(RUN)
+
+  await card.getByRole('tab', { name: 'PR', exact: true }).click()
+  const pr = card.getByRole('tabpanel', { name: 'PR', exact: true })
+  const table = pr.getByRole('table', { name: 'Verify report' })
+  await expect(table).toBeVisible(RUN)
+  const badge = table.getByRole('row', { name: /^AC2/ }).locator('.zl-badge')
+  await expect(badge).toHaveText('withdrawn')
+  await expect(pr.getByText('Withdrawn by the owner at the plan gate:')).toBeVisible()
+  const item = pr.getByRole('listitem').filter({ hasText: 'AC2 — Drop AC2: the banner is gone.' })
+  await expect(item).toBeVisible()
+  const before = await item.evaluate(
+    (li, t) => !!(li.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_FOLLOWING),
+    await table.elementHandle(),
+  )
+  expect(before).toBe(true)
+  await expectAccessible(page)
 })
