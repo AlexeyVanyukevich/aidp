@@ -49,8 +49,6 @@ const NO_COMMIT_TEXT = 'The build made no commit, so there was nothing to verify
 const FILES_GATE = 'files_gate'
 const FILES_GATE_TEXT =
   "The build changed files the run does not allow. Check that you changed only the plan's files, undo the rest, and commit."
-const SAVED_WORDS = "delivered the owner's answer kept from before the block"
-const SAVED_APPROVAL = 'went on to Build on the Approve plan kept from before the block'
 const PLAN_QUESTION =
   'The planner is not confident in this plan. Approve it, or say what to change.'
 
@@ -173,18 +171,6 @@ export async function carryOut(
       planAnswers: run.plan_answers ?? [],
     })
   }
-
-  const savedAnswerSent = (approval: boolean) =>
-    deps.sink.send([
-      newEvent(
-        { runId: run.id, phaseId: null, type: 'tool_call', agent: 'runner' },
-        {
-          tool: 'saved_answer',
-          target: approval ? SAVED_APPROVAL : SAVED_WORDS,
-          status: 'ok',
-        },
-      ),
-    ])
 
   const gateReport = () => {
     const file = join(runDir, GATE_REPORT)
@@ -331,7 +317,7 @@ export async function carryOut(
               project.base_branch,
               project.setup_command,
             )
-            if (replaced) await savedAnswerSent(approve)
+            if (replaced) await steps.savedAnswerSent(approve)
             // A plan the owner approved at the gate: the phase ends, and Build starts (spec §5).
             if (approve) {
               await steps.endPhase(true)
