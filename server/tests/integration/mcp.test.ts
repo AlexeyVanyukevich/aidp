@@ -271,6 +271,165 @@ describe('the board MCP server', () => {
   })
 })
 
+describe('withdrawn criteria', () => {
+  const ANSWER = 'Drop AC2: the file is gone.'
+  const WITHDRAWING = {
+    summary: 'One step',
+    confidence: 'medium',
+    steps: [{ title: 'Backoff', requirements: ['R1'], files: ['src/retry.ts'] }],
+    checks: [{ criterion: 'AC1', how: 'unit test' }],
+    withdrawn: [{ criterion: 'AC2', answer: ANSWER }],
+  }
+  const stored = (runId: string, kind: 'plan' | 'verify_report') =>
+    getTestDb()
+      .selectFrom('artifacts')
+      .selectAll()
+      .where('run_id', '=', runId)
+      .where('kind', '=', kind)
+      .execute()
+
+  /** A session whose spec has AC1 and AC2. */
+  async function twoCriteria() {
+    const seeded = await session()
+    await getTestDb()
+      .updateTable('specs')
+      .set({
+        criteria: JSON.stringify([
+          { id: 'AC1', requirements: ['R1'], text: 'a' },
+          { id: 'AC2', requirements: ['R1'], text: 'b' },
+        ]),
+      })
+      .where('task_id', '=', seeded.taskId)
+      .execute()
+    return seeded
+  }
+  const gate = (runId: string, answer: { text?: string; option_id?: string }, contextMd = 'plan') =>
+    getTestDb()
+      .insertInto('approval_requests')
+      .values({
+        run_id: runId,
+        kind: 'plan',
+        question: 'Approve?',
+        options: '[]',
+        context_md: contextMd,
+        status: 'answered',
+        answer: JSON.stringify(answer),
+        answered_at: new Date(),
+      })
+      .execute()
+  const REPORT = {
+    summary: 's',
+    criteria: [
+      { id: 'AC1', status: 'pass', evidence: 'x' },
+      { id: 'AC2', status: 'withdrawn', evidence: 'the owner’s answer drops it' },
+    ],
+  }
+
+  it('saves a plan that withdraws a criterion the owner dropped, and a plan without the list', async () => {
+    const { client, runId } = await twoCriteria()
+    await gate(runId, { text: ANSWER })
+    expect(
+      (await client.callTool({ name: 'save_plan', arguments: WITHDRAWING })).isError,
+    ).toBeFalsy()
+    const both = {
+      ...WITHDRAWING,
+      withdrawn: undefined,
+      checks: [
+        { criterion: 'AC1', how: 'a' },
+        { criterion: 'AC2', how: 'b' },
+      ],
+    }
+    expect((await client.callTool({ name: 'save_plan', arguments: both })).isError).toBeFalsy()
+    const plans = await stored(runId, 'plan')
+    expect(plans.map((a) => (a.data as { withdrawn: unknown }).withdrawn)).toEqual([
+      WITHDRAWING.withdrawn,
+      [],
+    ])
+    expect(plans[0]?.body_md).toContain(
+      'Withdrawn by the owner:\n- AC2 — Drop AC2: the file is gone.',
+    )
+  })
+
+  it('refuses words from another spec version, and accepts the run’s own gate', async () => {
+    const { client, runId, taskId } = await twoCriteria()
+    const other = await getTestDb()
+      .insertInto('runs')
+      .values({
+        task_id: taskId,
+        kind: 'delivery',
+        number: 2,
+        spec_version: 2,
+        status: 'failed',
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow()
+    await gate(other.id, { text: ANSWER })
+    const refused = await client.callTool({ name: 'save_plan', arguments: WITHDRAWING })
+    expect(refused.isError).toBe(true)
+    expect(text(refused)).toContain('withdrawn_answer_not_found AC2')
+    expect(await stored(runId, 'plan')).toEqual([])
+    await gate(runId, { text: `Please. ${ANSWER}` })
+    expect(
+      (await client.callTool({ name: 'save_plan', arguments: WITHDRAWING })).isError,
+    ).toBeFalsy()
+  })
+
+  it('saves a withdrawn verdict only once the owner approved the plan, and records the answer', async () => {
+    const { client, runId } = await twoCriteria()
+    await gate(runId, { text: ANSWER })
+    await client.callTool({ name: 'save_plan', arguments: WITHDRAWING })
+    const refused = await client.callTool({ name: 'save_report', arguments: REPORT })
+    expect(refused.isError).toBe(true)
+    expect(text(refused)).toContain('withdrawn_not_in_plan AC2')
+    expect(await stored(runId, 'verify_report')).toEqual([])
+    const [plan] = await stored(runId, 'plan')
+    await gate(runId, { option_id: 'approve' }, plan?.body_md)
+    expect((await client.callTool({ name: 'save_report', arguments: REPORT })).isError).toBeFalsy()
+    const [report] = await stored(runId, 'verify_report')
+    expect((report?.data as { withdrawn: unknown }).withdrawn).toEqual([
+      { criterion: 'AC2', answer: ANSWER },
+    ])
+    expect(report?.body_md).toContain('| AC2 | ⊘ withdrawn |')
+  })
+
+  it('records an empty withdrawn list on a report with no withdrawn verdict', async () => {
+    const { client, runId } = await session()
+    const report = { summary: 's', criteria: [{ id: 'AC1', status: 'pass', evidence: 'x' }] }
+    await client.callTool({ name: 'save_report', arguments: report })
+    const [saved] = await stored(runId, 'verify_report')
+    expect((saved?.data as { withdrawn: unknown }).withdrawn).toEqual([])
+  })
+
+  it.each([
+    [
+      'save_plan',
+      [
+        'withdrawn',
+        'changed criterion',
+        'quotes the owner’s',
+        'no row in the checks table',
+        'never has confidence high',
+      ],
+    ],
+    [
+      'save_report',
+      [
+        'withdrawn',
+        'Withdrawn by the owner',
+        'plan-gate answers',
+        'the owner’s answer',
+        'never goes back to Build',
+      ],
+    ],
+  ] as const)('describes the withdrawal in %s', async (tool, phrases) => {
+    const { client } = await session()
+    const { tools } = await client.listTools()
+    const description = (tools.find((t) => t.name === tool)?.description ?? '').toLowerCase()
+    for (const phrase of phrases) expect(description).toContain(phrase.toLowerCase())
+    expect(description).not.toContain('every acceptance criterion gets a check')
+  })
+})
+
 describe('request_approval', () => {
   const ask = {
     question: 'Which colour should the button be?',

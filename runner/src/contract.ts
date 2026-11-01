@@ -141,11 +141,15 @@ export interface PlanData {
   confidence: 'high' | 'medium' | 'low'
   steps: { title: string; requirements: string[]; files: string[]; estimate_usd?: number }[]
   checks: { criterion: string; how: string }[]
+  /** Criteria the owner withdrew at the plan gate; absent from an older board. */
+  withdrawn?: { criterion: string; answer: string }[]
 }
 
 export interface ReportData {
   summary: string
-  criteria: { id: string; status: 'pass' | 'fail' | 'owner'; evidence: string }[]
+  criteria: { id: string; status: 'pass' | 'fail' | 'owner' | 'withdrawn'; evidence: string }[]
+  /** Set by the server from the accepted plan; absent from an older board. */
+  withdrawn?: { criterion: string; answer: string }[]
 }
 
 export interface ArtifactView {

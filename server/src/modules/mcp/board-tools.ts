@@ -10,6 +10,8 @@ import { openApproval } from '../approvals/approval.service.js'
 import { lintReply } from '../specs/spec-lint-text.js'
 import { parseSpec } from '../specs/spec-parser.js'
 import { SpecRepository } from '../specs/spec.repository.js'
+import { acceptedPlanOf, planAnswers } from '../tasks/plan-history.js'
+import { loadPlanHistory } from '../tasks/plan-history.queries.js'
 import {
   checkPlan,
   checkReport,
@@ -294,7 +296,7 @@ export function registerBoardTools(server: McpServer, ctx: ToolContext): void {
     'save_plan',
     {
       description:
-        'Save the plan for this run. Every step names the requirements it serves and the files it touches; every acceptance criterion gets a check. Refused, with the reasons, when it does not map onto the spec. The rendered plan is limited to 20,000 characters; a longer plan is refused and must be shortened.',
+        'Save the plan for this run. Every step names the requirements it serves and the files it touches; every criterion that is not withdrawn gets a check. A correction in the owner’s plan-gate answers that withdraws or changes one of the approved spec’s criteria goes into `withdrawn`, as { criterion, answer }, and not only into prose. A changed criterion counts as withdrawn. `answer` quotes the owner’s words, whole or as an excerpt, and the plan is refused otherwise. A withdrawn criterion has no row in the checks table. A plan with any withdrawal never has confidence high, because the withdrawal takes effect only once the owner approves the plan at the plan gate. Refused, with the reasons, when it does not map onto the spec. The rendered plan is limited to 20,000 characters; a longer plan is refused and must be shortened.',
       inputSchema: {
         summary: z.string().min(1).max(4000),
         confidence: z.enum(['high', 'medium', 'low']),
@@ -311,11 +313,17 @@ export function registerBoardTools(server: McpServer, ctx: ToolContext): void {
           .max(50),
         // No minimum: an empty list reaches checkPlan, which names each criterion left unchecked.
         checks: z.array(z.object({ criterion: z.string(), how: z.string().min(1) })),
+        withdrawn: z
+          .array(z.object({ criterion: z.string(), answer: z.string().min(1) }))
+          .optional(),
       },
     },
     async (input) => {
-      const plan = input as PlanInput
-      const findings = checkPlan(plan, await frozenSpec(ctx))
+      const plan: PlanInput = { ...(input as PlanInput), withdrawn: input.withdrawn ?? [] }
+      const spec = await frozenSpec(ctx)
+      const { approvals } = await loadPlanHistory(ctx.db, ctx.taskId)
+      const answers = planAnswers(approvals, spec.version).map((a) => a.text)
+      const findings = checkPlan(plan, spec, answers)
       if (findings.length > 0) return reply(findingsText('The plan was not saved:', findings), true)
       const body = renderPlan(plan)
       if (body.length > LIMITS.planContext)
@@ -331,14 +339,14 @@ export function registerBoardTools(server: McpServer, ctx: ToolContext): void {
     'save_report',
     {
       description:
-        'Save the verify report: a verdict, with evidence, on every acceptance criterion. A criterion the spec marks as an owner check (owner in its parentheses) gets fail when you can see the work is wrong, and otherwise owner, with evidence of what you did check; it never gets pass. An owner verdict sends the criterion to the owner at the pull request, not back to Build. Every other criterion gets pass or fail, never owner.',
+        'Save the verify report: a verdict, with evidence, on every acceptance criterion. A criterion the spec marks as an owner check (owner in its parentheses) gets fail when you can see the work is wrong, and otherwise owner, with evidence of what you did check; it never gets pass. An owner verdict sends the criterion to the owner at the pull request, not back to Build. Every other criterion gets pass or fail, never owner. You judge by the spec, the plan’s `Withdrawn by the owner` list, the owner’s plan-gate answers, the diff and the test output. A criterion the plan lists as withdrawn gets withdrawn, with evidence naming the owner’s answer it rests on. No other criterion gets withdrawn. A withdrawn criterion never goes back to Build.',
       inputSchema: {
         summary: z.string().min(1).max(4000),
         criteria: z
           .array(
             z.object({
               id: z.string(),
-              status: z.enum(['pass', 'fail', 'owner']),
+              status: z.enum(['pass', 'fail', 'owner', 'withdrawn']),
               evidence: z.string().min(1),
             }),
           )
@@ -346,10 +354,24 @@ export function registerBoardTools(server: McpServer, ctx: ToolContext): void {
       },
     },
     async (input) => {
-      const report = input as ReportInput
-      const findings = checkReport(report, (await frozenSpec(ctx)).criteria)
+      const { plans, approvals } = await loadPlanHistory(ctx.db, ctx.taskId)
+      const entries = acceptedPlanOf(plans, approvals, ctx.runId)?.withdrawn ?? []
+      const findings = checkReport(
+        input as ReportInput,
+        (await frozenSpec(ctx)).criteria,
+        new Set(entries.map((e) => e.criterion)),
+      )
       if (findings.length > 0)
         return reply(findingsText('The report was not saved:', findings), true)
+      // The server writes the withdrawn list, from the accepted plan; the agent cannot supply it.
+      const report: ReportInput = {
+        ...(input as ReportInput),
+        withdrawn: input.criteria.flatMap((c) => {
+          const entry =
+            c.status === 'withdrawn' ? entries.find((e) => e.criterion === c.id) : undefined
+          return entry === undefined ? [] : [{ criterion: c.id, answer: entry.answer }]
+        }),
+      }
       return (
         (await attach(ctx, 'verify_report', renderReport(report), report)) ?? reply('Report saved.')
       )
