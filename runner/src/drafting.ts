@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import type { Work } from './contract.js'
 import { buildHandoff } from './phases/handoff.js'
 import { linkedForHandoff } from './linked.js'
-import { prepareRunDir } from './phases/run-dir.js'
+import { clearPendingAnswer, prepareRunDir } from './phases/run-dir.js'
 import { End, runPaths, runSteps, type RunDeps } from './run-steps.js'
 
 /**
@@ -32,6 +32,7 @@ export async function draftSpec(
       budgetUsd: task.budget_usd,
       summaries: [],
       linked: linkedForHandoff(runDir),
+      base: { branch: project.base_branch, commit: await deps.git.head(worktree) },
     })
 
   return steps.carry({ repo: project.repo_path, branch: null }, async () => {
@@ -40,8 +41,8 @@ export async function draftSpec(
     if (work.kind === 'resume' && state.stage !== 'prepare' && !existsSync(worktree))
       throw new End('failed', "the run's worktree is gone")
 
-    // Checkouts deleted while the run was paused come back before its phase goes on.
-    if (work.kind === 'resume' && state.stage !== 'prepare') await steps.restoreLinkedCheckouts()
+    // A resume at the spec stage refreshes the run once, before any process starts.
+    let refresh = work.kind === 'resume' && state.stage === 'spec'
 
     for (;;) {
       await steps.stopIfShuttingDown()
@@ -59,7 +60,26 @@ export async function draftSpec(
           break
         }
         case 'spec': {
-          const result = await steps.phaseStep('spec', handoff)
+          let note: string | null = null
+          let answered = false
+          if (refresh) {
+            refresh = false
+            const kept = steps.keepWords()
+            answered = kept.answered
+            note = await steps.refreshBase(
+              'spec',
+              project.repo_path,
+              project.base_branch,
+              project.setup_command,
+            )
+            if (kept.replaced) await steps.savedAnswerSent(false)
+          }
+          const result = await steps.phaseStep('spec', handoff, {
+            note,
+            delivered: () => {
+              if (answered) clearPendingAnswer(runDir)
+            },
+          })
           if (!result.ok) await steps.failPhase('spec')
           await steps.endPhase(true)
           return { outcome: 'drafted' as const, extra: {} }
