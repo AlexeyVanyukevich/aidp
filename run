@@ -4,15 +4,20 @@
 # `./run` with no arguments lists the scenarios.
 #
 set -euo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")"
 
-# This script is what installs dependencies, so it cannot source out of node_modules before the
-# kit is there. The test is for the file rather than the directory.
-[ -f node_modules/charter/core/lib.sh ] ||
-  GITHUB_TOKEN="${GITHUB_TOKEN:-$(gh auth token 2>/dev/null || true)}" npm install
-source node_modules/charter/core/lib.sh
+# Sourced, this file only defines its functions and constants: the preamble would move the
+# caller's shell, may install, and would export .env.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  cd "$(dirname "${BASH_SOURCE[0]}")"
 
-load_env_file
+  # This script is what installs dependencies, so it cannot source out of node_modules before the
+  # kit is there. The test is for the file rather than the directory.
+  [ -f node_modules/charter/core/lib.sh ] ||
+    GITHUB_TOKEN="${GITHUB_TOKEN:-$(gh auth token 2>/dev/null || true)}" npm install
+  source node_modules/charter/core/lib.sh
+
+  load_env_file
+fi
 
 DB_HOST_PORT=5435
 COMPOSE_DB_URL="postgres://postgres:postgres@localhost:${DB_HOST_PORT}/board"
@@ -80,13 +85,27 @@ recorded_group() {
 
 group_alive() { kill -0 -- -"$1" 2>/dev/null; }
 
+# Keeps the five earlier logs of a part: <part>.log.4 becomes .5, … <part>.log becomes .1, the old
+# .5 is deleted, and a new <part>.log holds one line naming the start. Takes the time as an
+# argument and uses nothing from lib.sh, so a test can source this file and call it.
+rotate_log() {
+  local dir=$1 part=$2 started=$3 n
+  rm -f "$dir/$part.log.5"
+  for n in 4 3 2 1; do
+    if [ -e "$dir/$part.log.$n" ]; then mv "$dir/$part.log.$n" "$dir/$part.log.$((n + 1))"; fi
+  done
+  if [ -e "$dir/$part.log" ]; then mv "$dir/$part.log" "$dir/$part.log.1"; fi
+  printf '── ./run dev started %s ──\n' "$started" >"$dir/$part.log"
+}
+
 # Starts a part in a process group of its own and records it. Background jobs of a shell with
 # job control lead their own group, and macOS has no setsid. Stdin is /dev/null: Vite and tsx
 # read it, and die with `read EIO` once the terminal that started them goes away (AIDP-31).
 start_part() {
   local part=$1 pgid
   shift
-  pgid=$( set -m; exec "$@" </dev/null >"$RUN_STATE/$part.log" 2>&1 & echo $! )
+  rotate_log "$RUN_STATE" "$part" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  pgid=$( set -m; exec "$@" </dev/null >>"$RUN_STATE/$part.log" 2>&1 & echo $! )
   echo "$pgid" >"$RUN_STATE/$part.pid"
 }
 
@@ -341,18 +360,20 @@ ${BOLD}./run <scenario>${OFF}
 TEXT
 }
 
-SCENARIO="${1:-}"
-[ $# -gt 0 ] && shift || true
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  SCENARIO="${1:-}"
+  [ $# -gt 0 ] && shift || true
 
-case "$SCENARIO" in
-  dev)          scenario_dev "$@" ;;
-  stop)         scenario_stop ;;
-  test)         scenario_test ;;
-  test:ui)      scenario_test_ui ;;
-  check)        scenario_check ;;
-  migrate)      scenario_migrate ;;
-  price:set)    scenario_price_set "$@" ;;
-  smoke)        scenario_smoke "$@" ;;
-  ''|-h|--help) usage ;;
-  *)            die "Unknown scenario: ${SCENARIO}" "Run ./run with no arguments to see the list." ;;
-esac
+  case "$SCENARIO" in
+    dev)          scenario_dev "$@" ;;
+    stop)         scenario_stop ;;
+    test)         scenario_test ;;
+    test:ui)      scenario_test_ui ;;
+    check)        scenario_check ;;
+    migrate)      scenario_migrate ;;
+    price:set)    scenario_price_set "$@" ;;
+    smoke)        scenario_smoke "$@" ;;
+    ''|-h|--help) usage ;;
+    *)            die "Unknown scenario: ${SCENARIO}" "Run ./run with no arguments to see the list." ;;
+  esac
+fi
