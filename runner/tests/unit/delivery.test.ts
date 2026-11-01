@@ -42,7 +42,7 @@ const BRANCH = 'board/PAY-1-r2'
 
 /** What one process of a phase does. */
 type Act = 'ok' | 'paused' | 'cancelled' | 'shutdown' | 'fails' | 'gone'
-type Verdict = 'pass' | 'fail' | 'owner-pass' | 'owner-fail' | 'no-report'
+type Verdict = 'pass' | 'fail' | 'owner-pass' | 'owner-fail' | 'withdrawn-pass' | 'no-report'
 interface Script {
   /** Per phase and attempt, what each of its processes does in turn: `{ 'build-1': ['paused', 'ok'] }`. */
   acts?: Record<string, Act[]>
@@ -173,12 +173,17 @@ function harness(script: Script) {
                     { id: 'AC1', status: 'pass', evidence: 'e' },
                     { id: 'AC2', status: 'owner', evidence: 'e' },
                   ]
-                : verdict === 'owner-fail'
+                : verdict === 'withdrawn-pass'
                   ? [
-                      { id: 'AC1', status: 'fail', evidence: 'e' },
-                      { id: 'AC2', status: 'owner', evidence: 'e' },
+                      { id: 'AC1', status: 'pass', evidence: 'e' },
+                      { id: 'AC2', status: 'withdrawn', evidence: 'e' },
                     ]
-                  : [{ id: 'AC1', status: verdict, evidence: 'e' }],
+                  : verdict === 'owner-fail'
+                    ? [
+                        { id: 'AC1', status: 'fail', evidence: 'e' },
+                        { id: 'AC2', status: 'owner', evidence: 'e' },
+                      ]
+                    : [{ id: 'AC1', status: verdict, evidence: 'e' }],
           },
         })
     }
@@ -443,6 +448,17 @@ describe('a run carried out from the start, as slice 1 did', () => {
     expect(h.gitCalls).toContain('create pr')
   })
 
+  it('opens the pull request when the report holds pass and withdrawn and no fail', async () => {
+    const h = harness({ verdicts: ['withdrawn-pass'] })
+    expect(await carryOut(START as Extract<Work, { kind: 'start' }>, h.deps)).toBe('review')
+    expect(h.calls.filter((c) => c.startsWith('start'))).toEqual([
+      'start plan-1',
+      'start build-1',
+      'start verify-1',
+    ])
+    expect(h.gitCalls).toContain('create pr')
+  })
+
   it('still fails after the third report that holds an owner and a fail', async () => {
     const h = harness({ verdicts: ['owner-fail', 'owner-fail', 'owner-fail'] })
     expect(await carryOut(START as Extract<Work, { kind: 'start' }>, h.deps)).toBe('failed')
@@ -546,18 +562,36 @@ describe('a re-planning run', () => {
 })
 
 describe('a re-planning run with plan answers', () => {
-  const answers = [{ run: 1, approved: false, text: 'keep tests in tests/unit' }]
-  it('AC10: only the planner is handed the answers', async () => {
+  // RUN is run 2: the planner sees run 1's answer, the verifier sees both.
+  const answers = [
+    { run: 1, approved: false, text: 'keep tests in tests/unit' },
+    { run: 2, approved: false, text: 'Drop AC2: the file is gone.' },
+  ]
+  it('AC6, AC7: the planner is handed the earlier runs’ answers, the verifier every one', async () => {
     const h = harness({})
     const work = { kind: 'start', run: { ...RUN, plan_answers: answers } } as Extract<
       Work,
       { kind: 'start' }
     >
     await carryOut(work, h.deps)
-    expect(h.handoffs['plan-1']).toContain(
-      '<plan_answer run="1" approved="no">\nkeep tests in tests/unit\n</plan_answer>',
-    )
+    const one = '<plan_answer run="1" approved="no">\nkeep tests in tests/unit\n</plan_answer>'
+    const two = '<plan_answer run="2" approved="no">\nDrop AC2: the file is gone.\n</plan_answer>'
+    expect(h.handoffs['plan-1']).toContain(one)
+    expect(h.handoffs['plan-1']).not.toContain('run="2"')
+    expect(h.handoffs['verify-1']).toContain(one)
+    expect(h.handoffs['verify-1']).toContain(two)
     expect(h.handoffs['build-1']).not.toContain('<plan_answer')
+  })
+
+  it('AC7: the verifier’s answers over the bound end with the left-out tag', async () => {
+    const h = harness({})
+    const long = [1, 1, 1].map((run) => ({ run, approved: false, text: 'x'.repeat(8_000) }))
+    const work = { kind: 'start', run: { ...RUN, plan_answers: long } } as Extract<
+      Work,
+      { kind: 'start' }
+    >
+    await carryOut(work, h.deps)
+    expect(h.handoffs['verify-1']).toContain('<plan_answers_left_out count="1" runs="1"/>')
   })
 
   it('AC8: a claim without the field gives a handoff without the tag', async () => {

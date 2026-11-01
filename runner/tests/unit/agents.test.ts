@@ -137,3 +137,41 @@ describe('the owner check in the prompts', () => {
     expect(prompt).toContain('is deleted, and never committed')
   })
 })
+
+interface PhraseRow {
+  agent: string
+  present: string[]
+  absent: string[]
+}
+const PHRASES: PhraseRow[] = [
+  {
+    agent: 'verifier',
+    present: [
+      'withdrawn',
+      'Withdrawn by the owner',
+      'plan-gate answers',
+      'the owner’s answer',
+      'never goes back to Build',
+    ],
+    absent: ['judge it only by the spec, the diff and the test output'],
+  },
+  {
+    agent: 'planner',
+    present: [
+      'withdrawn',
+      'changed criterion',
+      'quotes the owner’s',
+      'no row in the checks table',
+      'never has confidence high',
+    ],
+    absent: ['every acceptance criterion gets a check'],
+  },
+]
+
+describe('the withdrawal wording', () => {
+  it.each(PHRASES)('is in the $agent prompt', ({ agent, present, absent }) => {
+    const prompt = AGENTS[agent]!.prompt.toLowerCase()
+    for (const phrase of present) expect(prompt).toContain(phrase.toLowerCase())
+    for (const phrase of absent) expect(prompt).not.toContain(phrase.toLowerCase())
+  })
+})
