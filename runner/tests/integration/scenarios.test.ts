@@ -1,5 +1,5 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
@@ -731,6 +731,105 @@ describe('a spec run end to end', () => {
     expect(
       execFileSync('git', ['-C', zlc.repo, 'worktree', 'list'], { encoding: 'utf8' }),
     ).not.toContain(checkout)
+  })
+
+  it('AC1, AC6, AC12: a resume reads the base as it is now, and says what moved', async () => {
+    await db.updateTable('projects').set({ setup_command: 'true' }).execute()
+    const taskId = await draftingTask()
+    const f = fleet({ 'spec-writer': [[QUESTIONS], [SAVE]] })
+    const sha = () =>
+      execFileSync('git', ['-C', target.repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+    const before = sha()
+
+    expect(await f.daemon().runOnce()).toBe('released')
+    pushToMain(target.repo, { 'src/retry.ts': 'export const delays = [1]\n' }, 'retry moves')
+    const after = sha()
+    await answer((await task(taskId)).approval!.id, {
+      answers: [
+        { question_id: 'q1', option_id: 'three' },
+        { question_id: 'q2', text: 'Only 5xx.' },
+      ],
+    })
+    expect(await f.daemon().runOnce()).toBe('drafted')
+
+    const calls = f.calls().filter((c) => c.agent === 'spec-writer')
+    expect(calls[0]?.prompt).toContain(`<base branch="main" commit="${before}"/>`)
+    const resumed = calls[1]?.prompt ?? ''
+    expect(resumed.startsWith('The base branch moved')).toBe(true)
+    expect(resumed).toContain(`at ${before}; it is now at ${after}, 1 commit later.`)
+    expect(resumed).toContain('src/retry.ts')
+    expect(resumed).toContain(
+      'save the spec again with save_spec if it changes.\n\nThe owner answered',
+    )
+    expect(resumed).toContain('1. How many retries?')
+    const setups = (await eventsOf('tool_call')).filter((e) => e.tool === 'setup_command')
+    expect(setups).toHaveLength(2)
+  })
+
+  it('AC4: a resume remakes the checkouts from the current links', async () => {
+    const flag = join(mkdtempSync(join(tmpdir(), 'flag-')), 'block')
+    await db
+      .updateTable('projects')
+      .set({ setup_command: `[ ! -f ${flag} ]` })
+      .execute()
+    const [pay] = await db.selectFrom('projects').select('id').where('key', '=', 'PAY').execute()
+    const link = async (key: string, note: string) => {
+      const repo = targetRepository()
+      const row = await db
+        .insertInto('projects')
+        .values({
+          key,
+          name: key,
+          repo_path: repo.repo,
+          github_repo: `owner/${key.toLowerCase()}`,
+          base_branch: 'main',
+        })
+        .returning('id')
+        .executeTakeFirstOrThrow()
+      await db
+        .insertInto('project_test_commands')
+        .values({ project_id: row.id, name: 'tests', command: 'true', is_default: true })
+        .execute()
+      await db
+        .insertInto('project_links')
+        .values({ project_id: pay!.id, linked_project_id: row.id, note })
+        .execute()
+      return repo
+    }
+    const zlc = await link('ZLC', 'the component kit')
+    const taskId = await draftingTask()
+    const f = fleet({ 'spec-writer': [[QUESTIONS], [SAVE]] })
+    expect(await f.daemon().runOnce()).toBe('released')
+    const [run] = await runs(taskId)
+    const linkedDir = join(f.home, 'worktrees', `${run!.id}-linked`)
+    rmSync(join(linkedDir, 'ZLC'), { recursive: true, force: true })
+    const chr = await link('CHR', 'the conventions')
+    // The refresh fails in setup, after it remade the checkouts: the block shows them.
+    writeFileSync(flag, '')
+    await answer((await task(taskId)).approval!.id, {
+      answers: [
+        { question_id: 'q1', option_id: 'three' },
+        { question_id: 'q2', text: 'Only 5xx.' },
+      ],
+    })
+    expect(await f.daemon().runOnce()).toBe('released')
+
+    const listed = JSON.parse(
+      readFileSync(join(f.home, 'runs', run!.id, 'linked.json'), 'utf8'),
+    ) as { key: string; path: string }[]
+    expect(listed.map((c) => c.key).sort()).toEqual(['CHR', 'ZLC'])
+    for (const c of listed) {
+      expect(existsSync(c.path)).toBe(true)
+      expect(execFileSync('git', ['-C', c.path, 'rev-parse', 'HEAD'], { encoding: 'utf8' })).toBe(
+        execFileSync(
+          'git',
+          ['-C', c.key === 'CHR' ? chr.repo : zlc.repo, 'rev-parse', 'origin/main'],
+          {
+            encoding: 'utf8',
+          },
+        ),
+      )
+    }
   })
 
   it('redrafts the latest version with the owner’s note', async () => {
