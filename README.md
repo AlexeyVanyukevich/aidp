@@ -22,7 +22,9 @@ Needs Node 24, Docker, Claude Code signed in, and the GitHub CLI signed in (`gh 
     ./run dev            # PostgreSQL, the server, the web app and the runner
     open http://127.0.0.1:5174
 
-`./run dev --bg` starts the same in the background, its logs in `.run/`. Either reports success
+`./run dev --bg` starts the same in the background, its logs in `.run/`: `.run/<part>.log`
+holds the current start, beginning with its start line, and `.run/<part>.log.1` to
+`.run/<part>.log.5` the five starts before it, newest first. Either reports success
 only once the server answers `/api/health`, the web app answers, and the runner is claiming —
 within 60 s, or it stops what it started and shows the end of the failing log. Neither starts
 beside a board already running from this checkout, or while something holds port 4100 or 5174:
