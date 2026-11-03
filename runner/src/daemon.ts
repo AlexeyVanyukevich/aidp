@@ -29,6 +29,7 @@ export class Daemon {
       git: Git
       phases: Phases
       runTests: typeof runTestCommand
+      clock: () => Date
     }> = {},
   ) {
     this.api = overrides.api ?? new BoardApi(config.boardUrl, config.runnerKey)
@@ -44,7 +45,11 @@ export class Daemon {
     const work = await this.api.claim(this.config.runnerId, this.config.claimWaitMs)
     if (work === null) return false
     if (work.kind === 'cleanup') {
-      await cleanUp(work, { git: this.git, config: this.config })
+      await cleanUp(work, {
+        git: this.git,
+        config: this.config,
+        ...(this.overrides.clock === undefined ? {} : { clock: this.overrides.clock }),
+      })
       return 'cleaned'
     }
     const runId = work.run.id
@@ -78,6 +83,7 @@ export class Daemon {
         signal: controller.signal,
         ...(shutdown === undefined ? {} : { shutdown }),
         pauseRequested: () => pauseAsked,
+        ...(this.overrides.clock === undefined ? {} : { clock: this.overrides.clock }),
       }
       // A draft or a delivery: the same machinery, different stages (slice 3 spec, §5).
       return work.run.kind === 'spec'

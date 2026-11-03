@@ -51,7 +51,7 @@ export async function draftSpec(
           await steps.checkpoint()
           // A prepare that stopped partway may have left its worktree behind.
           if (work.kind === 'resume')
-            await deps.git.removeWorktree(project.repo_path, worktree).catch(() => undefined)
+            await steps.removeWorktree('draft_prepare', project.repo_path, worktree)
           await deps.git.prepareDetachedWorktree(project.repo_path, project.base_branch, worktree)
           await steps.prepareLinkedCheckouts()
           await steps.runSetup(project.setup_command)

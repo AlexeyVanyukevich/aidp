@@ -33,6 +33,7 @@ import {
 import { ApiError } from './api.js'
 import { linkedForHandoff, removeLinked } from './linked.js'
 import { newEvent } from './sink.js'
+import { removeCheckout, type LogContext } from './worktree-log.js'
 import type { runTestCommand } from './test-command.js'
 
 export { INTERRUPTED, type Outcome, type Phases } from './run-steps.js'
@@ -276,7 +277,7 @@ export async function carryOut(
           await steps.checkpoint()
           if (work.kind === 'resume') {
             // A prepare that stopped partway may have left either half behind.
-            await deps.git.removeWorktree(project.repo_path, worktree).catch(() => undefined)
+            await steps.removeWorktree('delivery_prepare', project.repo_path, worktree)
             await deps.git.deleteBranch(project.repo_path, branch).catch(() => undefined)
           }
           await deps.git.prepareWorktree(project.repo_path, project.base_branch, branch, worktree)
@@ -452,13 +453,18 @@ export async function carryOut(
  */
 export async function cleanUp(
   work: Extract<Work, { kind: 'cleanup' }>,
-  deps: { git: Git; config: RunnerConfig },
+  deps: { git: Git; config: RunnerConfig; clock?: () => Date },
 ): Promise<void> {
   const paths = runPaths(deps.config.home, work.run.id)
-  await removeLinked(deps.git, paths.linked, paths.runDir).catch(() => undefined)
+  // No token here, so the removals are logged and not sent to the board.
+  const ctx: LogContext = {
+    home: deps.config.home,
+    runId: work.run.id,
+    clock: deps.clock ?? (() => new Date()),
+  }
+  await removeLinked(deps.git, paths.linked, paths.runDir, ctx, 'cleanup').catch(() => undefined)
   const worktree = work.run.worktree_path ?? paths.worktree
-  if (!existsSync(worktree)) return
-  await deps.git.removeWorktree(work.run.repo_path, worktree).catch(() => undefined)
+  await removeCheckout(ctx, deps.git, work.run.repo_path, 'cleanup', worktree)
 }
 
 /** The reason a refused plan gate gives: a plain sentence, never the status line or the body. */
