@@ -24,8 +24,6 @@ export interface PhaseDeps {
   shutdown?: AbortSignal
   pauseRequested?: () => boolean
   timing?: ProcessTiming
-  /** The sink reads the token through this, so buffered events replay with a live one. */
-  setToken(token: string): void
 }
 
 /**
@@ -76,7 +74,6 @@ async function step(
   deps: PhaseDeps,
 ): Promise<StepResult> {
   const token = await deps.api.issueToken(record.runId)
-  deps.setToken(token)
   const result: ProcessResult = await runProcess(
     {
       runId: record.runId,
@@ -137,8 +134,6 @@ export async function startPhase(
     interrupted: false,
     summary: '',
   }
-  // The token the start event travels with; the process gets its own.
-  deps.setToken(await deps.api.issueToken(input.runId))
   await deps.sink.send([
     newEvent(
       {
@@ -162,7 +157,6 @@ export async function continuePhase(
   deps: PhaseDeps,
 ): Promise<StepResult> {
   const config = PHASES[record.phase]
-  deps.setToken(await deps.api.issueToken(record.runId))
   await deps.sink.send([
     newEvent(
       {
@@ -198,7 +192,6 @@ export async function restartPhase(
 ): Promise<StepResult> {
   const config = PHASES[record.phase]
   const fresh: PhaseRecord = { ...record, sessionId: randomUUID(), baseline: {}, reported: {} }
-  deps.setToken(await deps.api.issueToken(record.runId))
   const base = {
     runId: record.runId,
     phaseId: record.phaseId,

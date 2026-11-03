@@ -4,7 +4,14 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { BoardApi } from '../../src/api.js'
 import type { RunnerEvent } from '../../src/contract.js'
-import { runPhase } from '../../src/phases/phase.js'
+import {
+  continuePhase,
+  restartPhase,
+  runPhase,
+  startPhase,
+  type PhaseDeps,
+  type PhaseRecord,
+} from '../../src/phases/phase.js'
 import { prepareRunDir } from '../../src/phases/run-dir.js'
 import { EventSink } from '../../src/sink.js'
 
@@ -41,7 +48,7 @@ async function phase(extra = '') {
   const runDir = mkdtempSync(join(tmpdir(), 'rundir-'))
   prepareRunDir(runDir)
   const { api, events } = recordingApi()
-  let token = ''
+  const token = 'carry-token'
   const result = await runPhase(
     {
       runId: '00000000-0000-4000-8000-000000000001',
@@ -57,9 +64,6 @@ async function phase(extra = '') {
       sink: new EventSink(api, join(runDir, 'events.ndjson'), () => token),
       claudeBin: fakeClaude(extra),
       boardUrl: 'http://127.0.0.1:1',
-      setToken: (t) => {
-        token = t
-      },
     },
   )
   return { result, events, runDir }
@@ -111,5 +115,84 @@ describe('runPhase', () => {
       payload: { exit_code: 3, stderr_tail: expect.stringContaining('a line on stderr') },
     })
     expect(events.at(-1)).toMatchObject({ type: 'phase_end', payload: { status: 'failed' } })
+  })
+})
+
+// AC3: the sink's token is carry's alone. Bringing `setToken` back makes this directive unused.
+// @ts-expect-error `setToken` is not part of `PhaseDeps`
+type NoSetToken = PhaseDeps['setToken']
+
+describe('the sink’s token', () => {
+  const RUN = '00000000-0000-4000-8000-000000000001'
+  const record: PhaseRecord = {
+    runId: RUN,
+    phaseId: '00000000-0000-4000-8000-0000000000aa',
+    phase: 'plan',
+    attempt: 1,
+    sessionId: '00000000-0000-4000-8000-0000000000bb',
+    baseline: {},
+    reported: {},
+    interrupted: false,
+    summary: '',
+  }
+  const starts: {
+    name: string
+    run: (
+      deps: PhaseDeps,
+      input: { worktree: string; runDir: string; budgetUsd: null },
+    ) => Promise<unknown>
+  }[] = [
+    {
+      name: 'startPhase',
+      run: (deps, io) =>
+        startPhase({ runId: RUN, phase: 'plan', attempt: 1, handoff: '<task/>', ...io }, deps),
+    },
+    { name: 'continuePhase', run: (deps, io) => continuePhase(record, 'go on', io, deps) },
+    { name: 'restartPhase', run: (deps, io) => restartPhase(record, '<task/>', io, deps) },
+  ]
+
+  it.each(starts)('$name sends every event with the sink’s token', async ({ run }) => {
+    const runDir = mkdtempSync(join(tmpdir(), 'rundir-'))
+    prepareRunDir(runDir)
+    const sent: string[] = []
+    const issued: string[] = []
+    const retired: string[] = []
+    const api = {
+      issueToken: async () => {
+        issued.push(`step-${issued.length}`)
+        return issued.at(-1)!
+      },
+      retire: async (t: string) => {
+        retired.push(t)
+      },
+      sendEvents: async (t: string, batch: RunnerEvent[]) => {
+        sent.push(t)
+        return batch.length
+      },
+    } as unknown as BoardApi
+    const envFile = join(runDir, 'env-token')
+    const claude = join(mkdtempSync(join(tmpdir(), 'claude-')), 'claude')
+    writeFileSync(
+      claude,
+      `#!/bin/sh\nprintf '%s' "$BOARD_RUN_TOKEN" > "${envFile}"\nexec "${TSX}" "${REPLAY}" "${FIXTURE}" "$@"\n`,
+    )
+    chmodSync(claude, 0o755)
+
+    await run(
+      {
+        api,
+        sink: new EventSink(api, join(runDir, 'events.ndjson'), () => 'T'),
+        claudeBin: claude,
+        boardUrl: 'http://127.0.0.1:1',
+      },
+      { worktree: tmpdir(), runDir, budgetUsd: null },
+    )
+
+    expect(sent.length).toBeGreaterThan(0)
+    expect(new Set(sent)).toEqual(new Set(['T']))
+    const processToken = readFileSync(envFile, 'utf8')
+    expect(processToken).not.toBe('T')
+    expect(issued).toEqual([processToken])
+    expect(retired).toEqual([processToken])
   })
 })

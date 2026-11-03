@@ -41,6 +41,8 @@ let db: Kysely<Database>
 let app: FastifyInstance
 let base: string
 let target: { remote: string; repo: string }
+/** The server's clock runs ahead of real time by this much; a test moves it, then resets it. */
+let clockOffsetMs = 0
 
 beforeAll(async () => {
   useTestGitIdentity()
@@ -49,6 +51,7 @@ beforeAll(async () => {
   await runMigrations(db)
   app = await buildApp({
     db,
+    clock: () => new Date(Date.now() + clockOffsetMs),
     config: {
       databaseUrl: container.getConnectionUri(),
       port: 0,
@@ -143,7 +146,7 @@ async function approvedTask(title = 'Back off retries'): Promise<string> {
   return task.id
 }
 
-function daemon(script: object): Daemon {
+function daemon(script: object, overrides: ConstructorParameters<typeof Daemon>[1] = {}): Daemon {
   const dir = mkdtempSync(join(tmpdir(), 'scenario-'))
   const scriptPath = join(dir, 'script.json')
   writeFileSync(scriptPath, JSON.stringify(script))
@@ -160,6 +163,7 @@ function daemon(script: object): Daemon {
       HEARTBEAT_MS: '200',
       TEST_TIMEOUT_MS: '60000',
     }),
+    overrides,
   )
 }
 
@@ -208,6 +212,49 @@ describe('a delivery run end to end', () => {
     const costs = await api<CostJson>('GET', `/api/tasks/${taskId}/costs`)
     expect(costs.totals.usage.input).toBeGreaterThan(0)
     expect(costs.byPhase).toHaveLength(3)
+  })
+
+  // AC1: a test command that outlasts the phases' tokens still delivers its events.
+  it('delivers the test command’s event and the run’s end when the tests take six minutes', async () => {
+    const taskId = await approvedTask()
+    try {
+      await daemon(
+        {
+          planner: [[{ tool: 'save_plan', args: PLAN }]],
+          builder: [
+            [
+              { edit: 'src/retry.ts', content: 'export const delays = [1, 2, 4]\n' },
+              { commit: 'back off' },
+            ],
+          ],
+          verifier: [[report('pass')]],
+        },
+        {
+          runTests: async () => {
+            clockOffsetMs += 6 * 60_000
+            return {
+              exitCode: 0,
+              timedOut: false,
+              output: '',
+              truncated: false,
+              durationMs: 360_000,
+            }
+          },
+        },
+      ).runOnce()
+    } finally {
+      clockOffsetMs = 0
+    }
+
+    expect(await state(taskId)).toBe('review')
+    const [run] = await runs(taskId)
+    expect(run).toMatchObject({ status: 'succeeded' })
+    const { events } = await api<{ events: EventJson[] }>(
+      'GET',
+      `/api/runs/${run!.id}/events?limit=1000`,
+    )
+    expect(events.some((e) => e.tool === 'test_command' && e.status === 'ok')).toBe(true)
+    expect(events.some((e) => e.type === 'run_end')).toBe(true)
   })
 
   it('refuses an edit outside the plan and keeps it out of the branch', async () => {
