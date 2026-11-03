@@ -79,6 +79,10 @@ export interface Script {
   runEndFails?: Error
   /** What `git worktree remove` rejects with. */
   removeFails?: Error
+  /** The branch of the run no longer exists. */
+  branchGone?: boolean
+  /** Adding a worktree again creates the directory, then rejects with a GitError. */
+  recreateFails?: boolean
 }
 
 export function harness(script: Script) {
@@ -288,9 +292,18 @@ export function harness(script: Script) {
     },
     commitCount: async () => script.moveTo?.commits ?? 3,
     changedBetween: async () => script.moveTo?.paths ?? ['a.ts'],
+    branchExists: async () => script.branchGone !== true,
+    addWorktreeOnBranch: async (_repo: string, branch: string, dir: string) => {
+      mkdirSync(dir, { recursive: true })
+      if (script.recreateFails === true)
+        throw new GitError(`git worktree add ${dir} ${branch}`, 'fatal: cannot add')
+      gitCalls.push(`add on ${branch}`)
+    },
     prepareDetachedWorktree: async (repo: string, base: string, dir: string) => {
       if (script.fails === 'link') throw new GitError(`git -C ${repo} fetch origin ${base}`, 'gone')
       mkdirSync(dir, { recursive: true })
+      if (script.recreateFails === true && !dir.includes('-linked'))
+        throw new GitError(`git worktree add --detach ${dir}`, 'fatal: cannot add')
       gitCalls.push(`linked ${repo} ${base} ${dir}`)
     },
     pruneWorktrees: async () => undefined,

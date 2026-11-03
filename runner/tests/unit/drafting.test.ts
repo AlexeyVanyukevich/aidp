@@ -20,6 +20,37 @@ const draft = (work: Work, h: ReturnType<typeof harness>) =>
   draftSpec(work as Extract<Work, { kind: 'start' | 'resume' }>, h.deps)
 const resumed = (h: ReturnType<typeof harness>) => h.calls.find((c) => c.startsWith('resume'))
 
+describe('a spec run resumed with its worktree gone', () => {
+  it('AC27: blocks as step_failed, clears the directory and reports the failure', async () => {
+    const h = harness({ worktreeGone: true, recreateFails: true })
+    expect(await draft(specResume(INTERRUPTED), h)).toBe('released')
+    expect(h.of('error').at(-1)?.payload).toMatchObject({ blocks: true, cause: 'step_failed' })
+    const worktree = join(h.home, 'worktrees', RUN.id)
+    expect(existsSync(worktree)).toBe(false)
+    expect(
+      h.log().filter((l) => l.caller === 'recreate' && l.path === worktree).length,
+    ).toBeGreaterThan(0)
+    expect(h.log().find((l) => l.action === 'recreate')).toMatchObject({
+      caller: 'draft_resume',
+      result: 'failed',
+    })
+    expect(h.of('tool_call').find((e) => e.tool === 'recreate_worktree')).toMatchObject({
+      status: 'error',
+      payload: { result: 'failed' },
+    })
+  })
+
+  it('makes a detached worktree again and goes on into the spec phase', async () => {
+    const h = harness({ worktreeGone: true })
+    expect(await draft(specResume(INTERRUPTED), h)).toBe('drafted')
+    expect(h.of('tool_call').find((e) => e.tool === 'recreate_worktree')).toMatchObject({
+      status: 'ok',
+      payload: { caller: 'draft_resume', result: 'recreated' },
+    })
+    expect(h.order).toContain('phase')
+  })
+})
+
 describe('a spec run resumed at the spec stage', () => {
   it('AC2: fast-forwards the worktree before the spec-writer resumes, after a stop', async () => {
     const h = harness({ moveTo: { head: 'new1', commits: 1, paths: ['src/retry.ts'] } })

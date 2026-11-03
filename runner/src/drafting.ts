@@ -38,8 +38,16 @@ export async function draftSpec(
   return steps.carry({ repo: project.repo_path, branch: null }, async () => {
     if (run.kind !== 'spec') throw new End('failed', 'a delivery run is not a spec run')
     prepareRunDir(runDir)
+    // A resumed run whose worktree is gone gets a detached one of the base again; the refresh
+    // below runs setup and the linked checkouts.
     if (work.kind === 'resume' && state.stage !== 'prepare' && !existsSync(worktree))
-      throw new End('failed', "the run's worktree is gone")
+      await steps.recreate({
+        caller: 'draft_resume',
+        repo: project.repo_path,
+        branch: null,
+        add: () =>
+          deps.git.prepareDetachedWorktree(project.repo_path, project.base_branch, worktree),
+      })
 
     // A resume at the spec stage refreshes the run once, before any process starts.
     let refresh = work.kind === 'resume' && state.stage === 'spec'

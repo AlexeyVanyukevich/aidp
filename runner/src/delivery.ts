@@ -252,12 +252,6 @@ export async function carryOut(
     if (work.kind === 'resume') {
       if (work.allowed_files.length > 0) writeAllowedFiles(runDir, work.allowed_files)
       writeApproved()
-      if (state.stage !== 'prepare') {
-        const there =
-          existsSync(worktree) &&
-          (await deps.git.currentBranch(worktree).catch(() => null)) === branch
-        if (!there) throw new End('failed', "the run's worktree is gone")
-      }
     }
 
     // A Plan-stage resume refreshes the base instead (and remakes the links there).
@@ -265,8 +259,32 @@ export async function carryOut(
       work.kind === 'resume' && work.checkpoint.stage === 'plan' && kept === null
     let refreshed = false
 
-    if (work.kind === 'resume' && state.stage !== 'prepare' && !refreshAtPlan)
-      await steps.restoreLinkedCheckouts()
+    if (work.kind === 'resume' && state.stage !== 'prepare') {
+      if (!existsSync(worktree)) {
+        // The refresh at Plan runs setup itself; any other stage runs it here.
+        await steps.recreate({
+          caller: 'delivery_resume',
+          repo: project.repo_path,
+          branch,
+          add: () => deps.git.addWorktreeOnBranch(project.repo_path, branch, worktree),
+          ...(refreshAtPlan
+            ? {}
+            : {
+                setup: {
+                  command: project.setup_command,
+                  after: async () =>
+                    writeExcluded(
+                      runDir,
+                      project.setup_command === null ? [] : await uncommitted(),
+                    ),
+                },
+              }),
+        })
+      } else if ((await deps.git.currentBranch(worktree).catch(() => null)) !== branch) {
+        throw new End('failed', "the run's worktree is gone")
+      }
+      if (!refreshAtPlan) await steps.restoreLinkedCheckouts()
+    }
 
     if (kept !== null) state.planId = kept.artifact_id
 

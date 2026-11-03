@@ -1036,3 +1036,127 @@ describe('the setup command', () => {
     expect(f.calls()).toHaveLength(0)
   })
 })
+
+// ── A run whose worktree was lost ───────────────────────────────────────────────────────────
+
+describe('a run whose worktree is lost while it waits', () => {
+  /** A delivery run blocked on a push the remote refuses once: its commits are on the branch. */
+  async function blockedAtPush() {
+    const taskId = await approvedTask()
+    const hook = join(target.remote, 'hooks', 'pre-receive')
+    writeFileSync(
+      hook,
+      '#!/bin/sh\n[ -f pushed-once ] && exit 0\ntouch pushed-once\necho "refused once" >&2\nexit 1\n',
+    )
+    chmodSync(hook, 0o755)
+    const f = fleet({
+      planner: [[{ tool: 'save_plan', args: PLAN }]],
+      builder: [builds('export const delays = [1, 2, 4]\n')],
+      verifier: [[report('pass')]],
+    })
+    expect(await f.daemon().runOnce()).toBe('released')
+    const [run] = await runs(taskId)
+    const worktree = join(f.home, 'worktrees', run!.id)
+    return { taskId, f, worktree }
+  }
+  const loseWorktree = (worktree: string) =>
+    execFileSync('git', ['-C', target.repo, 'worktree', 'remove', '--force', worktree])
+  const logLines = (home: string) =>
+    readFileSync(join(home, 'worktree-removals.log'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l) as { action: string; caller: string; result: string })
+
+  it('AC20: is re-created on its branch at the branch’s tip, and the run reaches review', async () => {
+    await setSetup(WRITES_MARKER)
+    const { taskId, f, worktree } = await blockedAtPush()
+    const setupsBefore = (await eventsOf('tool_call')).filter((e) => e.tool === 'setup_command')
+    loseWorktree(worktree)
+    expect(existsSync(worktree)).toBe(false)
+
+    await api('POST', `/api/tasks/${taskId}/actions/resume`)
+    expect(await f.daemon().runOnce()).toBe('review')
+
+    const events = await eventsOf('tool_call')
+    expect(events.filter((e) => e.tool === 'setup_command')).toHaveLength(setupsBefore.length + 1)
+    expect(events.find((e) => e.tool === 'recreate_worktree')).toMatchObject({
+      status: 'ok',
+      payload: { result: 'recreated', branch: 'board/PAY-1-r1' },
+    })
+    expect(logLines(f.home).find((l) => l.action === 'recreate')).toMatchObject({
+      caller: 'delivery_resume',
+      result: 'recreated',
+    })
+    expect(await state(taskId)).toBe('review')
+  })
+
+  it('AC22: fails the run when the branch is gone too', async () => {
+    const { taskId, f, worktree } = await blockedAtPush()
+    loseWorktree(worktree)
+    execFileSync('git', ['-C', target.repo, 'branch', '-D', 'board/PAY-1-r1'])
+
+    await api('POST', `/api/tasks/${taskId}/actions/resume`)
+    expect(await f.daemon().runOnce()).toBe('failed')
+
+    const [run] = await runs(taskId)
+    expect(run).toMatchObject({
+      status: 'failed',
+      failure_reason: "the run's worktree and its branch board/PAY-1-r1 are gone",
+    })
+    expect(logLines(f.home).find((l) => l.action === 'recreate')).toMatchObject({
+      result: 'failed',
+    })
+    expect((await eventsOf('tool_call')).find((e) => e.tool === 'recreate_worktree')).toMatchObject(
+      {
+        status: 'error',
+        payload: { result: 'failed' },
+      },
+    )
+  })
+
+  it('AC25: a spec run gets a detached worktree of origin/main again and goes on', async () => {
+    const flag = join(mkdtempSync(join(tmpdir(), 'flag-')), 'broken')
+    await setSetup(`[ ! -f ${flag} ]`)
+    const taskId = await draftingTask()
+    const f = fleet({ 'spec-writer': [[QUESTIONS], [SAVE]] })
+    expect(await f.daemon().runOnce()).toBe('released')
+    const [run] = await runs(taskId)
+    const worktree = join(f.home, 'worktrees', run!.id)
+    loseWorktree(worktree)
+    // Setup fails once the worktree is back, so the run stays blocked with it on disk.
+    writeFileSync(flag, '')
+    await answer((await task(taskId)).approval!.id, {
+      answers: [
+        { question_id: 'q1', option_id: 'three' },
+        { question_id: 'q2', text: 'Only 5xx.' },
+      ],
+    })
+    expect(await f.daemon().runOnce()).toBe('released')
+
+    const tip = execFileSync('git', ['-C', target.repo, 'rev-parse', 'origin/main'], {
+      encoding: 'utf8',
+    }).trim()
+    expect(
+      execFileSync('git', ['-C', worktree, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+    ).toBe(tip)
+    expect(
+      execFileSync('git', ['-C', worktree, 'rev-parse', '--abbrev-ref', 'HEAD'], {
+        encoding: 'utf8',
+      }).trim(),
+    ).toBe('HEAD')
+    expect((await eventsOf('tool_call')).find((e) => e.tool === 'recreate_worktree')).toMatchObject(
+      {
+        status: 'ok',
+      },
+    )
+    expect(logLines(f.home).find((l) => l.action === 'recreate')).toMatchObject({
+      caller: 'draft_resume',
+      result: 'recreated',
+    })
+
+    rmSync(flag)
+    await api('POST', `/api/tasks/${taskId}/actions/resume`)
+    expect(await f.daemon().runOnce()).toBe('drafted')
+    f.stopAll()
+  })
+})
