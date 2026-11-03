@@ -34,12 +34,30 @@ export class Git {
   /** A new branch from the remote's base, so the run never starts from local, unpushed work. */
   async prepareWorktree(repo: string, base: string, branch: string, dir: string): Promise<void> {
     await this.run('git', ['-C', repo, 'fetch', 'origin', base])
+    await this.pruneWorktrees(repo)
     await this.run('git', ['-C', repo, 'worktree', 'add', '-b', branch, dir, `origin/${base}`])
+  }
+
+  /** A worktree on a branch that already exists, to bring a lost run's worktree back. */
+  async addWorktreeOnBranch(repo: string, branch: string, dir: string): Promise<void> {
+    await this.pruneWorktrees(repo)
+    await this.run('git', ['-C', repo, 'worktree', 'add', dir, branch])
+  }
+
+  /** Whether the project's repository holds a local branch of this name. */
+  async branchExists(repo: string, branch: string): Promise<boolean> {
+    const result = await this.exec(
+      'git',
+      ['-C', repo, 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`],
+      {},
+    )
+    return result.code === 0
   }
 
   /** A spec run's checkout: the remote's base, detached, since a draft pushes nothing. */
   async prepareDetachedWorktree(repo: string, base: string, dir: string): Promise<void> {
     await this.run('git', ['-C', repo, 'fetch', 'origin', base])
+    await this.pruneWorktrees(repo)
     await this.run('git', ['-C', repo, 'worktree', 'add', '--detach', dir, `origin/${base}`])
   }
 

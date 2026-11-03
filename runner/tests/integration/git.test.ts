@@ -1,5 +1,13 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
@@ -62,6 +70,50 @@ describe('Git', () => {
     expect(git(['branch', '--format=%(refname:short)'], repo).trim()).toBe('main')
     await subject.removeWorktree(repo, worktree)
     expect(existsSync(worktree)).toBe(false)
+  })
+
+  describe('stale registrations and existing branches', () => {
+    type Add = (subject: Git, repo: string, dir: string) => Promise<void>
+    const rows: { name: string; add: Add }[] = [
+      {
+        name: 'prepareWorktree',
+        add: (g, repo, dir) => g.prepareWorktree(repo, 'main', 'board/X-r1', dir),
+      },
+      {
+        name: 'prepareDetachedWorktree',
+        add: (g, repo, dir) => g.prepareDetachedWorktree(repo, 'main', dir),
+      },
+      {
+        name: 'addWorktreeOnBranch',
+        add: async (g, repo, dir) => {
+          git(['branch', 'board/X-r1', 'main'], repo)
+          await g.addWorktreeOnBranch(repo, 'board/X-r1', dir)
+        },
+      },
+    ]
+    it.each(rows)(
+      '$name succeeds where a deleted worktree is still registered',
+      async ({ add }) => {
+        const { repo } = targetRepository()
+        const subject = new Git(realExec, FAKE_GH)
+        const dir = join(mkdtempSync(join(tmpdir(), 'wt-')), 'run')
+        git(['worktree', 'add', '--detach', dir, 'main'], repo)
+        rmSync(dir, { recursive: true, force: true })
+
+        await add(subject, repo, dir)
+
+        expect(git(['worktree', 'list', '--porcelain'], repo)).toContain(realpathSync(dir))
+        expect(existsSync(join(dir, 'src/retry.ts'))).toBe(true)
+      },
+    )
+
+    it('answers whether a branch exists', async () => {
+      const { repo } = targetRepository()
+      const subject = new Git(realExec, FAKE_GH)
+      git(['branch', 'board/X-r1', 'main'], repo)
+      expect(await subject.branchExists(repo, 'board/X-r1')).toBe(true)
+      expect(await subject.branchExists(repo, 'board/X-r2')).toBe(false)
+    })
   })
 
   it('names the command and its output when git fails', async () => {
