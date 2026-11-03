@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ApiError, type BoardApi } from '../../src/api.js'
@@ -7,6 +7,9 @@ import type { DeliveryDeps, Phases } from '../../src/delivery.js'
 import { Git, GitError } from '../../src/git.js'
 import type { PhaseRecord, StepResult } from '../../src/phases/phase.js'
 import { EventSink } from '../../src/sink.js'
+import { LOG_FILE, type LogLine } from '../../src/worktree-log.js'
+
+export const NOW = new Date('2026-11-03T10:00:00.000Z')
 
 export const RUN: RunWork = {
   id: '00000000-0000-4000-8000-000000000001',
@@ -72,6 +75,10 @@ export interface Script {
   fails?: 'fetch' | 'ff' | 'link'
   /** The phase calls throw instead of returning. */
   phaseThrows?: boolean
+  /** What the board answers to `run_end`, instead of accepting it. */
+  runEndFails?: Error
+  /** What `git worktree remove` rejects with. */
+  removeFails?: Error
 }
 
 export function harness(script: Script) {
@@ -113,6 +120,8 @@ export function harness(script: Script) {
     sendEvents: async (_t: string, events: RunnerEvent[]) => {
       if (script.refuse !== undefined && events.some((e) => e.type === 'approval_requested'))
         throw script.refuse
+      if (script.runEndFails !== undefined && events.some((e) => e.type === 'run_end'))
+        throw script.runEndFails
       sent.push(...events)
       return events.length
     },
@@ -259,8 +268,10 @@ export function harness(script: Script) {
       gitCalls.push('create pr')
       return { number: 9, url: 'https://github.com/owner/pay/pull/9' }
     },
-    removeWorktree: async (repo: string) => {
+    removeWorktree: async (repo: string, dir: string) => {
       gitCalls.push(repo === '/repo' ? 'remove' : `remove linked ${repo}`)
+      if (script.removeFails !== undefined) throw script.removeFails
+      rmSync(dir, { recursive: true, force: true })
     },
     fetchBase: async () => {
       order.push('fetch')
@@ -279,6 +290,7 @@ export function harness(script: Script) {
     changedBetween: async () => script.moveTo?.paths ?? ['a.ts'],
     prepareDetachedWorktree: async (repo: string, base: string, dir: string) => {
       if (script.fails === 'link') throw new GitError(`git -C ${repo} fetch origin ${base}`, 'gone')
+      mkdirSync(dir, { recursive: true })
       gitCalls.push(`linked ${repo} ${base} ${dir}`)
     },
     pruneWorktrees: async () => undefined,
@@ -322,6 +334,7 @@ export function harness(script: Script) {
     },
     signal: new AbortController().signal,
     shutdown: shutdown.signal,
+    clock: () => NOW,
   }
   return {
     deps,
@@ -335,6 +348,17 @@ export function harness(script: Script) {
     home,
     testRuns,
     changed: () => changedCalls,
+    /** The removal log's lines, oldest first. */
+    log: (): LogLine[] => {
+      try {
+        return readFileSync(join(home, LOG_FILE), 'utf8')
+          .trim()
+          .split('\n')
+          .map((l) => JSON.parse(l) as LogLine)
+      } catch {
+        return []
+      }
+    },
     of: (type: string) => sent.filter((e) => e.type === type),
     runEnd: () => sent.find((e) => e.type === 'run_end'),
     checkpoints: () =>

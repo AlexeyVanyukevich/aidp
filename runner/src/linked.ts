@@ -2,6 +2,12 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { join } from 'node:path'
 import type { LinkedProject } from './contract.js'
 import type { Git } from './git.js'
+import {
+  deleteDirectory,
+  removeCheckout,
+  type LogContext,
+  type RemovalCaller,
+} from './worktree-log.js'
 
 /** One linked project's read-only checkout, as `linked.json` lists it. */
 export interface LinkedCheckout extends LinkedProject {
@@ -37,8 +43,9 @@ export async function prepareLinked(
   links: LinkedProject[],
   dir: string,
   runDir: string,
+  ctx: LogContext,
 ): Promise<void> {
-  await removeLinked(git, dir, runDir)
+  await removeLinked(git, dir, runDir, ctx, 'linked_prepare')
   if (links.length === 0) return
   const made: LinkedCheckout[] = []
   writeLinked(runDir, made)
@@ -62,13 +69,22 @@ export async function restoreLinked(git: CheckoutGit, runDir: string): Promise<v
   }
 }
 
-/** Removes every checkout `linked.json` lists, then the directory that held them. */
-export async function removeLinked(git: CheckoutGit, dir: string, runDir: string): Promise<void> {
+/**
+ * Removes every checkout `linked.json` lists, then the directory that held them, each through
+ * the path guard and into the removal log under `caller`.
+ */
+export async function removeLinked(
+  git: CheckoutGit,
+  dir: string,
+  runDir: string,
+  ctx: LogContext,
+  caller: RemovalCaller,
+): Promise<void> {
   for (const checkout of readLinked(runDir)) {
-    await git.removeWorktree(checkout.repo_path, checkout.path).catch(() => undefined)
+    await removeCheckout(ctx, git, checkout.repo_path, caller, checkout.path)
     await git.pruneWorktrees(checkout.repo_path).catch(() => undefined)
   }
-  rmSync(dir, { recursive: true, force: true })
+  await deleteDirectory(ctx, caller, dir)
   rmSync(join(runDir, LINKED_FILE), { force: true })
 }
 

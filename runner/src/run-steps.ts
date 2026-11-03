@@ -17,6 +17,13 @@ import {
 } from './phases/run-dir.js'
 import { newEvent, type EventSink } from './sink.js'
 import { runTestCommand } from './test-command.js'
+import {
+  recordLine,
+  removeCheckout,
+  type LogContext,
+  type LogLine,
+  type RemovalCaller,
+} from './worktree-log.js'
 
 export type Io = Pick<PhaseInput, 'worktree' | 'runDir' | 'budgetUsd'>
 type PhaseOf = PhaseRecord['phase']
@@ -49,6 +56,8 @@ export interface RunDeps {
   shutdown?: AbortSignal
   /** The heartbeat said the run paused. */
   pauseRequested?: () => boolean
+  /** The removal log's clock. */
+  clock?: () => Date
 }
 
 /** `released`: paused or blocked — the worktree kept, no `run_end`, the run resumable. */
@@ -176,6 +185,34 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
   const send = (type: 'checkpoint' | 'error' | 'tool_call', fields: object) =>
     deps.sink.send([newEvent({ runId: run.id, phaseId: null, type }, fields)])
 
+  /** Every removal the run makes is logged, and the board is told where a token allows. */
+  const removals: LogContext = {
+    home: deps.config.home,
+    runId: run.id,
+    clock: deps.clock ?? (() => new Date()),
+    notify: (line: LogLine) =>
+      deps.sink.send([
+        newEvent(
+          { runId: run.id, phaseId: null, type: 'tool_call', agent: 'runner' },
+          {
+            tool: 'remove_worktree',
+            target: line.path,
+            status: line.result === 'removed' || line.result === 'deleted' ? 'ok' : 'error',
+            payload: {
+              action: line.action,
+              caller: line.caller,
+              result: line.result,
+              run_id: line.run_id,
+              ...(line.resolved === undefined ? {} : { resolved: line.resolved }),
+              ...(line.output === undefined ? {} : { output: line.output }),
+            },
+          },
+        ),
+      ]),
+  }
+  const removeWorktree = (caller: RemovalCaller, repo: string, path: string) =>
+    removeCheckout(removals, deps.git, repo, caller, path)
+
   const checkpoint = async () => {
     let head: string | null = null
     if (existsSync(io.worktree)) head = await deps.git.head(io.worktree).catch(() => null)
@@ -239,7 +276,7 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
    * fixed there. A failed fetch or worktree is a `GitError`, which blocks the run.
    */
   const prepareLinkedCheckouts = () =>
-    prepareLinked(deps.git, run.links ?? [], linkedDir, io.runDir)
+    prepareLinked(deps.git, run.links ?? [], linkedDir, io.runDir, removals)
 
   /** A resume past `prepare`: checkouts deleted while the run was paused are made again. */
   const restoreLinkedCheckouts = () => restoreLinked(deps.git, io.runDir)
@@ -419,10 +456,11 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
         outcome = 'failed'
         extra = { reason: error instanceof Error ? error.message : String(error) }
       }
-    } finally {
-      if (outcome !== 'released') {
-        await deps.git.removeWorktree(where.repo, io.worktree).catch(() => undefined)
-        await removeLinked(deps.git, linkedDir, io.runDir).catch(() => undefined)
+    }
+    if (outcome !== 'released') {
+      // The board must accept the end before anything is removed: a refused end keeps the
+      // worktree, so Resume has something to continue from.
+      try {
         await deps.sink.send([
           newEvent(
             { runId: run.id, phaseId: null, type: 'run_end' },
@@ -436,7 +474,18 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
             },
           ),
         ])
+      } catch (error) {
+        recordLine(removals, {
+          action: 'keep',
+          caller: 'run_end',
+          path: io.worktree,
+          result: 'kept',
+          output: error instanceof Error ? error.message : String(error),
+        })
+        throw error
       }
+      await removeWorktree('run_end', where.repo, io.worktree)
+      await removeLinked(deps.git, linkedDir, io.runDir, removals, 'run_end').catch(() => undefined)
     }
     return outcome
   }
@@ -456,6 +505,7 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
     endPhase,
     failPhase,
     carry,
+    removeWorktree,
   }
 }
 

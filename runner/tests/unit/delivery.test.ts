@@ -12,6 +12,7 @@ import {
   type Phases,
 } from '../../src/delivery.js'
 import { Git, GitError } from '../../src/git.js'
+import { LOG_FILE } from '../../src/worktree-log.js'
 import type { PhaseRecord, StepResult } from '../../src/phases/phase.js'
 import {
   BRANCH,
@@ -517,6 +518,148 @@ describe('a delivery run of a project that links another', () => {
     )
     expect(h.gitCalls).toEqual(['remove linked /zlc', 'remove'])
     expect(existsSync(path)).toBe(false)
+  })
+
+  it('AC12: logs the cleanup’s removals with caller cleanup, and sends no event', async () => {
+    const h = harness({})
+    const runDir = join(h.home, 'runs', RUN.id)
+    mkdirSync(runDir, { recursive: true })
+    const path = join(h.home, 'worktrees', `${RUN.id}-linked`, 'ZLC')
+    mkdirSync(path, { recursive: true })
+    writeFileSync(join(runDir, 'linked.json'), JSON.stringify([{ ...ZLC, path }]))
+    await cleanUp(
+      { kind: 'cleanup', run: { id: RUN.id, repo_path: '/repo', worktree_path: null } },
+      h.deps,
+    )
+    expect(h.log().map((l) => `${l.action} ${l.caller} ${l.result}`)).toEqual([
+      'remove cleanup removed',
+      'delete cleanup deleted',
+      'remove cleanup removed',
+    ])
+    expect(h.of('tool_call')).toEqual([])
+  })
+
+  it('AC15: refuses a worktree path that belongs to another run', async () => {
+    const h = harness({})
+    const other = join(h.home, 'worktrees', 'another-run')
+    mkdirSync(other, { recursive: true })
+    await cleanUp(
+      { kind: 'cleanup', run: { id: RUN.id, repo_path: '/repo', worktree_path: other } },
+      h.deps,
+    )
+    expect(h.gitCalls).toEqual([])
+    expect(existsSync(other)).toBe(true)
+    expect(h.log().map((l) => l.result)).toContain('refused')
+    expect(h.log().find((l) => l.result === 'refused')?.path).toBe(other)
+  })
+})
+
+describe('the run’s end and its removals', () => {
+  const start = START as Extract<Work, { kind: 'start' }>
+  const failing: Work = { ...start, run: { ...RUN, spec: null } }
+
+  it('AC4: keeps the worktree when the board refuses run_end, and says why', async () => {
+    const error = new ApiError(401, 'Unauthorized', undefined)
+    const h = harness({ runEndFails: error })
+    const worktree = join(h.home, 'worktrees', RUN.id)
+
+    await expect(carryOut(failing, h.deps)).rejects.toBe(error)
+
+    expect(h.gitCalls).not.toContain('remove')
+    expect(existsSync(worktree)).toBe(true)
+    const ending = h.log().filter((l) => l.caller === 'run_end')
+    expect(ending).toHaveLength(1)
+    expect(ending[0]).toMatchObject({
+      action: 'keep',
+      caller: 'run_end',
+      result: 'kept',
+      output: error.message,
+    })
+  })
+
+  it('AC5: removes the worktree when run_end is spooled for a network failure', async () => {
+    const h = harness({ runEndFails: new TypeError('fetch failed') })
+    const outcome = await carryOut(failing, h.deps)
+    expect(outcome).toBe('failed')
+    expect(readFileSync(join(h.home, 'events.ndjson'), 'utf8')).toContain('"run_end"')
+    expect(h.log().find((l) => l.caller === 'run_end')?.result).toBe('removed')
+    expect(existsSync(join(h.home, 'worktrees', RUN.id))).toBe(false)
+  })
+
+  it('AC6: sends run_end first, then the removal as a runner tool call', async () => {
+    const h = harness({})
+    await carryOut(failing, h.deps)
+    const types = h.sent.map((e) => e.type)
+    const endAt = types.indexOf('run_end')
+    const removal = h.sent.findIndex((e) => e.tool === 'remove_worktree')
+    expect(endAt).toBeGreaterThan(-1)
+    expect(removal).toBeGreaterThan(endAt)
+    expect(h.sent[removal]).toMatchObject({
+      agent: 'runner',
+      target: join(h.home, 'worktrees', RUN.id),
+      status: 'ok',
+      payload: { action: 'remove', caller: 'run_end', result: 'removed', run_id: RUN.id },
+    })
+  })
+
+  it('AC8: cuts git’s output at 4,096 characters and ends the run as before', async () => {
+    const output = `${'a'.repeat(5_904)}${'z'.repeat(4_096)}`
+    const h = harness({ removeFails: new GitError('git worktree remove', output) })
+    expect(await carryOut(failing, h.deps)).toBe('failed')
+    const line = h.log().find((l) => l.caller === 'run_end' && l.action === 'remove')
+    expect(line).toMatchObject({ result: 'failed', output: 'z'.repeat(4_096) })
+    const event = h.sent.find((e) => e.tool === 'remove_worktree')
+    expect(event).toMatchObject({ status: 'error', payload: { output: 'z'.repeat(4_096) } })
+    expect(h.runEnd()).toMatchObject({ payload: { outcome: 'failed' } })
+  })
+
+  it('AC10: removes the worktree although the log cannot be written', async () => {
+    const h = harness({})
+    mkdirSync(join(h.home, LOG_FILE))
+    expect(await carryOut(failing, h.deps)).toBe('failed')
+    expect(existsSync(join(h.home, 'worktrees', RUN.id))).toBe(false)
+  })
+
+  it('AC11: logs a remove line per checkout and a delete line for the -linked directory', async () => {
+    const h = harness({})
+    const two: Work = {
+      ...failing,
+      run: {
+        ...RUN,
+        spec: null,
+        links: [
+          {
+            key: 'ZLC',
+            name: 'Z',
+            note: '',
+            repo_path: '/zlc',
+            github_repo: 'o/z',
+            base_branch: 'main',
+          },
+          {
+            key: 'ZLR',
+            name: 'R',
+            note: '',
+            repo_path: '/zlr',
+            github_repo: 'o/r',
+            base_branch: 'main',
+          },
+        ],
+      },
+    }
+    await carryOut(two, h.deps)
+    const ours = h.log().filter((l) => l.caller === 'run_end')
+    expect(ours.filter((l) => l.action === 'remove' && l.path.includes('-linked'))).toHaveLength(2)
+    expect(ours.filter((l) => l.action === 'delete')).toHaveLength(1)
+  })
+
+  it('AC13: logs absent paths, calls no git and sends no removal event', async () => {
+    const h = harness({ worktreeGone: true })
+    await carryOut(failing, h.deps)
+    const ours = h.log().filter((l) => l.caller === 'run_end')
+    expect(ours.map((l) => `${l.action} ${l.result}`)).toEqual(['remove absent', 'delete absent'])
+    expect(h.gitCalls).not.toContain('remove')
+    expect(h.sent.some((e) => e.tool === 'remove_worktree')).toBe(false)
   })
 })
 

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -73,9 +73,10 @@ describe('carry and the linked checkouts', () => {
       setToken: () => undefined,
       config: { home },
     } as unknown as RunDeps
+    const realPath = realpathSync(path)
     const steps = runSteps({ kind: 'start', run: RUN }, deps, { worktree, runDir, budgetUsd: null })
     const outcome = await steps.carry({ repo: '/repo', branch: null }, how as never)
-    return { outcome, removed, worktree, path, linked }
+    return { outcome, removed, worktree, path, realPath, linked }
   }
 
   it.each<[string, () => Promise<{ outcome: string; extra: Record<string, unknown> }>, string]>([
@@ -85,7 +86,7 @@ describe('carry and the linked checkouts', () => {
   ])('removes the checkout and its directory when the run %s', async (_name, how, outcome) => {
     const result = await ended(how)
     expect(result.outcome).toBe(outcome)
-    expect(result.removed).toContain(`/zlc ${result.path}`)
+    expect(result.removed).toContain(`/zlc ${result.realPath}`)
     expect(existsSync(result.linked)).toBe(false)
   })
 
