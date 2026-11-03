@@ -169,7 +169,6 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
       stopGraceMs: deps.config.stopGraceMs,
       markerPollMs: deps.config.markerPollMs,
     },
-    setToken: deps.setToken,
   }
 
   const linkedDir = runPaths(deps.config.home, run.id).linked
