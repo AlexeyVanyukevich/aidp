@@ -420,15 +420,69 @@ describe('blocks', () => {
     })
   })
 
-  it('fails a resume whose worktree is gone', async () => {
-    const h = withPlan(harness({ worktreeGone: true }))
-    expect(
-      await carryOut(
-        resume(checkpoint('build', 1, 'b'), INTERRUPTED) as Extract<Work, { kind: 'resume' }>,
-        h.deps,
-      ),
-    ).toBe('failed')
-    expect(h.runEnd()).toMatchObject({ payload: { reason: "the run's worktree is gone" } })
+  describe('a resume whose worktree is gone', () => {
+    const SETUP = 'npm ci'
+    const WITH_SETUP: RunWork = { ...RUN, project: { ...RUN.project, setup_command: SETUP } }
+    const claim = (script: Script, stage: 'build' | 'plan' = 'build') => {
+      const h = withPlan(harness({ worktreeGone: true, setupCommand: SETUP, ...script }))
+      const work = {
+        ...resume(checkpoint(stage, 1, 'p'), INTERRUPTED),
+        run: WITH_SETUP,
+      } as Extract<Work, { kind: 'resume' }>
+      return { h, work }
+    }
+    const setups = (h: ReturnType<typeof harness>) =>
+      h.of('tool_call').filter((e) => e.tool === 'setup_command')
+
+    it('re-creates it on the branch, sets up once and goes on', async () => {
+      const { h, work } = claim({})
+      expect(await carryOut(work, h.deps)).toBe('review')
+      expect(h.gitCalls).toContain(`add on ${BRANCH}`)
+      expect(setups(h)).toHaveLength(1)
+      expect(h.of('tool_call').find((e) => e.tool === 'recreate_worktree')).toMatchObject({
+        agent: 'runner',
+        status: 'ok',
+        payload: { caller: 'delivery_resume', result: 'recreated', branch: BRANCH },
+      })
+      expect(h.log().find((l) => l.action === 'recreate')).toMatchObject({
+        caller: 'delivery_resume',
+        result: 'recreated',
+      })
+    })
+
+    it('AC21: runs setup exactly once when the Plan-stage refresh does it', async () => {
+      const { h, work } = claim({}, 'plan')
+      await carryOut(work, h.deps)
+      expect(setups(h)).toHaveLength(1)
+    })
+
+    it('AC22: fails the run when the branch is gone as well', async () => {
+      const { h, work } = claim({ branchGone: true })
+      expect(await carryOut(work, h.deps)).toBe('failed')
+      const reason = `the run's worktree and its branch ${BRANCH} are gone`
+      expect(h.runEnd()).toMatchObject({ payload: { reason } })
+      expect(h.log().find((l) => l.action === 'recreate')).toMatchObject({ result: 'failed' })
+      expect(h.of('tool_call').find((e) => e.tool === 'recreate_worktree')).toMatchObject({
+        status: 'error',
+        payload: { result: 'failed' },
+      })
+    })
+
+    it('AC23: blocks as step_failed and clears what a failed add left', async () => {
+      const { h, work } = claim({ recreateFails: true })
+      expect(await carryOut(work, h.deps)).toBe('released')
+      expect(h.of('error').at(-1)?.payload).toMatchObject({ blocks: true, cause: 'step_failed' })
+      expect(existsSync(join(h.home, 'worktrees', RUN.id))).toBe(false)
+      expect(h.log().some((l) => l.caller === 'recreate')).toBe(true)
+    })
+
+    it('AC24: blocks as step_failed and removes the worktree when setup fails', async () => {
+      const { h, work } = claim({ setupExits: [1] })
+      expect(await carryOut(work, h.deps)).toBe('released')
+      expect(h.of('error').at(-1)?.payload).toMatchObject({ blocks: true, cause: 'step_failed' })
+      expect(existsSync(join(h.home, 'worktrees', RUN.id))).toBe(false)
+      expect(h.log().find((l) => l.caller === 'recreate' && l.action === 'remove')).toBeDefined()
+    })
   })
 
   it('starts a phase again when its session is gone and held no message', async () => {

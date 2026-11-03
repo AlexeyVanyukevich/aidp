@@ -18,8 +18,11 @@ import {
 import { newEvent, type EventSink } from './sink.js'
 import { runTestCommand } from './test-command.js'
 import {
+  deleteDirectory,
+  guardPath,
   recordLine,
   removeCheckout,
+  tail,
   type LogContext,
   type LogLine,
   type RemovalCaller,
@@ -250,7 +253,7 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
    * repository's own rules (its dependencies) are there when the agents' sessions begin. A
    * failure or a timeout blocks the run in `prepare`; Resume runs the stage again.
    */
-  const runSetup = async (command: string | null) => {
+  const runSetup = async (command: string | null, beforeBlock?: () => Promise<void>) => {
     if (command === null) return
     const result = await (deps.runTests ?? runTestCommand)(command, io.worktree, {
       timeoutMs: deps.config.testTimeoutMs,
@@ -268,7 +271,80 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
         output_tail: result.output.slice(-4_096),
       },
     })
-    if (!ok) await block('step_failed', { command, output: result.output.slice(-4_096) })
+    if (!ok) {
+      await beforeBlock?.()
+      await block('step_failed', { command, output: result.output.slice(-4_096) })
+    }
+  }
+
+  /**
+   * A resumed run whose worktree directory is gone gets it made again: `add` makes the worktree
+   * (and may fail with a `GitError`, which blocks the run), `setup` then runs the project's setup
+   * command. Whatever a failed attempt left at the path is cleared first, so Resume can try
+   * again. Every attempt is logged and sent to the board.
+   */
+  const recreate = async (o: {
+    caller: 'delivery_resume' | 'draft_resume'
+    repo: string
+    branch: string | null
+    add: () => Promise<void>
+    setup?: { command: string | null; after: () => Promise<void> }
+  }): Promise<void> => {
+    const report = async (
+      result: 'recreated' | 'failed',
+      fields: { head?: string; output?: string },
+    ) => {
+      const guard = guardPath(removals.home, run.id, io.worktree)
+      recordLine(removals, {
+        action: 'recreate',
+        caller: o.caller,
+        path: io.worktree,
+        ...(guard.resolved === undefined ? {} : { resolved: guard.resolved }),
+        result,
+        ...(fields.output === undefined ? {} : { output: fields.output }),
+      })
+      await deps.sink.send([
+        newEvent(
+          { runId: run.id, phaseId: null, type: 'tool_call', agent: 'runner' },
+          {
+            tool: 'recreate_worktree',
+            target: io.worktree,
+            status: result === 'recreated' ? 'ok' : 'error',
+            payload: {
+              caller: o.caller,
+              result,
+              ...(o.branch === null ? {} : { branch: o.branch }),
+              ...(fields.head === undefined ? {} : { head: fields.head }),
+              ...(fields.output === undefined ? {} : { output: tail(fields.output) }),
+            },
+          },
+        ),
+      ])
+    }
+    const clear = async () => {
+      await removeCheckout(removals, deps.git, o.repo, 'recreate', io.worktree)
+      if (existsSync(io.worktree)) await deleteDirectory(removals, 'recreate', io.worktree)
+    }
+    if (o.branch !== null && !(await deps.git.branchExists(o.repo, o.branch))) {
+      const reason = `the run's worktree and its branch ${o.branch} are gone`
+      await report('failed', { output: reason })
+      throw new End('failed', reason)
+    }
+    try {
+      await o.add()
+    } catch (error) {
+      await clear()
+      await report('failed', {
+        output: error instanceof GitError ? error.output : String(error),
+      })
+      throw error
+    }
+    const head = await deps.git.head(io.worktree).catch(() => undefined)
+    await report('recreated', head === undefined ? {} : { head })
+    if (o.setup !== undefined) {
+      await runSetup(o.setup.command, clear)
+      await o.setup.after()
+    }
   }
 
   /**
@@ -506,6 +582,7 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
     failPhase,
     carry,
     removeWorktree,
+    recreate,
   }
 }
 
