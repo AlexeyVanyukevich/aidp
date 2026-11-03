@@ -479,13 +479,61 @@ without listening, and the migration is not recorded as applied. `npm run migrat
 decides nothing. The runner blocks a run whose `git` or `gh` step failed (`step_failed`, with the
 command and the end of its output) and one it was stopped in (`runner_stopped`). Resume continues
 from the checkpoint with "You were interrupted. Continue from where you stopped."; a stage with no
-session reruns its step. A worktree that is gone fails the run; so does a session Claude Code
-deleted, while a session killed before its first message is started again on a new session in
-the same phase row.
+session reruns its step. A session Claude Code deleted fails the run, while a session killed
+before its first message is started again on a new session in the same phase row. A worktree
+that is gone is made again (see "A lost worktree").
 
 **Cancel** of a paused or blocked run withdraws its question and queues a cleanup, which the
-runner claims and answers by removing the worktree, found by its own path convention. A cleanup
-sends no `run_end`: the board has already ended the run.
+runner claims and answers by removing the worktree and the linked checkouts, found by its own
+path convention. A cleanup sends no `run_end`: the board has already ended the run. It has no
+token, so its removals are logged and sent as no event.
+
+**The run's end and its worktree.** The runner sends `run_end` first, and removes the worktree
+and the linked checkouts only once the send resolved, whether the board answered or the event
+was spooled to `events.ndjson`. When the board refuses `run_end` (a 401, say), the worktree and
+checkouts are kept, a `keep` line is logged, and the error reaches the daemon, so the board
+blocks the run as `runner_lost` and Resume continues from its checkpoint. A runner that stops
+after the board accepted `run_end` but before the removal leaves the worktree on disk; such a
+run has no `remove` line in the log.
+
+**The removal log.** Every removal attempt, refusal and kept worktree appends one JSON line, in
+one write, to `<BOARD_HOME>/worktree-removals.log`: `time` (ISO 8601, UTC), `pid`, `action`
+(`remove` for a worktree, `delete` for the `-linked` directory or a re-creation's leftover,
+`recreate`, `keep`), `run_id`, `caller` (`run_end`, `delivery_prepare`, `draft_prepare`,
+`linked_prepare`, `cleanup`, `recreate`, or `delivery_resume` and `draft_resume` for
+re-creations), `path` as the caller gave it, `resolved` (the canonical path, when there is one),
+`result` (`removed`, `deleted`, `absent`, `failed`, `refused`, `recreated`, `kept`) and `output`
+(git's error, a refusal's reason or the error message; only for `failed`, `refused` and `kept`,
+the last 4,096 characters). A failed log write, a failed removal and a refusal are never thrown.
+The file is not rotated. A removal that is logged `removed`, `deleted`, `failed` or `refused`
+also sends a runner `tool_call` named `remove_worktree` (target the path, status `ok` or
+`error`, payload `action`, `caller`, `result`, `run_id`, and `resolved` and `output` when
+present), after `run_end` for the run's end; `absent` sends none.
+
+**The path guard.** Before anything is removed or deleted, the path goes through one guard. The
+canonical path of a path is the `realpathSync` of its deepest existing ancestor followed by the
+remaining segments, so a worktree already gone keeps the canonical path of where it was; a
+relative path, a `.` or `..` segment, or any error other than "does not exist" (a symlink loop,
+a denied directory) gives none and is refused. `<BOARD_HOME>` is resolved the same way. The
+canonical path must be `<home>/worktrees/<run id>`, `<home>/worktrees/<run id>-linked` or a
+direct child of the latter; it is then the path git is given. A path that fails is not given to
+git and nothing is deleted. A path that does not exist is logged `absent` and git is not called.
+Every `git worktree add` runs `git worktree prune` on the repository first, so a worktree whose
+directory is gone does not block a new one at the same path.
+
+**A lost worktree.** A delivery run resumed past `prepare` whose worktree directory does not
+exist adds it again on its branch `board/<KEY>-r<n>`, runs the setup command and replaces the
+excluded paths with what setup left (a Plan-stage resume skips setup there, since its refresh
+runs it), and continues from its checkpoint. If the branch is gone too the run ends `failed`
+with "the run's worktree and its branch <branch> are gone". A spec run resumed past `prepare`
+gets a detached worktree of `origin/<base>` again, then the Spec-stage refresh runs as usual; the
+worktree is at the base's current tip while `spec-base.txt` keeps the base the spec-writer last
+read, so the base-moved note reports the difference. A worktree that exists on another branch
+still fails the run. Each re-creation logs a `recreate` line and sends a `recreate_worktree`
+tool call (target the path, status `ok` or `error`, payload `caller`, `result`, the branch, the
+new HEAD, and `output` on failure). A failed add or setup blocks the run as `step_failed`, after
+what was left at the path is cleared through the guard (caller `recreate`); the next Resume
+re-creates it again. Uncommitted work in a lost worktree is not recovered.
 
 ## What the runner reports
 
@@ -495,7 +543,9 @@ the board. Usage per message comes from the stream's `message_delta`; a message 
 it is recorded from its `message_start`, marked `cut`. A subagent's usage comes from its `Agent`
 result; the remainder of each process's `modelUsage`, beyond the session's previous totals, is one
 `claude-code` event. While the board is unreachable, events wait in the run directory's
-`events.ndjson` and replay in order. Every request the runner makes times out — a claim's wait
+`events.ndjson` and replay in order. The runner's own events travel with the token the runner
+issues at the start of its carry (12 hours), never a phase's token; a phase's process gets its
+own, retired when it ends. Every request the runner makes times out — a claim's wait
 plus 10 seconds, 30 seconds otherwise — and is retried.
 
 ## Costs
@@ -516,7 +566,9 @@ fetched, is refused by the guard and by the `migration` request, never put to th
 
 No sign-in: the server binds 127.0.0.1, answers only to `ALLOWED_HOSTS`, and refuses writes
 from a foreign `Origin`. The runner authenticates with `RUNNER_KEY`; each `claude` process gets
-a run token limited to its run, retired five minutes after the process exits. Runner credentials
+a run token limited to its run, retired five minutes after the process exits. The runner's own
+events use a separate run token, issued when it takes up the run, that lasts 12 hours; a single
+carry longer than that has its events refused. Runner credentials
 are checked before a request's body is read. The guard denies `rm -rf`, `git push`,
 `git reset --hard`, `.env` files, paths outside the worktree, in Build any file the run has not allowed, `Bash` or `Agent` sent to the background (`run_in_background: true`,
 which a `-p` process loses when its turn ends), and — once the run is paused — every tool. In every phase it also denies `git commit` with
