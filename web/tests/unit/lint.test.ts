@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
+import type { TaskState } from '../../src/types'
 import {
   editable,
+  hasDraft,
+  viewHeading,
+  viewButtons,
   specControls,
   lintMessage,
   lintSummary,
@@ -105,5 +109,93 @@ describe('specControls', () => {
     ['failed', { describe: false, draft: false, redraft: false, drafting: false }],
   ] as const)('in %s: %o', (state, controls) => {
     expect(specControls(state)).toEqual(controls)
+  })
+})
+
+describe('hasDraft', () => {
+  it.each([
+    { name: 'no edit yet', draft: undefined, baseline: 'a', expected: false },
+    { name: 'text equal to the baseline', draft: 'a', baseline: 'a', expected: false },
+    { name: 'text that differs', draft: 'ab', baseline: 'a', expected: true },
+    { name: 'text emptied', draft: '', baseline: 'a', expected: true },
+  ])('is $expected for $name', ({ draft, baseline, expected }) => {
+    expect(hasDraft(draft, baseline)).toBe(expected)
+  })
+})
+
+describe('viewHeading', () => {
+  it.each([
+    {
+      name: 'a saved version',
+      version: { version: 1, status: 'draft' },
+      draft: false,
+      text: 'Spec v1 · draft',
+    },
+    {
+      name: 'an approved version',
+      version: { version: 3, status: 'approved' },
+      draft: false,
+      text: 'Spec v3 · approved',
+    },
+    {
+      name: 'a draft over a version',
+      version: { version: 2, status: 'draft' },
+      draft: true,
+      text: 'Spec v2 · unsaved changes',
+    },
+    {
+      name: 'a draft with no version',
+      version: undefined,
+      draft: true,
+      text: 'New spec · unsaved changes',
+    },
+  ])('reads $text for $name', ({ version, draft, text }) => {
+    expect(viewHeading(version, draft)).toBe(text)
+  })
+})
+
+describe('viewButtons', () => {
+  const none = { edit: false, writeSpec: false, approve: false, draftSpec: false }
+  const rows: {
+    name: string
+    state: TaskState
+    version: boolean
+    draft: boolean
+    expected: ReturnType<typeof viewButtons>
+  }[] = [
+    {
+      name: 'backlog, no spec',
+      state: 'backlog',
+      version: false,
+      draft: false,
+      expected: { ...none, writeSpec: true, draftSpec: true },
+    },
+    {
+      name: 'backlog, draft over no spec',
+      state: 'backlog',
+      version: false,
+      draft: true,
+      expected: { ...none, edit: true, draftSpec: true },
+    },
+    {
+      name: 'spec review',
+      state: 'spec_review',
+      version: true,
+      draft: false,
+      expected: { ...none, edit: true, approve: true },
+    },
+    {
+      name: 'spec review, draft',
+      state: 'spec_review',
+      version: true,
+      draft: true,
+      expected: { ...none, edit: true, approve: true },
+    },
+    { name: 'spec draft', state: 'spec_draft', version: true, draft: false, expected: none },
+    { name: 'ready', state: 'ready', version: true, draft: false, expected: none },
+    { name: 'running', state: 'running', version: true, draft: false, expected: none },
+  ]
+  it.each(rows)('offers the right buttons in $name', ({ state, version, draft, expected }) => {
+    expect(viewButtons(state, version, draft)).toEqual(expected)
   })
 })
