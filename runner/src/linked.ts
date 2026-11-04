@@ -28,6 +28,32 @@ export function readLinked(runDir: string): LinkedCheckout[] {
   }
 }
 
+/**
+ * The guard's reader: a missing file is `[]`, but a present one that is not a list of checkouts
+ * throws, because a guard that cannot see the links cannot check against them.
+ */
+export function readLinkedStrict(runDir: string): LinkedCheckout[] {
+  const file = join(runDir, LINKED_FILE)
+  if (!existsSync(file)) return []
+  let value: unknown
+  try {
+    value = JSON.parse(readFileSync(file, 'utf8'))
+  } catch (error) {
+    throw new Error(
+      `${LINKED_FILE} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+  const sound = (item: unknown): boolean =>
+    typeof item === 'object' &&
+    item !== null &&
+    ['key', 'repo_path', 'path'].every(
+      (field) => typeof (item as Record<string, unknown>)[field] === 'string',
+    )
+  if (!Array.isArray(value) || !value.every(sound))
+    throw new Error(`${LINKED_FILE} is not a list of checkouts with a key, repo_path and path`)
+  return value as LinkedCheckout[]
+}
+
 function writeLinked(runDir: string, checkouts: LinkedCheckout[]): void {
   mkdirSync(runDir, { recursive: true })
   writeFileSync(join(runDir, LINKED_FILE), JSON.stringify(checkouts))
