@@ -1,6 +1,6 @@
 import { isAbsolute } from 'node:path'
 import type { ApprovalKind } from '../../shared/vocabulary.js'
-import { isFenced } from './migration-content.js'
+import { fenceMigration, isFenced } from './migration-content.js'
 import { migrationOrder } from './migration-order.js'
 
 /**
@@ -317,6 +317,8 @@ export function resumeMessage(
     questions?: BatchQuestion[] | null
   },
   answer: Answer | BatchAnswer,
+  /** For a migration: the content the owner allowed earlier for this path, if any. */
+  earlierApproved?: string | null,
 ): string | null {
   if ('answers' in answer) return batchMessage(approval.questions ?? [], answer)
   const chosen = approval.options.find((option) => option.id === answer.option_id)
@@ -333,7 +335,15 @@ export function resumeMessage(
       return withText(`The owner answered your request to change ${code(files)}:`, answer.text)
     case 'migration':
       if (chosen?.id === 'allow')
-        return withText(`The owner allowed the migration ${code(files)}.`, answer.text)
+        return withText(
+          `The owner allowed the migration ${code(files)}. Write the file with a single Write whose content is exactly the context_md you sent. Any other content, or an Edit, is refused.`,
+          answer.text,
+        )
+      if (chosen?.id === 'refuse' && earlierApproved !== undefined && earlierApproved !== null)
+        return withText(
+          `The owner kept to the plan and refused this version of the migration ${code(files)}. The earlier approved version stays in force. Put that content back with a single Write, or the files gate will flag the file:\n\n${fenceMigration(earlierApproved)}`,
+          answer.text,
+        )
       if (chosen?.id === 'refuse')
         return withText(
           `The owner kept to the plan. Do not create or change ${code(files)}. Finish without it, and say in your report that the migration is needed.`,
@@ -371,17 +381,22 @@ export function allowedFiles(
   return [...new Set([...planFiles, ...allowed])]
 }
 
-/** Paths of migrations the owner allowed: the guard lets these through for the rest of the run. */
+/**
+ * The migrations the owner allowed: for each path, once, the `context_md` of the request
+ * answered last that the owner allowed. The guard lets exactly that text through.
+ */
 export function approvedMigrations(
-  answered: { kind: ApprovalKind; files: string[] | null; answer: Answer }[],
-): string[] {
-  return [
-    ...new Set(
-      answered
-        .filter(
-          (approval) => approval.kind === 'migration' && approval.answer.option_id === 'allow',
-        )
-        .flatMap((approval) => approval.files ?? []),
-    ),
-  ]
+  answered: {
+    kind: ApprovalKind
+    files: string[] | null
+    context_md: string | null
+    answer: Answer
+  }[],
+): { path: string; content: string }[] {
+  const latest = new Map<string, string>()
+  for (const approval of answered) {
+    if (approval.kind !== 'migration' || approval.answer.option_id !== 'allow') continue
+    for (const path of approval.files ?? []) latest.set(path, approval.context_md ?? '')
+  }
+  return [...latest].map(([path, content]) => ({ path, content }))
 }

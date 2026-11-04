@@ -136,7 +136,7 @@ describe('checkRequest', () => {
       ])
       const approval = { kind: 'migration' as const, options, files: [M] }
       expect(resumeMessage(approval, { option_id: 'allow', text: 'Go.' })).toBe(
-        `The owner allowed the migration \`${M}\`.\n\nGo.`,
+        `The owner allowed the migration \`${M}\`. Write the file with a single Write whose content is exactly the context_md you sent. Any other content, or an Edit, is refused.\n\nGo.`,
       )
       expect(resumeMessage(approval, { option_id: 'refuse' })).toMatch(
         /Do not create or change `[^`]+`\. Finish without it, and say in your report that the migration is needed\.$/,
@@ -145,14 +145,31 @@ describe('checkRequest', () => {
         `The owner answered your request for the migration \`${M}\`:\n\nWait.`,
       )
     })
-    it('lists approved migrations, only the allowed ones', () => {
+    it('says the earlier approved version stays when a later request is refused', () => {
+      const options = optionsFor('migration', [])
+      const approval = { kind: 'migration' as const, options, files: [M] }
+      const message = resumeMessage(approval, { option_id: 'refuse' }, 'a => <b> & ```\n') ?? ''
+      expect(message).toContain(`\`${M}\``)
+      expect(message).toContain('The earlier approved version stays in force')
+      expect(message).toContain('or the files gate will flag the file')
+      expect(message).toContain('````\na => <b> & ```\n````')
+    })
+    it('lists approved migrations, only the allowed ones, the newest content of each path', () => {
+      const asked = (files: string[], option_id: string, context_md: string) => ({
+        kind: 'migration' as const,
+        files,
+        context_md,
+        answer: { option_id },
+      })
       expect(
         approvedMigrations([
-          { kind: 'migration', files: [M], answer: { option_id: 'allow' } },
-          { kind: 'migration', files: ['b/migrations/x.ts'], answer: { option_id: 'refuse' } },
-          { kind: 'out_of_plan', files: ['c.ts'], answer: { option_id: 'allow' } },
+          asked([M], 'allow', 'one'),
+          asked(['b/migrations/x.ts'], 'refuse', 'no'),
+          { ...asked(['c.ts'], 'allow', 'x'), kind: 'out_of_plan' },
+          asked([M], 'allow', 'two'),
+          asked([M], 'refuse', 'three'),
         ]),
-      ).toEqual([M])
+      ).toEqual([{ path: M, content: 'two' }])
     })
   })
 })

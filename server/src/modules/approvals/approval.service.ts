@@ -12,6 +12,7 @@ import {
   numberQuestions,
   optionsFor,
   questionCount,
+  approvedMigrations,
   resumeMessage,
   type Answer,
   type ApprovalOption,
@@ -96,6 +97,34 @@ const toView = <T extends Row>(row: T) => {
     question_count: questionCount({ kind: row.kind, questions }),
     answer: (row.answer ?? null) as Answer | BatchAnswer | null,
   }
+}
+
+/**
+ * For a migration the owner is refusing: the content it allowed earlier for the same path in
+ * this run, else null. Rows answered before content was bound count too.
+ */
+async function earlierApproved(
+  trx: Transaction<Database>,
+  runId: string,
+  id: string,
+  approval: { kind: ApprovalKind; files: string[] | null },
+  body: Answer | BatchAnswer,
+): Promise<string | null> {
+  const path = approval.files?.[0]
+  if (approval.kind !== 'migration' || 'answers' in body || path === undefined) return null
+  const answered = await trx
+    .selectFrom('approval_requests')
+    .select(['kind', 'files', 'context_md', 'answer'])
+    .where('run_id', '=', runId)
+    .where('id', '<>', id)
+    .where('status', '=', 'answered')
+    .where('kind', '=', 'migration')
+    .orderBy('answered_at')
+    .execute()
+  const earlier = approvedMigrations(
+    answered.map((row) => ({ ...row, answer: (row.answer ?? {}) as Answer })),
+  ).find((entry) => entry.path === path)
+  return earlier?.content ?? null
 }
 
 /**
@@ -288,7 +317,11 @@ export class ApprovalService {
           status: 'queued',
           pending: 'resume',
           queued_at: now,
-          resume_message: resumeMessage(approval, body),
+          resume_message: resumeMessage(
+            approval,
+            body,
+            await earlierApproved(trx, row.run_id, id, approval, body),
+          ),
           block: null,
         })
         .where('id', '=', row.run_id)

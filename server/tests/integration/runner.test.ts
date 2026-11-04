@@ -603,7 +603,7 @@ describe('claiming resumes and cleanups', () => {
 
   it('hands over the approved migrations, also as allowed files; a refused one is in neither', async () => {
     const { runId, phaseId } = await queuedResume()
-    const ask = (path: string, option_id: string) =>
+    const ask = (path: string, option_id: string, context_md = 'code', answered_at = now) =>
       db()
         .insertInto('approval_requests')
         .values({
@@ -613,19 +613,50 @@ describe('claiming resumes and cleanups', () => {
           question: 'Adds a column.',
           options: '[]',
           recommendation: null,
-          context_md: 'code',
+          context_md,
           status: 'answered',
           answer: JSON.stringify({ option_id }),
           checkpoint: null,
           files: JSON.stringify([path]),
-          answered_at: now,
+          answered_at,
         })
         .execute()
     await ask('server/src/db/migrations/004_x.ts', 'allow')
     await ask('server/src/db/migrations/005_y.ts', 'refuse')
     const work = (await claim()).json().work
-    expect(work.approved_migrations).toEqual(['server/src/db/migrations/004_x.ts'])
+    expect(work.approved_migrations).toEqual([
+      { path: 'server/src/db/migrations/004_x.ts', content: 'code' },
+    ])
     expect(work.allowed_files).toEqual(['server/src/db/migrations/004_x.ts'])
+  })
+
+  it('hands over each migration once, with the content of the newest allowed request', async () => {
+    const { runId, phaseId } = await queuedResume()
+    const at = (minutes: number) => new Date(now.getTime() + minutes * 60_000)
+    const path = 'server/src/db/migrations/004_x.ts'
+    const ask = (context_md: string, option_id: string, minutes: number) =>
+      db()
+        .insertInto('approval_requests')
+        .values({
+          run_id: runId,
+          phase_id: phaseId,
+          kind: 'migration',
+          question: 'Adds a column.',
+          options: '[]',
+          recommendation: null,
+          context_md,
+          status: 'answered',
+          answer: JSON.stringify({ option_id }),
+          checkpoint: null,
+          files: JSON.stringify([path]),
+          answered_at: at(minutes),
+        })
+        .execute()
+    await ask('first', 'allow', 1)
+    await ask('second', 'allow', 2)
+    await ask('third', 'refuse', 3)
+    const work = (await claim()).json().work
+    expect(work.approved_migrations).toEqual([{ path, content: 'second' }])
   })
 
   it('derives a checkpoint from the records when the runner never sent one', async () => {
