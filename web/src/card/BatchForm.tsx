@@ -1,6 +1,6 @@
 import { useId, useRef, useState, type FormEvent } from 'react'
 import { flushSync } from 'react-dom'
-import { Button, Field, Radio, RadioGroup, Textarea } from '@zellige/react'
+import { Button, Field, Markdown, Radio, RadioGroup, Textarea } from '@zellige/react'
 import type { BatchAnswer, BatchQuestion } from '../types'
 import {
   answerFieldHint,
@@ -80,7 +80,9 @@ export function BatchForm({
               Question {number} of {questions.length}
             </h4>
             {question.context_md !== null && question.context_md !== '' && (
-              <div className="context">{question.context_md}</div>
+              <div className="context">
+                <Markdown source={question.context_md} headingLevel={5} />
+              </div>
             )}
             {hasOptions ? (
               <RadioGroup

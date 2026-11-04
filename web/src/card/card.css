@@ -117,7 +117,6 @@ td {
   font-weight: 600;
 }
 .approval .context {
-  white-space: pre-wrap;
   color: var(--zl-ink-soft);
 }
 /* A wide code block scrolls inside itself rather than widening the card. */
