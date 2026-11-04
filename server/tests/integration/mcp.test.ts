@@ -166,6 +166,21 @@ describe('the board MCP server', () => {
     },
   )
 
+  it('counts the escaped text of a check against the limit', async () => {
+    const { client, runId } = await session()
+    const plan = planOfLength(LIMITS.planContext)
+    const piped = {
+      ...plan,
+      checks: [{ criterion: 'AC1', how: `${plan.checks[0]?.how.slice(1)}|` }],
+    }
+    const result = await client.callTool({ name: 'save_plan', arguments: piped })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain(String(LIMITS.planContext + 1))
+    expect(
+      await getTestDb().selectFrom('artifacts').select('id').where('run_id', '=', runId).execute(),
+    ).toEqual([])
+  })
+
   it('saves a plan whose rendered text is exactly the limit', async () => {
     const { client, runId } = await session()
     const plan = planOfLength(LIMITS.planContext)
