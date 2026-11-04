@@ -1,7 +1,8 @@
-import { execFileSync, spawn } from 'node:child_process'
+import { execFileSync, spawn, type ChildProcessByStdio } from 'node:child_process'
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { createInterface } from 'node:readline'
+import type { Readable } from 'node:stream'
 import type { SessionTotals } from '../contract.js'
 import { newEvent, type EventSink } from '../sink.js'
 import { StreamNormalizer } from '../stream/normalize.js'
@@ -94,6 +95,45 @@ async function endLeftover(input: ProcessInput, deps: ProcessDeps): Promise<void
   if (alive(pid)) process.kill(pid, 'SIGKILL')
 }
 
+/** The Claude Code process could not be started: the binary as the command, the hint as output. */
+export class StartFailure extends Error {
+  constructor(
+    readonly command: string,
+    readonly output: string,
+  ) {
+    super(output)
+  }
+}
+
+const codeOf = (error: unknown): string | undefined => {
+  const code = (error as NodeJS.ErrnoException | null)?.code
+  return typeof code === 'string' ? code : undefined
+}
+
+const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error))
+
+function syncOutput(error: unknown): string {
+  return [messageOf(error), codeOf(error), 'Resume will retry the same arguments']
+    .filter((line) => line !== undefined)
+    .join('\n')
+}
+
+function asyncOutput(error: NodeJS.ErrnoException, input: ProcessInput, deps: ProcessDeps): string {
+  const code = codeOf(error)
+  let hint: string
+  if (code === 'ENOENT' || code === 'EACCES') {
+    if (!existsSync(input.worktree)) {
+      hint = `The run's worktree is missing: ${input.worktree}. Check the run, then Resume`
+    } else {
+      const onPath = deps.claudeBin.includes('/') ? '' : " and that it is on the runner's PATH"
+      hint = `Check CLAUDE_BIN in the runner's environment${onPath}, then Resume`
+    }
+  } else {
+    hint = 'Resume starts the process again'
+  }
+  return [error.message, code, hint].filter((line) => line !== undefined).join('\n')
+}
+
 /** One `claude -p` launch: starting or resuming the phase's session (slice 2 spec, §6). */
 export async function runProcess(input: ProcessInput, deps: ProcessDeps): Promise<ProcessResult> {
   const config = PHASES[input.phase]
@@ -122,27 +162,49 @@ export async function runProcess(input: ProcessInput, deps: ProcessDeps): Promis
     budgetUsd: input.budgetUsd,
     addDirs: addDirsOf(input.runDir),
   })
-  const child = spawn(deps.claudeBin, args, {
-    cwd: input.worktree,
-    env: {
-      ...process.env,
-      BOARD_URL: deps.boardUrl,
-      BOARD_RUN_TOKEN: input.token,
-      BOARD_RUN_ID: input.runId,
-      BOARD_PHASE_ID: input.phaseId,
-      BOARD_PHASE: input.phase,
-      BOARD_AGENT: config.agent,
-      BOARD_RUN_DIR: input.runDir,
-      BOARD_WORKTREE: input.worktree,
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    // Its own process group: Ctrl-C at the daemon's terminal reaches the daemon, which stops
-    // the process itself and blocks the run, rather than the process dying under it.
-    detached: true,
+  let exited = false
+  let child: ChildProcessByStdio<null, Readable, Readable>
+  try {
+    child = spawn(deps.claudeBin, args, {
+      cwd: input.worktree,
+      env: {
+        ...process.env,
+        BOARD_URL: deps.boardUrl,
+        BOARD_RUN_TOKEN: input.token,
+        BOARD_RUN_ID: input.runId,
+        BOARD_PHASE_ID: input.phaseId,
+        BOARD_PHASE: input.phase,
+        BOARD_AGENT: config.agent,
+        BOARD_RUN_DIR: input.runDir,
+        BOARD_WORKTREE: input.worktree,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      // Its own process group: Ctrl-C at the daemon's terminal reaches the daemon, which stops
+      // the process itself and blocks the run, rather than the process dying under it.
+      detached: true,
+    })
+  } catch (error) {
+    throw new StartFailure(deps.claudeBin, syncOutput(error))
+  }
+  // Attached before anything yields: a spawn failure is emitted on the next tick, and an
+  // 'error' with no listener is an uncaught exception that would end the daemon. The first of
+  // 'error' (before a pid) and 'close' settles the wait; the 'close' that follows a start
+  // failure carries a negative errno and is ignored.
+  const ended = new Promise<{ code: number } | { failure: StartFailure }>((resolve) => {
+    child.on('error', (error: NodeJS.ErrnoException) => {
+      if (child.pid === undefined) {
+        resolve({ failure: new StartFailure(deps.claudeBin, asyncOutput(error, input, deps)) })
+      } else {
+        appendFileSync(join(input.runDir, `${label}.stderr.log`), `${error.message}\n`)
+      }
+    })
+    child.on('close', (code) => {
+      exited = true
+      resolve({ code: code ?? 1 })
+    })
   })
   if (child.pid !== undefined) writeFileSync(pidFile(input), String(child.pid))
 
-  let exited = false
   let stopped: Stopped = 'no'
   let interrupted = false
   const timers: NodeJS.Timeout[] = []
@@ -193,17 +255,14 @@ export async function runProcess(input: ProcessInput, deps: ProcessDeps): Promis
     if (events.length > 0) pending = pending.then(() => deps.sink.send(events))
   })
 
-  const exitCode = await new Promise<number>((resolve) =>
-    child.on('close', (code) => {
-      exited = true
-      resolve(code ?? 1)
-    }),
-  )
+  const settled = await ended
   clearInterval(poll)
   for (const timer of timers) clearTimeout(timer)
   deps.signal?.removeEventListener('abort', onCancel)
   deps.shutdown?.removeEventListener('abort', onShutdown)
   rmSync(pidFile(input), { force: true })
+  if ('failure' in settled) throw settled.failure
+  const exitCode = settled.code
   // A marker that went down as the process ended still means it paused.
   if (stopped === 'no' && existsSync(join(input.runDir, PAUSED_MARKER))) stopped = 'paused'
   await pending
