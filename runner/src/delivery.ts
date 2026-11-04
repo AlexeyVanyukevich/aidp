@@ -161,6 +161,7 @@ export async function carryOut(
       return buildHandoff({
         ...common,
         plan: plan.body_md,
+        approvedMigrations: readApproved(runDir),
         ...(failing === undefined ? {} : { verifyReport: failing }),
       })
     }

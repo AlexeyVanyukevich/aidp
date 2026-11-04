@@ -1,3 +1,5 @@
+import { fenceMigration } from '../migration-content.js'
+
 export interface HandoffInput {
   taskKey: string
   title: string
@@ -19,6 +21,8 @@ export interface HandoffInput {
   base?: { branch: string; commit: string }
   /** The owner's words at plan gates on this spec version, oldest first; Plan and Verify only. */
   planAnswers?: { run: number; approved: boolean; text: string }[] | undefined
+  /** Build only: the migrations the owner approved, each with the text they reviewed. */
+  approvedMigrations?: { path: string; content: string }[] | undefined
   verifyReport?: string
   testOutput?: string
   diff?: string
@@ -103,6 +107,14 @@ export function buildHandoff(input: HandoffInput): string {
   if (input.phase === 'plan' || input.phase === 'verify')
     parts.push(...planAnswerTags(input.planAnswers ?? []))
   if (input.plan !== undefined) parts.push(`<plan>\n${escape(input.plan)}\n</plan>`)
+  if (input.phase === 'build')
+    for (const entry of [...(input.approvedMigrations ?? [])].sort((a, b) =>
+      a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
+    ))
+      // The content is never escaped: its closing fence ends it, and a tag inside it is harmless.
+      parts.push(
+        `<approved_migration path="${attr(entry.path)}">\n${fenceMigration(entry.content)}\n</approved_migration>`,
+      )
   if (input.verifyReport !== undefined)
     parts.push(`<verify_report>\n${escape(input.verifyReport)}\n</verify_report>`)
   if (input.testOutput !== undefined)
