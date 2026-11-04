@@ -70,7 +70,7 @@ export type Work =
       checkpoint: Checkpoint
       message: string | null
       allowed_files: string[]
-      approved_migrations: string[]
+      approved_migrations: { path: string; content: string }[]
     }
   | { kind: 'cleanup'; run: { id: string; repo_path: string; worktree_path: string | null } }
 
@@ -246,10 +246,10 @@ export class RunnerService {
   private async approvedMigrationsFor(
     trx: Transaction<Database>,
     runId: string,
-  ): Promise<string[]> {
+  ): Promise<{ path: string; content: string }[]> {
     const answered = await trx
       .selectFrom('approval_requests')
-      .select(['kind', 'files', 'answer'])
+      .select(['kind', 'files', 'context_md', 'answer'])
       .where('run_id', '=', runId)
       .where('status', '=', 'answered')
       .where('kind', '=', 'migration')

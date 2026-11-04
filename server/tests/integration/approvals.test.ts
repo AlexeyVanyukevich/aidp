@@ -143,7 +143,7 @@ describe('opening an approval request', () => {
     })
     expect((await answer(approvalId, { option_id: 'allow' })).statusCode).toBe(200)
     expect((await runRow(runId)).resume_message).toBe(
-      `The owner allowed the migration \`${path}\`.`,
+      `The owner allowed the migration \`${path}\`. Write the file with a single Write whose content is exactly the context_md you sent. Any other content, or an Edit, is refused.`,
     )
   })
 
