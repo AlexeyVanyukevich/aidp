@@ -605,6 +605,23 @@ contains a linked `repo_path`. A `Bash` command naming only the checkout is allo
 through `Bash` into a checkout is not caught, and the checkout is thrown away when the run ends.
 Other paths outside the worktree are refused by the file tools as before.
 
+**The guard fails closed.** The guard is registered with matcher `*`, so it runs before every
+tool, the board's MCP tools included. Claude Code blocks a call only on exit 2 or a `deny` on
+stdout, and lets it go ahead on any other failure, so a guard that cannot check a call refuses it.
+A missing `BOARD_RUN_DIR` or `BOARD_PHASE`, hook input that is not JSON, or a present but
+malformed `allowed-files.json`, `approved-migrations.json` or `linked.json` (not JSON, or not a
+list of strings, or of checkouts with a `key`, `repo_path` and `path`) is such a failure. The guard
+writes `The guard could not check this call: <error>. End your turn, and say why in your last
+message; do not work around it.` as a `deny` on stdout, the error on a `board-cli guard: ` line on
+stderr, and exits 0. The reason tells the agent to end its turn because `request_approval` is
+refused as well. The `bin/board-cli` wrapper maps any non-zero exit of `guard` to exit 2, for a
+failure before the guard's own code runs; other commands keep `exec` and their exit status.
+
+A present but malformed `allowed-files.json`, `approved-migrations.json` or `excluded-paths.json`
+also fails a delivery run: the readers throw at the files gate or when the test command runs, the
+test command does not run, and the run ends `failed` with the reader's message as its reason. A
+missing file keeps its meaning (no plan, no approvals, no exclusions).
+
 ## Error translation
 
 The kit's error shape and codes. A move the table refuses, or a stale one, is `409 conflict`;
