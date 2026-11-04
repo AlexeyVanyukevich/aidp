@@ -199,3 +199,143 @@ test('a migration request shows its path and code, in a block that scrolls at 32
   await expect(panel.getByRole('button', { name: 'Allow the migration' })).toBeFocused()
   await expectAccessible(page)
 })
+
+const REQUEST = {
+  id: '00000000-0000-4000-8000-000000000001',
+  run_id: '00000000-0000-4000-8000-000000000002',
+  phase_id: null,
+  kind: 'question',
+  question: 'Which way?',
+  options: [{ id: 'a', label: 'Way A' }],
+  recommendation: null,
+  context_md: null,
+  files: null,
+  questions: null,
+  question_count: 1,
+  status: 'open',
+  answer: null,
+  created_at: '2026-10-20T10:00:00Z',
+  answered_at: null,
+}
+
+/** Opens the Approvals tab of a card whose approvals are the given requests. */
+async function openApprovals(
+  page: import('@playwright/test').Page,
+  request: import('@playwright/test').APIRequestContext,
+  title: string,
+  requests: object[],
+) {
+  const key = await approvedTask(request, ask(), title)
+  await page.route('**/api/tasks/*/approvals', (route) => route.fulfill({ json: requests }))
+  await page.goto(appUrl('/p/ASK'))
+  const link = page.getByRole('link', { name: new RegExp(`^${key} `) })
+  await expect(link).toBeVisible(RUN)
+  await link.click()
+  const card = page.getByRole('dialog', { name: title })
+  await card.getByRole('tab', { name: 'Approvals' }).click()
+  return card.getByRole('tabpanel', { name: 'Approvals' })
+}
+
+const PLAN_CONTEXT = [
+  'Two steps',
+  '',
+  'Confidence: high',
+  '',
+  '1. **Backoff** (R1) — `src/retry.ts`',
+  '2. **Dead letters** (R2) — `src/dead.ts`',
+  '',
+  '| Criterion | Check |',
+  '| --- | --- |',
+  '| AC1 | a \\| b |',
+  '| AC2 | unit test |',
+].join('\n')
+
+test('a plan request shows its context as formatted text, with the checks as a table', async ({
+  page,
+  request,
+}) => {
+  const panel = await openApprovals(page, request, 'Show a plan', [
+    { ...REQUEST, kind: 'plan', context_md: PLAN_CONTEXT, options: [] },
+  ])
+  const table = panel.getByRole('table')
+  await expect(table.getByRole('columnheader', { name: 'Criterion' })).toBeVisible()
+  await expect(table.getByRole('columnheader', { name: 'Check' })).toBeVisible()
+  await expect(table.getByRole('row')).toHaveCount(3)
+  await expect(table.getByRole('cell', { name: 'a | b' })).toBeVisible()
+  await expect(panel.locator('strong', { hasText: 'Backoff' })).toBeVisible()
+  await expect(panel.getByText('| --- |')).toHaveCount(0)
+  await expectAccessible(page)
+  // The table scrolls, so the keyboard reaches it before the request's first answer control.
+  const group = panel.getByRole('group', { name: 'Table' })
+  await tabTo(page, group)
+  await expect(group).toBeFocused()
+  await expect(panel.getByRole('textbox', { name: 'Changes to ask for' })).not.toBeFocused()
+})
+
+interface ContextRow {
+  name: string
+  requests: object[]
+  heading: { level: number; name: string }
+}
+const WHY = '## Why\n- one\n- two'
+const CONTEXT_ROWS: ContextRow[] = [
+  {
+    name: 'a question request',
+    requests: [{ ...REQUEST, context_md: WHY }],
+    heading: { level: 4, name: 'Why' },
+  },
+  {
+    name: 'a batch question',
+    requests: [
+      {
+        ...REQUEST,
+        kind: 'questions',
+        options: [],
+        questions: [
+          { id: 'q1', question: 'First?', context_md: WHY, options: [] },
+          { id: 'q2', question: 'Second?', context_md: null, options: [] },
+        ],
+        question_count: 2,
+      },
+    ],
+    heading: { level: 5, name: 'Why' },
+  },
+]
+
+for (const row of CONTEXT_ROWS) {
+  test(`${row.name} shows its context's headings and list formatted`, async ({ page, request }) => {
+    const panel = await openApprovals(page, request, `Context of ${row.name}`, row.requests)
+    await expect(panel.getByRole('heading', row.heading)).toBeVisible()
+    await expect(
+      panel.getByRole('list').filter({ hasText: 'one' }).getByRole('listitem'),
+    ).toHaveCount(2)
+    await expectAccessible(page)
+  })
+}
+
+test('a question context shows hostile markup as text, and its white space is normal', async ({
+  page,
+  request,
+}) => {
+  const hostile = [
+    '<img src=x onerror=alert(1)>',
+    '',
+    '<b>bold</b>',
+    '',
+    '[bad](javascript:alert(1)) [good](https://example.com)',
+  ].join('\n')
+  const panel = await openApprovals(page, request, 'Hostile context', [
+    { ...REQUEST, context_md: hostile },
+  ])
+  await expect(panel.getByText('<img src=x onerror=alert(1)>')).toBeVisible()
+  await expect(panel.getByText('<b>bold</b>')).toBeVisible()
+  await expect(panel.locator('img, b')).toHaveCount(0)
+  await expect(panel.getByRole('link', { name: 'bad' })).toHaveCount(0)
+  await expect(panel.getByRole('link', { name: 'good' })).toHaveAttribute(
+    'href',
+    'https://example.com',
+  )
+  const context = panel.locator('.approval .context')
+  expect(await context.evaluate((node) => getComputedStyle(node).whiteSpace)).toBe('normal')
+  await expectAccessible(page)
+})

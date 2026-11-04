@@ -1,6 +1,6 @@
 import { useId, useRef, useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Empty, Field, Textarea } from '@zellige/react'
+import { Button, Empty, Field, Markdown, Textarea } from '@zellige/react'
 import { api } from '../api'
 import { isConflict } from '../errors'
 import { Loaded } from '../Loaded'
@@ -99,7 +99,9 @@ export function ApprovalsTab({
                 <h3 id={headingId}>{batchHeading(current.status)}</h3>
                 <p className="question">{current.question}</p>
                 {current.context_md !== null && current.context_md !== '' && (
-                  <div className="context">{current.context_md}</div>
+                  <div className="context">
+                    <Markdown source={current.context_md} headingLevel={4} />
+                  </div>
                 )}
                 <BatchForm
                   questions={current.questions ?? []}
@@ -133,7 +135,9 @@ export function ApprovalsTab({
                 ) : (
                   <>
                     {current.context_md !== null && current.context_md !== '' && (
-                      <div className="context">{current.context_md}</div>
+                      <div className="context">
+                        <Markdown source={current.context_md} headingLevel={4} />
+                      </div>
                     )}
                     {current.files !== null && current.files.length > 0 && (
                       <>
