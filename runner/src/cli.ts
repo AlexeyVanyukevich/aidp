@@ -6,7 +6,7 @@ import { formatViolations, violationsOf } from './files-gate.js'
 import { Git } from './git.js'
 import { decide, denyOutput } from './hooks/guard.js'
 import { hookToEvent, pausedBy } from './hooks/hook-event.js'
-import { readLinked } from './linked.js'
+import { readLinkedStrict } from './linked.js'
 import { readMigrationSiblings } from './hooks/migration-siblings.js'
 import { PAUSED_MARKER, readAllowed, readApproved, readExcluded } from './phases/run-dir.js'
 import { EventSink } from './sink.js'
@@ -104,11 +104,27 @@ async function event(name: string): Promise<void> {
   }
 }
 
+/**
+ * Claude Code blocks a call only on exit 2 or a `deny` on stdout; any other failure lets the call
+ * go ahead. So a guard that cannot check a call refuses it, and says why on both streams.
+ */
 async function guard(): Promise<void> {
+  try {
+    await check()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    process.stderr.write(`board-cli guard: ${message}\n`)
+    process.stdout.write(
+      denyOutput(
+        `The guard could not check this call: ${message}. End your turn, and say why in your last message; do not work around it.`,
+      ),
+    )
+  }
+}
+
+async function check(): Promise<void> {
   const input = await readStdin()
   const runDir = env('BOARD_RUN_DIR')
-  const allowedPath = join(runDir, 'allowed-files.json')
-  const approvedPath = join(runDir, 'approved-migrations.json')
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd()
   const basePath = join(runDir, 'base-branch.txt')
   const worktree = worktreeOf()
@@ -129,14 +145,10 @@ async function guard(): Promise<void> {
     },
     {
       phase: env('BOARD_PHASE'),
-      allowedFiles: existsSync(allowedPath)
-        ? (JSON.parse(readFileSync(allowedPath, 'utf8')) as string[])
-        : null,
-      approvedMigrations: existsSync(approvedPath)
-        ? (JSON.parse(readFileSync(approvedPath, 'utf8')) as string[])
-        : [],
+      allowedFiles: readAllowed(runDir),
+      approvedMigrations: readApproved(runDir),
       paused: existsSync(join(runDir, PAUSED_MARKER)),
-      linked: readLinked(runDir),
+      linked: readLinkedStrict(runDir),
       cwd,
       worktree: worktree.path,
       canonical: canonicalPath,
