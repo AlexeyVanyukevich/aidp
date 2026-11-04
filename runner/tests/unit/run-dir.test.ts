@@ -14,26 +14,27 @@ interface Row {
   name: string
   reader: keyof typeof READERS
   content: string | null
+  /** What the reader returns; `missing` is the reader's own value for a missing file. */
+  result: string[] | 'missing' | 'throws'
 }
 
 const CASES: Row[] = (Object.keys(READERS) as (keyof typeof READERS)[]).flatMap((reader) => [
-  { name: `${reader}: missing file`, reader, content: null },
-  { name: `${reader}: an array of strings`, reader, content: '["a","b"]' },
-  { name: `${reader}: not json`, reader, content: 'not json' },
-  { name: `${reader}: a string`, reader, content: '"abc"' },
-  { name: `${reader}: an object`, reader, content: '{}' },
-  { name: `${reader}: an array of numbers`, reader, content: '[1]' },
+  { name: `${reader}: missing file`, reader, content: null, result: 'missing' },
+  { name: `${reader}: an array of strings`, reader, content: '["a","b"]', result: ['a', 'b'] },
+  { name: `${reader}: not json`, reader, content: 'not json', result: 'throws' },
+  { name: `${reader}: a string`, reader, content: '"abc"', result: 'throws' },
+  { name: `${reader}: an object`, reader, content: '{}', result: 'throws' },
+  { name: `${reader}: an array of numbers`, reader, content: '[1]', result: 'throws' },
 ])
 
 describe('the run directory’s list readers', () => {
-  it.each(CASES)('$name', ({ reader, content }) => {
+  it.each(CASES)('$name', ({ reader, content, result }) => {
     const { read, file, missing } = READERS[reader]
     const dir = mkdtempSync(join(tmpdir(), 'rd-'))
     try {
       if (content !== null) writeFileSync(join(dir, file), content)
-      if (content === null) expect(read(dir)).toEqual(missing)
-      else if (content === '["a","b"]') expect(read(dir)).toEqual(['a', 'b'])
-      else expect(() => read(dir)).toThrow(file)
+      if (result === 'throws') expect(() => read(dir)).toThrow(file)
+      else expect(read(dir)).toEqual(result === 'missing' ? missing : result)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
