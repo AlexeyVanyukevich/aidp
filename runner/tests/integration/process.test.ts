@@ -1,12 +1,31 @@
-import { spawn } from 'node:child_process'
+import type { ChildProcess, spawn as spawnType } from 'node:child_process'
+import { EventEmitter, getEventListeners } from 'node:events'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { PassThrough } from 'node:stream'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { BoardApi } from '../../src/api.js'
-import { runProcess, type ProcessInput } from '../../src/phases/process.js'
+import { runProcess, StartFailure, type ProcessInput } from '../../src/phases/process.js'
 import { prepareRunDir } from '../../src/phases/run-dir.js'
 import { EventSink } from '../../src/sink.js'
+
+// A pass-through: the real spawn, unless a test sets an override (reset after each test).
+const mocked = vi.hoisted(() => ({ override: null as null | ((...args: unknown[]) => unknown) }))
+vi.mock('node:child_process', async () => {
+  const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process')
+  return {
+    ...actual,
+    spawn: (...args: unknown[]) =>
+      mocked.override === null
+        ? (actual.spawn as (...a: unknown[]) => unknown)(...args)
+        : mocked.override(...args),
+  }
+})
+const { spawn } = await vi.importActual<{ spawn: typeof spawnType }>('node:child_process')
+afterEach(() => {
+  mocked.override = null
+})
 
 /** A shell script standing in for `claude`; `body` runs with the run directory in its env. */
 function standIn(body: string): string {
@@ -139,5 +158,170 @@ describe('runProcess', () => {
     await runProcess(input, deps)
     expect(alive(unrelated.pid!)).toBe(true)
     unrelated.kill('SIGKILL')
+  })
+})
+
+/** A child that never started: no pid, an 'error' then a 'close' with the negative errno. */
+function failingChild(code: string, errno: number): ChildProcess {
+  const child = new EventEmitter() as ChildProcess
+  Object.assign(child, { pid: undefined, stdout: new PassThrough(), stderr: new PassThrough() })
+  child.kill = () => true
+  setImmediate(() => {
+    child.emit('error', Object.assign(new Error(`spawn x ${code}`), { code }))
+    child.emit('close', errno)
+  })
+  return child
+}
+
+interface StartRow {
+  name: string
+  claudeBin: () => string
+  worktree: (fallback: string) => string
+  prompt?: string
+  spawnOverride?: () => ChildProcess
+  code: string
+  has: string[]
+  hasNot: string[]
+  endsWith: string
+}
+
+const missingDir = () => join(tmpdir(), `absent-${crypto.randomUUID()}`)
+const notExecutable = () => {
+  const path = standIn('exit 0')
+  chmodSync(path, 0o644)
+  return path
+}
+
+const START_ROWS: StartRow[] = [
+  {
+    name: 'absolute path missing',
+    claudeBin: () => join(missingDir(), 'claude'),
+    worktree: (w) => w,
+    code: 'ENOENT',
+    has: ['ENOENT', 'CLAUDE_BIN'],
+    hasNot: ['PATH'],
+    endsWith: 'then Resume',
+  },
+  {
+    name: 'bare name not on PATH',
+    claudeBin: () => `claude-absent-${crypto.randomUUID()}`,
+    worktree: (w) => w,
+    code: 'ENOENT',
+    has: ['ENOENT', 'CLAUDE_BIN', 'PATH'],
+    hasNot: [],
+    endsWith: 'then Resume',
+  },
+  {
+    name: 'worktree missing',
+    claudeBin: () => standIn('exit 0'),
+    worktree: () => missingDir(),
+    code: 'ENOENT',
+    has: ['ENOENT', 'worktree is missing'],
+    hasNot: ['CLAUDE_BIN', 'PATH'],
+    endsWith: 'then Resume',
+  },
+  {
+    name: 'not executable',
+    claudeBin: notExecutable,
+    worktree: (w) => w,
+    code: 'EACCES',
+    has: ['EACCES', 'CLAUDE_BIN'],
+    hasNot: ['PATH'],
+    endsWith: 'then Resume',
+  },
+  {
+    name: 'EMFILE',
+    claudeBin: () => '/bin/claude',
+    worktree: (w) => w,
+    spawnOverride: () => failingChild('EMFILE', -24),
+    code: 'EMFILE',
+    has: ['EMFILE', 'Resume starts the process again'],
+    hasNot: ['CLAUDE_BIN', 'PATH', 'worktree'],
+    endsWith: 'Resume starts the process again',
+  },
+  {
+    name: 'NUL byte',
+    claudeBin: () => standIn('exit 0'),
+    worktree: (w) => w,
+    prompt: 'a\0b',
+    code: 'ERR_INVALID_ARG_VALUE',
+    has: ['ERR_INVALID_ARG_VALUE', 'Resume will retry the same arguments'],
+    hasNot: ['CLAUDE_BIN', 'PATH', 'worktree'],
+    endsWith: 'Resume will retry the same arguments',
+  },
+]
+
+describe('runProcess start failures', () => {
+  it.each(START_ROWS)('AC1-6: $name', async (row) => {
+    const { input, deps } = setUp('exit 0')
+    const claudeBin = row.claudeBin()
+    if (row.spawnOverride) mocked.override = row.spawnOverride
+    const uncaught: unknown[] = []
+    const record = (error: unknown) => uncaught.push(error)
+    process.on('uncaughtException', record)
+    try {
+      const error = await runProcess(
+        { ...input, worktree: row.worktree(input.worktree), prompt: row.prompt ?? input.prompt },
+        { ...deps, claudeBin },
+      ).catch((e: unknown) => e)
+      expect(error).toBeInstanceOf(StartFailure)
+      const failure = error as StartFailure
+      expect(failure.command).toBe(claudeBin)
+      expect(failure.output).toContain(row.code)
+      for (const text of row.has) expect(failure.output).toContain(text)
+      for (const text of row.hasNot) expect(failure.output).not.toContain(text)
+      expect(failure.output.endsWith(row.endsWith)).toBe(true)
+      await new Promise((done) => setTimeout(done, 20))
+      expect(uncaught).toEqual([])
+    } finally {
+      process.off('uncaughtException', record)
+    }
+  })
+
+  it.each(START_ROWS.filter((row) => row.code === 'ENOENT' || row.code === 'EACCES').slice(0, 4))(
+    'AC7: sends nothing after rejecting, $name',
+    async (row) => {
+      const { input, deps } = setUp('exit 0')
+      const sent: unknown[] = []
+      const sink = { send: async (events: unknown[]) => void sent.push(...events) }
+      await expect(
+        runProcess(
+          { ...input, worktree: row.worktree(input.worktree) },
+          { ...deps, sink: sink as unknown as typeof deps.sink, claudeBin: row.claudeBin() },
+        ),
+      ).rejects.toBeInstanceOf(StartFailure)
+      const before = sent.length
+      await new Promise((done) => setTimeout(done, 200))
+      expect(sent.length).toBe(before)
+    },
+  )
+
+  it('AC8: leaves no listener, timer or pid file behind', async () => {
+    const { input, deps, runDir, pidFile } = setUp('exit 0')
+    const signal = new AbortController().signal
+    const shutdown = new AbortController().signal
+    const timeouts = () =>
+      process.getActiveResourcesInfo().filter((name) => name === 'Timeout').length
+    const before = timeouts()
+    await expect(
+      runProcess(input, { ...deps, claudeBin: join(missingDir(), 'claude'), signal, shutdown }),
+    ).rejects.toBeInstanceOf(StartFailure)
+    expect(getEventListeners(signal, 'abort')).toHaveLength(0)
+    expect(getEventListeners(shutdown, 'abort')).toHaveLength(0)
+    expect(timeouts()).toBeLessThanOrEqual(before)
+    expect(existsSync(pidFile)).toBe(false)
+    expect(existsSync(join(runDir, 'build-1.pid'))).toBe(false)
+  })
+
+  it('AC9: logs an error after the start and still returns the exit code', async () => {
+    const { input, deps, runDir } = setUp('sleep 0.2')
+    mocked.override = (...args) => {
+      const child = (spawn as (...a: unknown[]) => ChildProcess)(...args)
+      setTimeout(() => child.emit('error', new Error('late kill failure')), 50)
+      return child
+    }
+    const result = await runProcess(input, deps)
+    expect(result.exitCode).toBe(0)
+    expect(readFileSync(join(runDir, 'build-1.stderr.log'), 'utf8')).toContain('late kill failure')
   })
 })
