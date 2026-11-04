@@ -372,3 +372,23 @@ describe('renderReport on withdrawals', () => {
     for (const part of absent) expect(text).not.toContain(part)
   })
 })
+
+interface CheckRow {
+  name: string
+  criterion: string
+  how: string
+  line: string
+}
+const CHECK_ROWS: CheckRow[] = [
+  { name: 'a pipe in how', criterion: 'AC1', how: 'a | b', line: '| AC1 | a \\| b |' },
+  { name: 'a newline in how', criterion: 'AC1', how: 'one\ntwo', line: '| AC1 | one two |' },
+  { name: 'a CRLF in how', criterion: 'AC1', how: 'one\r\ntwo', line: '| AC1 | one two |' },
+  { name: 'a pipe in criterion', criterion: 'A|C', how: 'x', line: '| A\\|C | x |' },
+]
+
+describe('renderPlan check cells', () => {
+  it.each(CHECK_ROWS)('writes $name as a single table row', ({ criterion, how, line }) => {
+    const rendered = renderPlan({ ...PLAN, checks: [{ criterion, how }] })
+    expect(rendered.split('\n')).toContain(line)
+  })
+})

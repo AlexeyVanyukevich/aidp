@@ -126,6 +126,7 @@ export function planFiles(plan: PlanInput): string[] {
 }
 
 const oneLine = (text: string) => text.replace(/\r?\n/g, ' ')
+const cell = (text: string) => oneLine(text).replaceAll('|', '\\|')
 const withdrawnLines = (withdrawn: Withdrawal[]) =>
   withdrawn.map((w) => `- ${w.criterion} — ${oneLine(w.answer)}`)
 
@@ -137,7 +138,7 @@ export function renderPlan(plan: PlanInput): string {
     return `${index + 1}. **${step.title}** (${step.requirements.join(', ')}) — ${files}${estimate}`
   })
   const withdrawn = plan.withdrawn ?? []
-  const checks = plan.checks.map((check) => `| ${check.criterion} | ${check.how} |`)
+  const checks = plan.checks.map((check) => `| ${cell(check.criterion)} | ${cell(check.how)} |`)
   return [
     plan.summary,
     '',
