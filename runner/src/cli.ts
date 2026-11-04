@@ -64,7 +64,7 @@ async function filesFeedback(
       uncommitted: changed.uncommitted,
       excluded: readExcluded(runDir),
       allowed,
-      approvedMigrations: readApproved(runDir),
+      approvedMigrations: readApproved(runDir).map((entry) => entry.path),
     })
     return found.length === 0 ? null : formatViolations(found, changed.mergeBase)
   } catch {
@@ -150,7 +150,7 @@ async function check(): Promise<void> {
     {
       phase: env('BOARD_PHASE'),
       allowedFiles: readAllowed(runDir),
-      approvedMigrations: readApproved(runDir),
+      approvedMigrations: readApproved(runDir).map((entry) => entry.path),
       paused: existsSync(join(runDir, PAUSED_MARKER)),
       linked: readLinkedStrict(runDir),
       cwd,
