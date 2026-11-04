@@ -11,3 +11,7 @@ playwright-report
 # Not source, and not ours to format.
 .superpowers
 .run
+
+# Synced from the kit at session start.
+.claude/rules/charter
+.claude/skills/charter-*
