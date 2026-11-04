@@ -13,10 +13,12 @@ before planning.
 ## Conventions
 
 The shared ones come from the `charter` package. `core` loads here, always, except its backlog
-rule, which this repository replaces with the one below. Each workspace's other modules,
-recorded in `charter.json`, load by path: a rule arrives once a session reads a file it applies
-to. Start sessions at the repository root, where one session works on every workspace: a
-session started in a workspace gets all of `core` from its sync hook, backlog rule included.
+rule, which this repository replaces with the one below. The root's session hook prints that
+rule anyway, saying the backlog is `docs/backlog.md`; it is wrong, and the Findings rule below
+holds (CHR-1). Each workspace's other modules, recorded in `charter.json`, load by path: a rule
+arrives once a session reads a file it applies to. Start sessions at the repository root, where
+one session works on every workspace: a session started in a workspace gets all of `core` from
+its sync hook, backlog rule included.
 `charter init` adds `@node_modules/charter/core/rules.md` back to this file; remove it again.
 
 @node_modules/charter/core/rules/commits.md
