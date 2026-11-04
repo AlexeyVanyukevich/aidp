@@ -127,6 +127,5 @@ export function formatViolations(violations: Violation[], mergeBase: string): st
       '',
       'If the work needs a path, call `request_approval` with kind `out_of_plan`, the files, and why; for a migration, call it with kind `migration`. Then end your turn.',
     )
-  else lines.push('', 'Then end your turn.')
   return lines.join('\n')
 }
