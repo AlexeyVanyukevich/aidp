@@ -299,7 +299,9 @@ the runner raises a `plan` approval with the plan as its context, inside the sti
 phase. Approve plan ends the phase and starts Build; an answer in words resumes the planner's
 session, and its revised plan meets the gate again. A plan's rendered text is limited to 20,000
 characters, the most a `plan` approval's `context_md` holds: `save_plan` refuses a longer plan,
-whatever its confidence, and asks the planner to shorten it. If the board refuses the gate's
+whatever its confidence, and asks the planner to shorten it. The rendered text escapes each `|` in a
+check as `\|` and writes a line break as a space, so the table holds its columns, and the limit
+counts the escaped text. If the board refuses the gate's
 request with a 4xx answer, the run fails with a sentence naming the field and the problem.
 
 _The Plan-stage refresh._ Every resume of a run whose checkpoint stage is `plan` and that holds no
@@ -453,7 +455,8 @@ plan or an `out_of_plan` answer lists it, and tells the builder to ask with `req
 kind `migration`: the path in `files`, a summary in `question` (what it changes, and whether its
 down step undoes it), and the whole file in `context_md` (up to 20,000 characters; `plan` approvals hold 20,000 too, `question`, `out_of_plan` and
 `questions` 8,000). The request offers `allow` and `refuse` and pauses the run as an `out_of_plan` one does.
-The Approvals tab shows the summary, the path, and the file as plain text in a monospace block.
+The Approvals tab shows the summary, the path, and the file as plain text in a monospace block
+(never rendered as Markdown).
 Allowing adds the path to the run's allowed files and approves its content for the rest of the
 run: the approval covers the path and the exact text the owner reviewed.
 
@@ -700,7 +703,8 @@ The Approvals tab, which a card waiting on a question opens on, holds the questi
 a `fieldset` named by the question — the recommended one's name ends "(recommended)", an option's
 impact is its description — and a field for an answer in words. Answering, Resume and Cancel move
 focus to the card's state line before their controls go; an empty answer marks its field invalid
-and focuses it. A question's context is shown as plain text. The header's count of waiting
+and focuses it. A request's context is rendered Markdown, headings starting at `h4` (`h5` for a batch
+question's); a plan's checks read as a table. A migration's stays plain code. The header's count of waiting
 questions is text, not announced.
 
 A batch is one form: per question a `section` under an `h4`, "Question <i> of <n>", holding the
@@ -709,10 +713,20 @@ question <i>"; then one Send answers. Choosing sends nothing. A send with questi
 marks each — the radio group when it has options, so the radio that takes focus is described by
 the error, else the field — and focuses the first: its first radio, or its field.
 
-The Spec tab opens on the task's Description, with Save description, in Backlog and Spec review;
-Draft spec sits beside Approve in Backlog, and What to change with Redraft below the editor in
-Spec review; in Spec draft the editor is read-only and says so. An empty description or note
-marks its field invalid and focuses it. The card announces a draft ready to review with its
+The Spec tab opens on the task's Description, with Save description, in Backlog and Spec review,
+then the Version select and the spec formatted: Markdown rendered by the kit's `Markdown`
+component under an `h3` "Spec v<n> · <status>", with raw HTML shown as text and only `http`,
+`https` and `mailto` links kept. A card with no version says "No spec yet."; in Backlog it offers
+Write spec and Draft spec. In Spec review the formatted view is followed by the version's Lint
+section, and the actions Edit and Approve; What to change with Redraft follow. Edit (or Write spec)
+opens the editor, a textarea holding the unsaved draft or the shown version, with Save as
+v<latest + 1>, Preview and Discard changes. A draft exists while the editor's text differs from
+its baseline; without one Save as is disabled and says why. While a draft exists the Version select,
+Redraft and Draft spec are disabled with their reason beside them, and Preview shows the draft
+formatted as "unsaved changes" in place of Lint, with Approve disabled. Saving, Preview and Discard
+move focus to Edit (to Write spec when no version exists). In every state after Spec review, and in
+Spec draft (which says so), the spec is only read. An empty description or note marks its field
+invalid and focuses it. The card announces a draft ready to review with its
 version, read afresh, and a draft that did not finish with its reason, which also stands under
 its state line. `tests/ui/` scans every state it reaches with axe-core and drives the board, the
 card, an answer and a batch by keyboard alone.
