@@ -110,7 +110,8 @@ const codeOf = (error: unknown): string | undefined => {
   return typeof code === 'string' ? code : undefined
 }
 
-const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error))
+const messageOf = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error)
 
 function syncOutput(error: unknown): string {
   return [messageOf(error), codeOf(error), 'Resume will retry the same arguments']

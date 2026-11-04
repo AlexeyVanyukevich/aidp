@@ -74,32 +74,36 @@ async function step(
   deps: PhaseDeps,
 ): Promise<StepResult> {
   const token = await deps.api.issueToken(record.runId)
-  const result: ProcessResult = await runProcess(
-    {
-      runId: record.runId,
-      phaseId: record.phaseId,
-      phase: record.phase,
-      attempt: record.attempt,
-      prompt,
-      sessionId: record.sessionId,
-      resume,
-      worktree: input.worktree,
-      runDir: input.runDir,
-      budgetUsd: input.budgetUsd,
-      baseline: record.baseline,
-      token,
-    },
-    {
-      sink: deps.sink,
-      claudeBin: deps.claudeBin,
-      boardUrl: deps.boardUrl,
-      ...(deps.signal === undefined ? {} : { signal: deps.signal }),
-      ...(deps.shutdown === undefined ? {} : { shutdown: deps.shutdown }),
-      ...(deps.pauseRequested === undefined ? {} : { pauseRequested: deps.pauseRequested }),
-      ...(deps.timing ?? DEFAULT_TIMING),
-    },
-  )
-  await deps.api.retire(token).catch(() => undefined)
+  let result: ProcessResult
+  try {
+    result = await runProcess(
+      {
+        runId: record.runId,
+        phaseId: record.phaseId,
+        phase: record.phase,
+        attempt: record.attempt,
+        prompt,
+        sessionId: record.sessionId,
+        resume,
+        worktree: input.worktree,
+        runDir: input.runDir,
+        budgetUsd: input.budgetUsd,
+        baseline: record.baseline,
+        token,
+      },
+      {
+        sink: deps.sink,
+        claudeBin: deps.claudeBin,
+        boardUrl: deps.boardUrl,
+        ...(deps.signal === undefined ? {} : { signal: deps.signal }),
+        ...(deps.shutdown === undefined ? {} : { shutdown: deps.shutdown }),
+        ...(deps.pauseRequested === undefined ? {} : { pauseRequested: deps.pauseRequested }),
+        ...(deps.timing ?? DEFAULT_TIMING),
+      },
+    )
+  } finally {
+    await deps.api.retire(token).catch(() => undefined)
+  }
   const { normalizer } = result
   const reported = { ...record.reported }
   for (const [model, usd] of Object.entries(normalizer.reportedCost()))
