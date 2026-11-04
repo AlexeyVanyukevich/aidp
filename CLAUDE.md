@@ -43,8 +43,10 @@ running (`./run dev`):
 with `{"title": …, "description_md": …}`. The title says what is wrong, in 200 characters or
 fewer. The description is written for someone who was not there, as four items: **Where** (file
 and function), **Found** (date, and while doing what), **Problem** (what is wrong and how to see
-it), **Impact** (what it costs). A finding in another repository — the component kit, `charter`
-— is an issue on that repository instead.
+it), **Impact** (what it costs). A finding in another repository goes on the board too, in that
+repository's project — `CHR` for `charter`, `ZLC` for `@zellige/core`, `ZLR` for
+`@zellige/react` — never as an issue on the repository. For any other, `GET /api/projects` lists
+the keys.
 
 **Record what is outside the task; do not fix it in passing.** A fix nobody asked for is an
 unreviewed change inside an unrelated commit. If it blocks the task, it is part of the task.
