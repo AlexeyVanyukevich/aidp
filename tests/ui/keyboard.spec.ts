@@ -1,6 +1,22 @@
 import { expect, test } from '@playwright/test'
 import { appUrl, expectAccessible, focusInDialog, runtime, SPEC, tabTo } from './helpers'
 
+const CLEAN_SPEC = `${SPEC.replace(
+  '## Requirements',
+  `## Context
+See [the retry guide](https://example.com/retries).
+
+| Delay | Seconds |
+| --- | --- |
+| first | 1 |
+
+\`\`\`
+retry(1)
+\`\`\`
+
+## Requirements`,
+)}`
+
 test('a repository, the board and a card work from the keyboard alone', async ({ page }) => {
   await page.goto(appUrl('/'))
   const key = page.getByRole('textbox', { name: 'Key', exact: true })
@@ -84,15 +100,72 @@ test('a repository, the board and a card work from the keyboard alone', async ({
   await page.keyboard.press('Tab')
   await expect(card.getByRole('button', { name: 'Save description' })).toBeFocused()
   await page.keyboard.press('Tab')
-  await expect(card.getByRole('textbox', { name: 'Spec' })).toBeFocused()
+  // An empty card offers Write spec, which opens the editor on the template.
+  await expect(card.getByRole('button', { name: 'Write spec' })).toBeFocused()
+  await page.keyboard.press('Enter')
+  const editor = card.getByRole('textbox', { name: 'Spec' })
+  await expect(editor).toBeFocused()
+  await expectAccessible(page)
   await page.keyboard.press('ControlOrMeta+A')
-  await page.keyboard.type(SPEC)
+  await page.keyboard.type(CLEAN_SPEC)
   await tabTo(page, card.getByRole('button', { name: 'Save as v1' }))
   await page.keyboard.press('Enter')
   await expect(
     card.getByRole('status').filter({ hasText: 'Saved v1. It lints clean and can be approved.' }),
   ).toBeVisible()
+  const edit = card.getByRole('button', { name: 'Edit' })
+  await expect(edit).toBeFocused()
   await expectAccessible(page)
+
+  // Back through the rendered spec: its code block, its table and its link scroll or link, so
+  // each is a tab stop, before the version select.
+  await page.keyboard.press('Shift+Tab')
+  await expect(card.getByRole('group', { name: 'Code block' })).toBeFocused()
+  await page.keyboard.press('Shift+Tab')
+  await expect(card.getByRole('group', { name: 'Table' })).toBeFocused()
+  await page.keyboard.press('Shift+Tab')
+  await expect(card.getByRole('link', { name: 'the retry guide' })).toBeFocused()
+  await page.keyboard.press('Shift+Tab')
+  await expect(card.getByRole('combobox', { name: 'Version' })).toBeFocused()
+
+  // The card is in Spec review: Edit, Approve, the note, Redraft.
+  await expect(card.getByText('OPS-2 · Spec review')).toBeVisible()
+  await tabTo(page, edit)
+  await page.keyboard.press('Tab')
+  await expect(card.getByRole('button', { name: 'Approve' })).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(card.getByRole('textbox', { name: 'What to change' })).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(card.getByRole('button', { name: 'Redraft' })).toBeFocused()
+
+  // The editor opened on an unchanged text: no draft, so Save as is skipped and Redraft stops.
+  await edit.focus()
+  await page.keyboard.press('Enter')
+  await expect(editor).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(card.getByRole('button', { name: 'Preview' })).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(card.getByRole('button', { name: 'Discard changes' })).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(card.getByRole('textbox', { name: 'What to change' })).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(card.getByRole('button', { name: 'Redraft' })).toBeFocused()
+
+  // With a draft, Save as is a stop and Redraft is not; Preview and Discard hand focus to Edit.
+  await editor.focus()
+  await page.keyboard.type('x')
+  await page.keyboard.press('Tab')
+  await expect(card.getByRole('button', { name: 'Save as v2' })).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(card.getByRole('button', { name: 'Preview' })).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(edit).toBeFocused()
+  await expectAccessible(page)
+  await page.keyboard.press('Enter')
+  await expect(editor).toBeFocused()
+  await tabTo(page, card.getByRole('button', { name: 'Discard changes' }))
+  await page.keyboard.press('Enter')
+  await expect(edit).toBeFocused()
 
   // Saving the spec moved the card to Spec review while it was open. Escape closes the card and
   // hands focus to its link there, the one that replaced the link that opened it.

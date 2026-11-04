@@ -30,6 +30,41 @@ export function editable(state: TaskState): boolean {
   return state === 'backlog' || state === 'spec_review'
 }
 
+/** A draft exists while the editor's text differs from its baseline. */
+export function hasDraft(draft: string | undefined, baseline: string): boolean {
+  return draft !== undefined && draft !== baseline
+}
+
+/** The heading over the formatted spec: the version shown, or the unsaved text. */
+export function viewHeading(
+  version: { version: number; status: string } | undefined,
+  draft: boolean,
+): string {
+  if (version === undefined) return 'New spec · unsaved changes'
+  return draft
+    ? `Spec v${version.version} · unsaved changes`
+    : `Spec v${version.version} · ${version.status}`
+}
+
+/** The buttons of the formatted view: which of them the state and the draft call for. */
+export function viewButtons(
+  state: TaskState,
+  hasVersion: boolean,
+  draft: boolean,
+): { edit: boolean; writeSpec: boolean; approve: boolean; draftSpec: boolean } {
+  const open = editable(state)
+  return {
+    edit: open && (hasVersion || draft),
+    writeSpec: state === 'backlog' && !hasVersion && !draft,
+    approve: state === 'spec_review' && hasVersion,
+    draftSpec: state === 'backlog' && !hasVersion,
+  }
+}
+
+export const DRAFT_LOCK = 'Save or discard your changes first.'
+export const VERSION_LOCK = 'Save or discard your changes to choose another version.'
+export const SAVE_HINT = 'Change the spec to save it as a new version.'
+
 /** What the Spec tab offers in a state (slice 3 spec, §11). */
 export function specControls(state: TaskState): {
   /** The description can be edited and saved. */

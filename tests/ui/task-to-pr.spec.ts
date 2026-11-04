@@ -48,6 +48,7 @@ test('a task goes from the board to a pull request, with its steps and costs on 
   await expect(page).toHaveTitle('PAY-1 Back off retries · AI Delivery Platform')
   await expectAccessible(page)
 
+  await card.getByRole('button', { name: 'Write spec' }).click()
   await card.getByRole('textbox', { name: 'Spec' }).fill(SPEC)
   await card.getByRole('button', { name: 'Save as v1' }).click()
   await expect(
