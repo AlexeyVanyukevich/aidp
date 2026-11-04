@@ -97,13 +97,22 @@ export class Git {
     }
   }
 
-  /** A file's text at `HEAD`, or null when `HEAD` does not hold it. Paths are root-relative. */
+  /**
+   * A file's text at `HEAD`, or null when `HEAD` does not hold it. Paths are root-relative. Any
+   * other failure is a `GitError`, so a broken repository is not read as a missing file.
+   */
   async fileAtHead(dir: string, path: string): Promise<string | null> {
-    try {
-      return await this.run('git', ['-C', dir, '--literal-pathspecs', 'show', `HEAD:${path}`])
-    } catch {
-      return null
-    }
+    const entry = await this.run('git', [
+      '-C',
+      dir,
+      '--literal-pathspecs',
+      'ls-tree',
+      'HEAD',
+      '--',
+      path,
+    ])
+    if (entry === '') return null
+    return this.run('git', ['-C', dir, 'show', `HEAD:${path}`])
   }
 
   /** The remote's current base, fetched into `origin/<base>` of the project's repository. */

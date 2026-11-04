@@ -29,7 +29,8 @@ export interface Changes {
 
 /**
  * The worktree and `HEAD` copies of every approved migration among the changed paths, which
- * `violationsOf` compares with the approved content. A copy that cannot be read counts as missing.
+ * `violationsOf` compares with the approved content. A worktree copy that cannot be read counts
+ * as missing; a failure to read `HEAD` throws, as a git failure does elsewhere in the gate.
  */
 export async function readApprovedCopies(
   approved: { path: string }[],

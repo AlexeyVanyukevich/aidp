@@ -139,6 +139,14 @@ describe('Git', () => {
       )
       expect(await subject.fileAtHead(worktree, 'db/migrations/009_none.ts')).toBeNull()
     })
+
+    it('fails with a GitError when git cannot read HEAD, rather than calling the file missing', async () => {
+      const subject = new Git(realExec, FAKE_GH)
+      const error = await subject
+        .fileAtHead(mkdtempSync(join(tmpdir(), 'not-a-repo-')), 'db/migrations/004_x.ts')
+        .catch((e: unknown) => e)
+      expect(error).toBeInstanceOf(GitError)
+    })
   })
 
   describe('changedPaths', () => {
