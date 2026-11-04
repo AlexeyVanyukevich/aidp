@@ -805,6 +805,20 @@ describe('the files gate', () => {
     expect(h.testRuns).toHaveLength(1)
   })
 
+  it.each(['allowed-files.json', 'approved-migrations.json', 'excluded-paths.json'])(
+    'AC10: a malformed %s fails a run resumed at the tests stage, and the test command does not run',
+    async (name) => {
+      const h = withPlan(harness({}))
+      mkdirSync(RUN_DIR(h.home), { recursive: true })
+      writeFileSync(join(RUN_DIR(h.home), name), 'not json')
+      expect(await carryOut(resumeAt(checkpoint('tests', 1), []), h.deps)).toBe('failed')
+      expect(h.runEnd()).toMatchObject({
+        payload: { outcome: 'failed', reason: expect.stringContaining(name) },
+      })
+      expect(h.testRuns).toHaveLength(0)
+    },
+  )
+
   const many = Array.from({ length: 22 }, (_, i) => `p${String(i).padStart(2, '0')}.ts`)
   it('AC15: ends the run on the third refusal, naming up to 20 paths', async () => {
     const h = harness({ trees: [EXTRA, EXTRA, { committed: many }] })
