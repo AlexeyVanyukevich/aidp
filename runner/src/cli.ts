@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { BoardApi } from './api.js'
 import { realExec } from './exec.js'
@@ -10,12 +10,25 @@ import { readLinked } from './linked.js'
 import { readMigrationSiblings } from './hooks/migration-siblings.js'
 import { PAUSED_MARKER, readAllowed, readApproved, readExcluded } from './phases/run-dir.js'
 import { EventSink } from './sink.js'
+import { canonicalPath } from './worktree-log.js'
 
 function env(name: string): string {
   const value = process.env[name]
   if (value === undefined || value === '')
     throw new Error(`${name} is not set; board-cli hooks run only inside a phase`)
   return value
+}
+
+/** The run's worktree from `BOARD_WORKTREE`, at its real path; the reason when it cannot be had. */
+function worktreeOf(): { path: string } | { reason: string } {
+  const value = process.env.BOARD_WORKTREE
+  if (value === undefined || value === '')
+    return { reason: 'BOARD_WORKTREE is not set, so the worktree is unknown' }
+  try {
+    return { path: realpathSync(value) }
+  } catch (error) {
+    return { reason: `BOARD_WORKTREE is ${value}, which does not resolve: ${String(error)}` }
+  }
 }
 
 async function readStdin(): Promise<Record<string, unknown>> {
@@ -39,9 +52,11 @@ async function filesFeedback(
     const allowed = readAllowed(runDir)
     const basePath = join(runDir, 'base-branch.txt')
     if (allowed === null || !existsSync(basePath)) return null
-    const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd()
+    const worktree = worktreeOf()
+    if ('reason' in worktree)
+      return `The files check could not run: ${worktree.reason}. Tell the owner; do not work around it.`
     const changed = await new Git(realExec, 'gh').changedPaths(
-      cwd,
+      worktree.path,
       readFileSync(basePath, 'utf8').trim(),
     )
     const found = violationsOf({
@@ -96,6 +111,13 @@ async function guard(): Promise<void> {
   const approvedPath = join(runDir, 'approved-migrations.json')
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd()
   const basePath = join(runDir, 'base-branch.txt')
+  const worktree = worktreeOf()
+  if ('reason' in worktree) {
+    process.stdout.write(
+      denyOutput(`The worktree is unknown, so no tool call is allowed: ${worktree.reason}`),
+    )
+    return
+  }
   const base = existsSync(basePath) ? readFileSync(basePath, 'utf8').trim() : null
   const verdict = decide(
     {
@@ -116,8 +138,10 @@ async function guard(): Promise<void> {
       paused: existsSync(join(runDir, PAUSED_MARKER)),
       linked: readLinked(runDir),
       cwd,
+      worktree: worktree.path,
+      canonical: canonicalPath,
       exists: existsSync,
-      migrationSiblings: (directory) => readMigrationSiblings(cwd, base, directory),
+      migrationSiblings: (directory) => readMigrationSiblings(worktree.path, base, directory),
     },
   )
   if (!verdict.allow) process.stdout.write(denyOutput(verdict.reason))

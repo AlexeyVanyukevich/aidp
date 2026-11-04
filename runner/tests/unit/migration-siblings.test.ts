@@ -49,6 +49,8 @@ describe('reading a migration directory’s siblings', () => {
         allowedFiles: [`${DIR}/004_helps.ts`],
         paused: false,
         cwd: work,
+        worktree: work,
+        canonical: (path) => path,
         exists: () => false,
         migrationSiblings: (dir) => readMigrationSiblings(work, 'main', dir),
       },

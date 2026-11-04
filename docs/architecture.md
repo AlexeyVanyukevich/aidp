@@ -394,7 +394,14 @@ from the current `origin/<base>`, and Build and Verify meet any drift as in any 
 
 **Out-of-plan edits.** In Build the guard refuses a file outside the run's allowed list and tells
 the builder to ask with `request_approval` kind `out_of_plan`. Allowing the change adds the files
-to the allowed list for the rest of the run.
+to the allowed list for the rest of the run. The guard checks a path against the run's worktree,
+taken from `BOARD_WORKTREE` (set by the runner in every phase process) and resolved with
+`realpathSync`, whatever directory the last `Bash` call ended in; the hook input's `cwd` only
+resolves a relative tool path. It compares the path in its canonical form (`canonicalPath`: the
+real path of the deepest existing ancestor, then the remaining segments), so a path reaching the
+worktree through a symlink gets the verdict of its real form; a `.env` name is refused in either
+form. A path with no canonical form is refused. When `BOARD_WORKTREE` is unset, empty or does not
+resolve, the guard refuses every tool call, naming the variable.
 
 _The files gate._ The guard checks only the file tools, so a change written through `Bash` (a
 script, `sed -i`) is checked afterwards, on what the worktree holds. At the start of the `tests`
@@ -429,7 +436,12 @@ computation and, with any violation, writes `{"decision":"block","reason":…}` 
 text, so the builder learns at once, with the commands that undo it (`git checkout <hash> -- <path>`
 with the merge-base's full hash, `git rm`, deleting a generated file). In every other case
 (another phase or tool, no violation, no `allowed-files.json` yet, or a failing git command or
-run-directory file) it writes nothing; it records its event and exits 0 whatever happens.
+run-directory file) it writes nothing; it records its event and exits 0 whatever happens. It lists
+the paths of the worktree in `BOARD_WORKTREE`, resolved to its real path, whatever directory the
+call ended in (`changedPaths` runs every listing at the git top level, so untracked paths cover the
+whole worktree). The one board failure it does report: when the phase, tool and run-directory
+files call for the check but the variable is unset, empty or does not resolve, it blocks with a
+reason saying the files check could not run, naming `BOARD_WORKTREE`.
 
 _A git failure._ A `GitError` in the gate blocks the run at the `tests` stage with `step_failed`;
 the test command does not run, and Resume runs the gate again.

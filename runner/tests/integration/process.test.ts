@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { chmodSync, existsSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -55,6 +55,14 @@ const alive = (pid: number) => {
 }
 
 describe('runProcess', () => {
+  it('AC1: puts the worktree in the env as BOARD_WORKTREE', async () => {
+    const { runDir, input, deps } = setUp(
+      'printf %s "$BOARD_WORKTREE" > "$BOARD_RUN_DIR/worktree.txt"',
+    )
+    await runProcess(input, deps)
+    expect(readFileSync(join(runDir, 'worktree.txt'), 'utf8')).toBe(input.worktree)
+  })
+
   it('keeps a pid file while the process runs, and removes it after', async () => {
     const { input, deps, pidFile } = setUp('sleep 0.4')
     const running = runProcess(input, deps)

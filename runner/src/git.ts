@@ -81,10 +81,11 @@ export class Git {
     dir: string,
     base: string,
   ): Promise<{ mergeBase: string; committed: string[]; uncommitted: string[] }> {
+    const root = (await this.run('git', ['-C', dir, 'rev-parse', '--show-toplevel'])).trim()
     const list = async (args: string[]) =>
-      (await this.run('git', ['-C', dir, ...args])).split('\0').filter((p) => p !== '')
+      (await this.run('git', ['-C', root, ...args])).split('\0').filter((p) => p !== '')
     const mergeBase = (
-      await this.run('git', ['-C', dir, 'merge-base', 'HEAD', `origin/${base}`])
+      await this.run('git', ['-C', root, 'merge-base', 'HEAD', `origin/${base}`])
     ).trim()
     const committed = await list(['diff', '-z', '--name-only', '--no-renames', mergeBase, 'HEAD'])
     const tracked = await list(['diff', '-z', '--name-only', '--no-renames', 'HEAD'])

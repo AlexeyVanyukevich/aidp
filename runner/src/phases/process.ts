@@ -133,6 +133,7 @@ export async function runProcess(input: ProcessInput, deps: ProcessDeps): Promis
       BOARD_PHASE: input.phase,
       BOARD_AGENT: config.agent,
       BOARD_RUN_DIR: input.runDir,
+      BOARD_WORKTREE: input.worktree,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
     // Its own process group: Ctrl-C at the daemon's terminal reaches the daemon, which stops

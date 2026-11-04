@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { decide, denyOutput } from '../../src/hooks/guard.js'
 
 const CWD = '/work/run-1'
+const identity = (path: string): string | null => path
 const ctx = (
   phase = 'build',
   allowedFiles: string[] | null = ['src/retry.ts', 'src/retry.test.ts'],
@@ -11,6 +12,8 @@ const ctx = (
   allowedFiles,
   paused,
   cwd: CWD,
+  worktree: CWD,
+  canonical: identity,
   exists: (path: string) => path !== '/work/run-1/db/migrations/002_new.ts',
 })
 const bash = (command: string) => ({ tool_name: 'Bash', tool_input: { command } })
@@ -98,6 +101,8 @@ describe('the guard', () => {
       approvedMigrations: approved,
       paused: false,
       cwd: CWD,
+      worktree: CWD,
+      canonical: identity,
       exists: (path: string) => !path.endsWith('004_x.ts'),
     })
     const reason = (verdict: ReturnType<typeof decide>) => (verdict.allow ? '' : verdict.reason)
@@ -136,6 +141,8 @@ describe('the guard', () => {
         approvedMigrations: approved,
         paused: false,
         cwd: CWD,
+        worktree: CWD,
+        canonical: identity,
         exists: (path: string) => path.endsWith('005_plan_kept_from.ts'),
         migrationSiblings: (dir: string) =>
           dir === DIR
@@ -316,5 +323,170 @@ describe('the guard and linked projects', () => {
   it('does nothing different for a run without links', () => {
     expect(decide(bash('cat /repos/zellige/package.json'), ctx())).toEqual({ allow: true })
     expect(decide(read('Read', '/repos/zellige/a'), ctx())).toEqual({ allow: true })
+  })
+})
+
+// AC7–AC13: the worktree, the tool's directory and the canonical form are three separate things.
+describe('the guard and the worktree', () => {
+  const reasonOf = (verdict: ReturnType<typeof decide>) => (verdict.allow ? '' : verdict.reason)
+  const under = (from: string, to: string) => (p: string) =>
+    p === from || p.startsWith(`${from}/`) ? to + p.slice(from.length) : p
+  const wctx = (over: {
+    cwd?: string
+    allowedFiles?: string[]
+    canonical?: (path: string) => string | null
+    linked?: { key: string; repo_path: string; path: string }[]
+    migrationSiblings?: (directory: string) => string[]
+  }) => ({
+    phase: 'build',
+    allowedFiles: over.allowedFiles ?? ['runner/a.ts'],
+    paused: false,
+    worktree: '/w',
+    cwd: over.cwd ?? '/w/runner',
+    canonical: over.canonical ?? identity,
+    exists: () => false,
+    ...(over.linked === undefined ? {} : { linked: over.linked }),
+    ...(over.migrationSiblings === undefined ? {} : { migrationSiblings: over.migrationSiblings }),
+  })
+
+  interface Row {
+    name: string
+    cwd: string
+    canonical: (path: string) => string | null
+    allowedFiles: string[]
+    path: string
+    refusal: string | null
+  }
+  const PLAN = ['runner/tests/unit/x.ts', 'docs/architecture.md']
+  const A = ['runner/a.ts']
+  const toW = under('/link', '/w')
+  const ROWS: Row[] = [
+    {
+      name: 'AC7 absolute planned',
+      cwd: '/w/runner',
+      canonical: identity,
+      allowedFiles: PLAN,
+      path: '/w/runner/tests/unit/x.ts',
+      refusal: null,
+    },
+    {
+      name: 'AC7 relative to cwd',
+      cwd: '/w/runner',
+      canonical: identity,
+      allowedFiles: PLAN,
+      path: 'tests/unit/x.ts',
+      refusal: null,
+    },
+    {
+      name: 'AC7 planned outside cwd',
+      cwd: '/w/runner',
+      canonical: identity,
+      allowedFiles: PLAN,
+      path: '/w/docs/architecture.md',
+      refusal: null,
+    },
+    {
+      name: 'AC8 absolute unplanned',
+      cwd: '/w/runner',
+      canonical: identity,
+      allowedFiles: A,
+      path: '/w/runner/b.ts',
+      refusal: 'runner/b.ts',
+    },
+    {
+      name: 'AC8 relative unplanned',
+      cwd: '/w/runner',
+      canonical: identity,
+      allowedFiles: A,
+      path: 'b.ts',
+      refusal: 'runner/b.ts',
+    },
+    {
+      name: 'AC8 absolute outside',
+      cwd: '/w/runner',
+      canonical: identity,
+      allowedFiles: A,
+      path: '/elsewhere/a.ts',
+      refusal: 'outside the worktree',
+    },
+    {
+      name: 'AC8 relative outside',
+      cwd: '/w/runner',
+      canonical: identity,
+      allowedFiles: A,
+      path: '../../elsewhere/a.ts',
+      refusal: 'outside the worktree',
+    },
+    {
+      name: 'AC9 link absolute planned',
+      cwd: '/link/runner',
+      canonical: toW,
+      allowedFiles: A,
+      path: '/link/runner/a.ts',
+      refusal: null,
+    },
+    {
+      name: 'AC9 link relative planned',
+      cwd: '/link/runner',
+      canonical: toW,
+      allowedFiles: A,
+      path: 'a.ts',
+      refusal: null,
+    },
+    {
+      name: 'AC9 link unplanned',
+      cwd: '/link/runner',
+      canonical: toW,
+      allowedFiles: A,
+      path: '/link/runner/b.ts',
+      refusal: 'runner/b.ts',
+    },
+  ]
+  it.each(ROWS)('$name', (row) => {
+    const verdict = decide(
+      edit(row.path),
+      wctx({ cwd: row.cwd, canonical: row.canonical, allowedFiles: row.allowedFiles }),
+    )
+    if (row.refusal === null) expect(verdict).toEqual({ allow: true })
+    else expect(reasonOf(verdict)).toContain(row.refusal)
+  })
+
+  it('AC10: refuses a path with no canonical form, naming it as given', () => {
+    const verdict = decide(edit('/w/runner/a.ts'), wctx({ canonical: () => null }))
+    expect(verdict.allow).toBe(false)
+    expect(reasonOf(verdict)).toContain('/w/runner/a.ts')
+  })
+
+  it.each([
+    { name: 'AC11 named secrets file', path: '/w/' + '.env', canonical: identity },
+    { name: 'AC11 canonical secrets file', path: '/w/notes.txt', canonical: () => '/w/' + '.env' },
+  ])('$name is refused with the secrets reason', (row) => {
+    const verdict = decide(
+      edit(row.path),
+      wctx({ allowedFiles: ['.env', 'notes.txt'], canonical: row.canonical }),
+    )
+    expect(reasonOf(verdict)).toContain('files hold secrets')
+  })
+
+  it('AC12: a linked checkout reached by a relative path from a subdirectory is read-only', () => {
+    const linked = [{ key: 'ZLC', repo_path: '/repos/zlc', path: '/w/linked/ZLC' }]
+    const verdict = decide(edit('../linked/ZLC/x.ts'), wctx({ linked }))
+    expect(reasonOf(verdict)).toContain('read-only')
+  })
+
+  it('AC13: lists the siblings of a migration from the worktree root', () => {
+    const asked: string[] = []
+    const verdict = decide(
+      edit('migrations/0002_x.ts', 'Write'),
+      wctx({
+        allowedFiles: ['runner/migrations/0002_x.ts'],
+        migrationSiblings: (directory) => {
+          asked.push(directory)
+          return []
+        },
+      }),
+    )
+    expect(asked).toEqual(['runner/migrations'])
+    expect(reasonOf(verdict)).toContain('runner/migrations/0002_x.ts')
   })
 })
