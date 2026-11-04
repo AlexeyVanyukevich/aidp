@@ -353,25 +353,45 @@ describe('board-cli guard when it cannot check a call', () => {
     env?: Record<string, string>
     stdin?: string
     input?: object
+    /** What the refusal's error names: the row's own cause, not some other failure. */
+    names: string
   }
   const FAILURES: Failure[] = [
-    { name: 'BOARD_RUN_DIR unset', env: { BOARD_RUN_DIR: '' } },
-    { name: 'BOARD_PHASE unset', env: { BOARD_PHASE: '' } },
-    { name: 'stdin is not json', stdin: 'not json' },
+    { name: 'BOARD_RUN_DIR unset', env: { BOARD_RUN_DIR: '' }, names: 'BOARD_RUN_DIR' },
+    { name: 'BOARD_PHASE unset', env: { BOARD_PHASE: '' }, names: 'BOARD_PHASE' },
+    { name: 'stdin is not json', stdin: 'not json', names: '"not json" is not valid JSON' },
     {
       name: 'allowed-files.json is not json',
       files: { 'allowed-files.json': 'not json' },
       input: EDIT,
+      names: 'allowed-files.json',
     },
-    { name: 'allowed-files.json is a string', files: { 'allowed-files.json': '"abc"' } },
-    { name: 'allowed-files.json is an object', files: { 'allowed-files.json': '{}' } },
+    {
+      name: 'allowed-files.json is a string',
+      files: { 'allowed-files.json': '"abc"' },
+      names: 'allowed-files.json',
+    },
+    {
+      name: 'allowed-files.json is an object',
+      files: { 'allowed-files.json': '{}' },
+      names: 'allowed-files.json',
+    },
     {
       name: 'approved-migrations.json is not json',
       files: { 'approved-migrations.json': 'not json' },
+      names: 'approved-migrations.json',
     },
-    { name: 'approved-migrations.json is [1]', files: { 'approved-migrations.json': '[1]' } },
-    { name: 'linked.json is not json', files: { 'linked.json': 'not json' } },
-    { name: 'linked.json lacks fields', files: { 'linked.json': '[{"key":"X"}]' } },
+    {
+      name: 'approved-migrations.json is [1]',
+      files: { 'approved-migrations.json': '[1]' },
+      names: 'approved-migrations.json',
+    },
+    { name: 'linked.json is not json', files: { 'linked.json': 'not json' }, names: 'linked.json' },
+    {
+      name: 'linked.json lacks fields',
+      files: { 'linked.json': '[{"key":"X"}]' },
+      names: 'linked.json',
+    },
   ]
   const FILES = ['allowed-files.json', 'approved-migrations.json', 'linked.json']
 
@@ -394,6 +414,7 @@ describe('board-cli guard when it cannot check a call', () => {
     expect(reason.startsWith(prefix)).toBe(true)
     expect(reason.endsWith(suffix)).toBe(true)
     const message = reason.slice(prefix.length, reason.length - suffix.length)
+    expect(message).toContain(row.names)
     const line = result.stderr.split('\n').find((l) => l.startsWith('board-cli guard: '))
     expect(line).toBeDefined()
     expect(line).toContain(message)
