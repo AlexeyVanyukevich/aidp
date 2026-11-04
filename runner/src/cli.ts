@@ -2,7 +2,7 @@ import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { BoardApi } from './api.js'
 import { realExec } from './exec.js'
-import { formatViolations, violationsOf } from './files-gate.js'
+import { formatViolations, readApprovedCopies, violationsOf } from './files-gate.js'
 import { Git } from './git.js'
 import { decide, denyOutput } from './hooks/guard.js'
 import { hookToEvent, pausedBy } from './hooks/hook-event.js'
@@ -55,16 +55,28 @@ async function filesFeedback(
     const worktree = worktreeOf()
     if ('reason' in worktree)
       return `The files check could not run: ${worktree.reason}. Tell the owner; do not work around it.`
-    const changed = await new Git(realExec, 'gh').changedPaths(
-      worktree.path,
-      readFileSync(basePath, 'utf8').trim(),
+    const git = new Git(realExec, 'gh')
+    const changed = await git.changedPaths(worktree.path, readFileSync(basePath, 'utf8').trim())
+    const approved = readApproved(runDir)
+    const copies = await readApprovedCopies(
+      approved,
+      [...changed.committed, ...changed.uncommitted],
+      (path) => {
+        try {
+          return readFileSync(join(worktree.path, path), 'utf8')
+        } catch {
+          return null
+        }
+      },
+      (path) => git.fileAtHead(worktree.path, path),
     )
     const found = violationsOf({
       committed: changed.committed,
       uncommitted: changed.uncommitted,
       excluded: readExcluded(runDir),
       allowed,
-      approvedMigrations: readApproved(runDir).map((entry) => entry.path),
+      approvedMigrations: approved,
+      ...copies,
     })
     return found.length === 0 ? null : formatViolations(found, changed.mergeBase)
   } catch {

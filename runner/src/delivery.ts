@@ -5,7 +5,7 @@ import type { PlanData, ReportData, RunView, Work } from './contract.js'
 import type { RunnerConfig } from './config.js'
 import type { Git } from './git.js'
 import { buildHandoff, type HandoffInput } from './phases/handoff.js'
-import { formatViolations, newlyChanged, violationsOf } from './files-gate.js'
+import { formatViolations, newlyChanged, readApprovedCopies, violationsOf } from './files-gate.js'
 import {
   GATE_HEAD,
   GATE_REPORT,
@@ -187,12 +187,26 @@ export async function carryOut(
   const gate = async (): Promise<boolean> => {
     const changed = await deps.git.changedPaths(worktree, project.base_branch)
     if (readAllowed(runDir) === null) await allowPlanFiles()
+    const approved = readApproved(runDir)
+    const copies = await readApprovedCopies(
+      approved,
+      [...changed.committed, ...changed.uncommitted],
+      (path) => {
+        try {
+          return readFileSync(join(worktree, path), 'utf8')
+        } catch {
+          return null
+        }
+      },
+      (path) => deps.git.fileAtHead(worktree, path),
+    )
     const found = violationsOf({
       committed: changed.committed,
       uncommitted: changed.uncommitted,
       excluded: readExcluded(runDir),
       allowed: readAllowed(runDir) ?? [],
-      approvedMigrations: readApproved(runDir).map((entry) => entry.path),
+      approvedMigrations: approved,
+      ...copies,
     })
     await deps.sink.send([
       newEvent(

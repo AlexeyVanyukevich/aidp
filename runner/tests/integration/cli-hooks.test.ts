@@ -277,6 +277,36 @@ describe('board-cli feedback on a Bash call in Build', () => {
     expect(recorded(runDir)).toContain('tool_call')
   })
 
+  const DIFFERS = 'a migration that differs from the one the owner approved'
+  const MIGRATION = 'db/migrations/004_x.ts'
+  const APPROVED = 'export const x = 1\n'
+  const migrationRun = async (written: string) => {
+    const made = await setup({ notes: false, plan: [] })
+    writeFileSync(
+      join(made.runDir, 'approved-migrations.json'),
+      JSON.stringify([{ path: MIGRATION, content: APPROVED }]),
+    )
+    mkdirSync(join(made.worktree, 'db/migrations'), { recursive: true })
+    writeFileSync(join(made.worktree, MIGRATION), written)
+    return made
+  }
+
+  it('AC18: blocks when a Bash call rewrote an approved migration with other content', async () => {
+    const { worktree, env } = await migrationRun('export const x = 2\n')
+    const result = call(['event', 'PostToolUse'], bash(worktree), env)
+    const output = JSON.parse(result.stdout) as { decision: string; reason: string }
+    expect(output.decision).toBe('block')
+    expect(output.reason).toContain(`\`${MIGRATION}\` – ${DIFFERS}`)
+    expect(output.reason).not.toContain('export const x')
+  })
+
+  it('stays silent when the approved migration holds the approved content, CRLF or not', async () => {
+    const { worktree, env } = await migrationRun('export const x = 1\r\n')
+    const result = call(['event', 'PostToolUse'], bash(worktree), env)
+    expect(result.status).toBe(0)
+    expect(result.stdout).toBe('')
+  })
+
   it('stays silent when nothing outside the plan changed', async () => {
     const { worktree, runDir, env } = await setup()
     writeFileSync(join(runDir, 'allowed-files.json'), JSON.stringify(['notes.txt']))
@@ -385,6 +415,11 @@ describe('board-cli guard when it cannot check a call', () => {
     {
       name: 'approved-migrations.json is not json',
       files: { 'approved-migrations.json': 'not json' },
+      names: 'approved-migrations.json',
+    },
+    {
+      name: 'approved-migrations.json is a list of plain strings (the old form)',
+      files: { 'approved-migrations.json': '["server/src/db/migrations/004_x.ts"]' },
       names: 'approved-migrations.json',
     },
     {
