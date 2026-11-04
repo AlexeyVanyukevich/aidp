@@ -210,4 +210,7 @@ describe('formatViolations for a migration that differs', () => {
     expect(text).not.toContain(APPROVED.trim())
     expect(text).not.toContain('git checkout')
   })
+  it('does not tell the builder to end its turn, since a Write clears it', () => {
+    expect(text).not.toContain('end your turn')
+  })
 })
