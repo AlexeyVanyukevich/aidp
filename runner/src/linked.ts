@@ -35,9 +35,17 @@ export function readLinked(runDir: string): LinkedCheckout[] {
 export function readLinkedStrict(runDir: string): LinkedCheckout[] {
   const file = join(runDir, LINKED_FILE)
   if (!existsSync(file)) return []
+  let text: string
+  try {
+    text = readFileSync(file, 'utf8')
+  } catch (error) {
+    throw new Error(
+      `${LINKED_FILE} cannot be read: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
   let value: unknown
   try {
-    value = JSON.parse(readFileSync(file, 'utf8'))
+    value = JSON.parse(text)
   } catch (error) {
     throw new Error(
       `${LINKED_FILE} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
