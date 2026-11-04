@@ -129,8 +129,12 @@ export type Work =
       checkpoint: Checkpoint
       message: string | null
       allowed_files: string[]
-      /** Migrations the owner approved for this run; absent from an older board. */
-      approved_migrations?: string[]
+      /**
+       * Migrations the owner approved for this run, as `{ path, content }`; absent from an older
+       * board. Typed `unknown` because a board in the old form sends plain strings, which the
+       * delivery run checks and refuses.
+       */
+      approved_migrations?: unknown
     }
   | { kind: 'cleanup'; run: { id: string; repo_path: string; worktree_path: string | null } }
 

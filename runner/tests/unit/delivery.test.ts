@@ -278,12 +278,32 @@ describe('pausing and resuming', () => {
         'src/retry.ts',
         M,
       ]),
-      approved_migrations: [M],
+      approved_migrations: [{ path: M, content: 'export const x = 1\n' }],
     } as Extract<Work, { kind: 'resume' }>
     await carryOut(work, h.deps)
     const dir = join(h.home, 'runs', RUN.id)
-    expect(JSON.parse(readFileSync(join(dir, 'approved-migrations.json'), 'utf8'))).toEqual([M])
+    expect(JSON.parse(readFileSync(join(dir, 'approved-migrations.json'), 'utf8'))).toEqual([
+      { path: M, content: 'export const x = 1\n' },
+    ])
     expect(JSON.parse(readFileSync(join(dir, 'allowed-files.json'), 'utf8'))).toContain(M)
+  })
+
+  it.each([
+    ['plain strings', ['server/src/db/migrations/004_x.ts']],
+    ['an entry without content', [{ path: 'a' }]],
+    ['an entry whose content is a number', [{ path: 'a', content: 1 }]],
+  ])('fails a claim whose approved_migrations holds %s, before any phase', async (_name, claim) => {
+    const h = withPlan(harness({}))
+    const work = {
+      ...resume(checkpoint('build', 1, 'build-phase'), 'Go on.', ['src/retry.ts']),
+      approved_migrations: claim,
+    } as Extract<Work, { kind: 'resume' }>
+    expect(await carryOut(work, h.deps)).toBe('failed')
+    expect(h.runEnd()).toMatchObject({
+      payload: { outcome: 'failed', reason: expect.stringContaining('approved_migrations') },
+    })
+    expect(h.calls).toEqual([])
+    expect(existsSync(join(RUN_DIR(h.home), 'approved-migrations.json'))).toBe(false)
   })
 
   it('writes the base branch to the run directory on start and on resume', async () => {

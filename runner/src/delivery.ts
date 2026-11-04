@@ -9,7 +9,9 @@ import { formatViolations, newlyChanged, violationsOf } from './files-gate.js'
 import {
   GATE_HEAD,
   GATE_REPORT,
+  type ApprovedMigration,
   clearPendingAnswer,
+  isApprovedList,
   prepareRunDir,
   readAllowed,
   readApproved,
@@ -190,7 +192,7 @@ export async function carryOut(
       uncommitted: changed.uncommitted,
       excluded: readExcluded(runDir),
       allowed: readAllowed(runDir) ?? [],
-      approvedMigrations: readApproved(runDir),
+      approvedMigrations: readApproved(runDir).map((entry) => entry.path),
     })
     await deps.sink.send([
       newEvent(
@@ -240,13 +242,21 @@ export async function carryOut(
     writeAllowedFiles(runDir, [...new Set([...files, ...allowed])])
     writeApproved()
   }
+  let approvedClaim: ApprovedMigration[] = []
   const writeApproved = () => {
-    const approved = work.kind === 'resume' ? (work.approved_migrations ?? []) : []
-    if (approved.length > 0) writeApprovedMigrations(runDir, approved)
+    if (approvedClaim.length > 0) writeApprovedMigrations(runDir, approvedClaim)
   }
 
   return steps.carry({ repo: project.repo_path, branch }, async () => {
     if (run.kind !== 'delivery') throw new End('failed', 'a spec run is not a delivery run')
+    // A claim in the old form (plain strings) would allow a path without a content check.
+    const claimed = work.kind === 'resume' ? (work.approved_migrations ?? []) : []
+    if (!isApprovedList(claimed))
+      throw new End(
+        'failed',
+        'the claim’s approved_migrations is not a list of { path, content } entries; the board and the runner are out of step',
+      )
+    approvedClaim = claimed
     prepareRunDir(runDir)
     writeBaseBranch(runDir, project.base_branch)
     if (work.kind === 'resume') {

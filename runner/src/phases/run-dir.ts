@@ -49,9 +49,29 @@ export function writeAllowedFiles(dir: string, files: string[]): void {
   writeFileSync(join(dir, 'allowed-files.json'), JSON.stringify(files))
 }
 
-/** The migrations the owner approved: the guard lets these through (and only these). */
-export function writeApprovedMigrations(dir: string, files: string[]): void {
-  writeFileSync(join(dir, 'approved-migrations.json'), JSON.stringify(files))
+/** A migration the owner approved, with the text they reviewed. */
+export interface ApprovedMigration {
+  path: string
+  content: string
+}
+
+/** Whether a value is a list of `{ path, content }` entries, two strings each. */
+export function isApprovedList(value: unknown): value is ApprovedMigration[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (item) =>
+        typeof item === 'object' &&
+        item !== null &&
+        typeof (item as Record<string, unknown>).path === 'string' &&
+        typeof (item as Record<string, unknown>).content === 'string',
+    )
+  )
+}
+
+/** The migrations the owner approved, each with its content: the guard lets exactly these through. */
+export function writeApprovedMigrations(dir: string, entries: ApprovedMigration[]): void {
+  writeFileSync(join(dir, 'approved-migrations.json'), JSON.stringify(entries))
 }
 
 /** The project's base branch: the guard compares a new migration's name with `origin/<base>`. */
@@ -73,8 +93,8 @@ export function writeExcluded(dir: string, paths: string[]): void {
   writeFileSync(join(dir, EXCLUDED), JSON.stringify(paths))
 }
 
-/** A present list must be an array of strings; anything else throws, naming the file. */
-function readList(dir: string, file: string): string[] {
+/** A present file's JSON; a file that cannot be read or parsed throws, naming it. */
+function readJson(dir: string, file: string): unknown {
   let text: string
   try {
     text = readFileSync(join(dir, file), 'utf8')
@@ -83,14 +103,18 @@ function readList(dir: string, file: string): string[] {
       `${file} cannot be read: ${error instanceof Error ? error.message : String(error)}`,
     )
   }
-  let value: unknown
   try {
-    value = JSON.parse(text)
+    return JSON.parse(text)
   } catch (error) {
     throw new Error(
       `${file} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
     )
   }
+}
+
+/** A present list must be an array of strings; anything else throws, naming the file. */
+function readList(dir: string, file: string): string[] {
+  const value = readJson(dir, file)
   if (!Array.isArray(value) || !value.every((item) => typeof item === 'string'))
     throw new Error(`${file} is not an array of strings`)
   return value as string[]
@@ -104,8 +128,15 @@ export const readExcluded = (dir: string): string[] => readListOr(dir, EXCLUDED,
 /** Null before there is a plan. */
 export const readAllowed = (dir: string): string[] | null =>
   readListOr(dir, 'allowed-files.json', null)
-export const readApproved = (dir: string): string[] =>
-  readListOr(dir, 'approved-migrations.json', [])
+/** A file in the old form (plain strings) or otherwise malformed throws, naming the file. */
+export function readApproved(dir: string): ApprovedMigration[] {
+  const file = 'approved-migrations.json'
+  if (!existsSync(join(dir, file))) return []
+  const value = readJson(dir, file)
+  if (!isApprovedList(value))
+    throw new Error(`${file} is not an array of { path, content } entries`)
+  return value
+}
 
 const PENDING_ANSWER = 'pending-answer.json'
 
