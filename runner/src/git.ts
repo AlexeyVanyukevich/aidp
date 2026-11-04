@@ -97,6 +97,15 @@ export class Git {
     }
   }
 
+  /** A file's text at `HEAD`, or null when `HEAD` does not hold it. Paths are root-relative. */
+  async fileAtHead(dir: string, path: string): Promise<string | null> {
+    try {
+      return await this.run('git', ['-C', dir, '--literal-pathspecs', 'show', `HEAD:${path}`])
+    } catch {
+      return null
+    }
+  }
+
   /** The remote's current base, fetched into `origin/<base>` of the project's repository. */
   async fetchBase(repo: string, base: string): Promise<void> {
     await this.run('git', ['-C', repo, 'fetch', 'origin', base])

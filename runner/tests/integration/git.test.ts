@@ -126,6 +126,21 @@ describe('Git', () => {
     expect((error as GitError).output).not.toBe('')
   })
 
+  describe('fileAtHead', () => {
+    it('reads a committed file as stored, not the worktree copy, and gives null for a missing one', async () => {
+      const { repo } = targetRepository()
+      pushToMain(repo, { 'db/migrations/004_x.ts': 'export const x = 1\r\n' }, 'base files')
+      const subject = new Git(realExec, FAKE_GH)
+      const worktree = join(mkdtempSync(join(tmpdir(), 'wt-')), 'run')
+      await subject.prepareWorktree(repo, 'main', 'board/PAY-1-r1', worktree)
+      writeFileSync(join(worktree, 'db/migrations/004_x.ts'), 'changed\n')
+      expect(await subject.fileAtHead(worktree, 'db/migrations/004_x.ts')).toBe(
+        'export const x = 1\r\n',
+      )
+      expect(await subject.fileAtHead(worktree, 'db/migrations/009_none.ts')).toBeNull()
+    })
+  })
+
   describe('changedPaths', () => {
     const fresh = async (base: Record<string, string>) => {
       const { repo } = targetRepository()

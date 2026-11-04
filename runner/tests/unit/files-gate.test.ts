@@ -10,6 +10,9 @@ import {
 const NOT_IN_PLAN = 'not in the plan'
 const UNAPPROVED = 'a migration the owner has not approved'
 const MIGRATION = 'server/src/db/migrations/004_x.ts'
+const DIFFERS = 'a migration that differs from the one the owner approved'
+const APPROVED = 'export const x = 1\n'
+const approved = [{ path: MIGRATION, content: APPROVED }]
 
 const changes = (over: Partial<Changes>): Changes => ({
   committed: [],
@@ -65,7 +68,13 @@ const ROWS: Row[] = [
   },
   {
     name: 'an approved migration',
-    input: { committed: [MIGRATION], allowed: [MIGRATION], approvedMigrations: [MIGRATION] },
+    input: {
+      committed: [MIGRATION],
+      allowed: [MIGRATION],
+      approvedMigrations: approved,
+      worktreeFiles: { [MIGRATION]: APPROVED },
+      headFiles: { [MIGRATION]: 'export const x = 1\r\n\n' },
+    },
     expected: [],
   },
   {
@@ -73,6 +82,49 @@ const ROWS: Row[] = [
     input: {
       uncommitted: ['server/src/db/migrations/index.ts'],
       allowed: ['server/src/db/migrations/index.ts'],
+    },
+    expected: [],
+  },
+  {
+    name: 'an approved migration changed in the worktree and not committed',
+    input: {
+      uncommitted: [MIGRATION],
+      approvedMigrations: approved,
+      worktreeFiles: { [MIGRATION]: 'export const x = 2\n' },
+    },
+    expected: [{ path: MIGRATION, reason: DIFFERS, committed: false }],
+  },
+  {
+    name: 'an approved migration that matches in the worktree and differs at HEAD',
+    input: {
+      committed: [MIGRATION],
+      approvedMigrations: approved,
+      worktreeFiles: { [MIGRATION]: APPROVED },
+      headFiles: { [MIGRATION]: 'export const x = 2\n' },
+    },
+    expected: [{ path: MIGRATION, reason: DIFFERS, committed: true }],
+  },
+  {
+    name: 'an approved migration missing at HEAD',
+    input: {
+      committed: [MIGRATION],
+      approvedMigrations: approved,
+      worktreeFiles: { [MIGRATION]: APPROVED },
+      headFiles: { [MIGRATION]: null },
+    },
+    expected: [{ path: MIGRATION, reason: DIFFERS, committed: true }],
+  },
+  {
+    name: 'an approved migration missing from the worktree',
+    input: { uncommitted: [MIGRATION], approvedMigrations: approved, worktreeFiles: {} },
+    expected: [{ path: MIGRATION, reason: DIFFERS, committed: false }],
+  },
+  {
+    name: 'an uncommitted approved migration that matches, with no HEAD copy',
+    input: {
+      uncommitted: [MIGRATION],
+      approvedMigrations: approved,
+      worktreeFiles: { [MIGRATION]: APPROVED },
     },
     expected: [],
   },
@@ -139,5 +191,23 @@ describe('formatViolations', () => {
       HASH,
     )
     expect(quoted).toContain(`git checkout ${HASH} -- 'notes/ünï "q".txt'`)
+  })
+})
+
+describe('formatViolations for a migration that differs', () => {
+  const text = formatViolations(
+    [{ path: MIGRATION, reason: DIFFERS, committed: true }],
+    'a'.repeat(40),
+  )
+  it('says how to clear it and where the approved version is', () => {
+    expect(text).toContain(`\`${MIGRATION}\` – ${DIFFERS} (committed)`)
+    expect(text).toContain('write the approved content again with one Write')
+    expect(text).toContain('kind `migration` and the whole new file')
+    expect(text).toContain('<approved_migration>')
+    expect(text).toContain("the guard's refusal")
+  })
+  it('holds no line of the approved content and does not send it back to the fork point', () => {
+    expect(text).not.toContain(APPROVED.trim())
+    expect(text).not.toContain('git checkout')
   })
 })

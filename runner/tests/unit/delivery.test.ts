@@ -782,6 +782,52 @@ describe('the files gate', () => {
     expect(h.testRuns).toHaveLength(1)
   })
 
+  describe('an approved migration the build changed', () => {
+    const M = 'server/src/db/migrations/004_x.ts'
+    const APPROVED = 'export const x = 1\n'
+    const atTests = (attempt: number) =>
+      ({
+        ...resume(checkpoint('tests', attempt), INTERRUPTED, []),
+        approved_migrations: [{ path: M, content: APPROVED }],
+      }) as Extract<Work, { kind: 'resume' }>
+    const withGit = (h: ReturnType<typeof harness>, head: string | null) => {
+      Object.assign(h.deps.git, { fileAtHead: async () => head })
+      return h.deps
+    }
+    const writeWorktreeFile = (h: ReturnType<typeof harness>, content: string) => {
+      const file = join(h.home, 'worktrees', RUN.id, M)
+      mkdirSync(join(file, '..'), { recursive: true })
+      writeFileSync(file, content)
+    }
+
+    it('AC19: skips the test command, names the path in the report and goes back to Build', async () => {
+      const h = withPlan(harness({ initial: { uncommitted: [M] } }))
+      writeWorktreeFile(h, 'export const x = 2\n')
+      await carryOut(atTests(1), withGit(h, null))
+      expect(h.testRuns).toHaveLength(0)
+      const report = readFileSync(join(RUN_DIR(h.home), 'files-gate-report.md'), 'utf8')
+      expect(report).toContain(
+        `\`${M}\` – a migration that differs from the one the owner approved`,
+      )
+      expect(h.calls).toContain('start build-2')
+    })
+    it('AC19: ends the run failed on attempt 3', async () => {
+      const h = withPlan(harness({ initial: { uncommitted: [M] } }))
+      writeWorktreeFile(h, 'export const x = 2\n')
+      expect(await carryOut(atTests(3), withGit(h, null))).toBe('failed')
+      expect(h.runEnd()).toMatchObject({
+        payload: { reason: expect.stringContaining(M) },
+      })
+      expect(h.testRuns).toHaveLength(0)
+    })
+    it('lets the tests run when the file holds the approved content', async () => {
+      const h = withPlan(harness({ initial: { uncommitted: [M] } }))
+      writeWorktreeFile(h, 'export const x = 1\r\n')
+      expect(await carryOut(atTests(1), withGit(h, null))).toBe('review')
+      expect(h.testRuns).toHaveLength(1)
+    })
+  })
+
   it('AC13: a Build resumed after a refusal is handed the report file, with no git command', async () => {
     const h = withPlan(harness({ acts: { 'build-2': ['paused'] } }))
     mkdirSync(RUN_DIR(h.home), { recursive: true })
