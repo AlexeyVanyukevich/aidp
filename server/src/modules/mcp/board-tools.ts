@@ -127,7 +127,7 @@ function refusal(error: unknown) {
       'The question was not asked:',
       ...findings.map(
         (f) =>
-          `- ${f.field}: ${f.code.replaceAll('_', ' ')}${f.after === undefined ? '' : `; migrations apply in name order, so a new name must sort after ${f.after}`}`,
+          `- ${f.field}: ${f.code.replaceAll('_', ' ')}${f.after === undefined ? '' : `; migrations apply in name order, so a new name must sort after ${f.after}`}${f.code === 'fenced' ? '; send the raw file in context_md, without a Markdown code fence' : ''}`,
       ),
     ].join('\n'),
     true,
@@ -161,7 +161,7 @@ export function registerBoardTools(server: McpServer, ctx: ToolContext): void {
     'request_approval',
     {
       description:
-        'Ask the owner what you cannot settle yourself — an ambiguity, two approaches with real trade-offs, low confidence. One question: `question` with up to five options, the one you recommend, and the context the owner needs. Several: kind questions, with each in `questions` (up to eight), asked together and answered together. With kind out_of_plan, ask permission to change files the plan does not list. With kind migration, ask to create or change one migration: its path in `files`, a summary in `question`, the whole file in `context_md`. The run pauses: end your turn when this answers, and the owner’s answer arrives as your next message.',
+        'Ask the owner what you cannot settle yourself — an ambiguity, two approaches with real trade-offs, low confidence. One question: `question` with up to five options, the one you recommend, and the context the owner needs. Several: kind questions, with each in `questions` (up to eight), asked together and answered together. With kind out_of_plan, ask permission to change files the plan does not list. With kind migration, ask to create or change one migration: its path in `files`, a summary in `question`, the whole file in `context_md`, as the raw file exactly as it will be written, without a Markdown code fence. Before asking, format the file as the project’s formatter would, for example with `npx prettier --stdin-filepath <path>` where the project uses prettier, and send that output. Once the migration is allowed, write that text with a single Write; any other content, or an Edit, is refused. The run pauses: end your turn when this answers, and the owner’s answer arrives as your next message.',
       inputSchema: {
         kind: z.enum(['question', 'out_of_plan', 'migration', 'questions']).optional(),
         question: z.string().optional(),
