@@ -12,6 +12,7 @@ import {
   type PhaseDeps,
   type PhaseRecord,
 } from '../../src/phases/phase.js'
+import { StartFailure } from '../../src/phases/process.js'
 import { prepareRunDir } from '../../src/phases/run-dir.js'
 import { EventSink } from '../../src/sink.js'
 
@@ -194,5 +195,39 @@ describe('the sink’s token', () => {
     expect(processToken).not.toBe('T')
     expect(issued).toEqual([processToken])
     expect(retired).toEqual([processToken])
+  })
+})
+
+describe('startPhase with a binary that does not exist', () => {
+  it('AC10: rejects with the start failure and retires the token it issued', async () => {
+    const runDir = mkdtempSync(join(tmpdir(), 'rundir-'))
+    prepareRunDir(runDir)
+    const retired: string[] = []
+    const api = {
+      issueToken: async () => 'issued-token',
+      retire: async (token: string) => void retired.push(token),
+      sendEvents: async (_t: string, batch: RunnerEvent[]) => batch.length,
+    } as unknown as BoardApi
+    const missing = join(tmpdir(), `absent-${crypto.randomUUID()}`, 'claude')
+    await expect(
+      startPhase(
+        {
+          runId: '00000000-0000-4000-8000-000000000001',
+          phase: 'plan',
+          attempt: 1,
+          handoff: '<task/>',
+          worktree: tmpdir(),
+          runDir,
+          budgetUsd: null,
+        },
+        {
+          api,
+          sink: new EventSink(api, join(runDir, 'events.ndjson'), () => 't'),
+          claudeBin: missing,
+          boardUrl: 'http://127.0.0.1:1',
+        },
+      ),
+    ).rejects.toBeInstanceOf(StartFailure)
+    expect(retired).toEqual(['issued-token'])
   })
 })
