@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Checkpoint, RunWork, Work } from '../../src/contract.js'
 import { draftSpec } from '../../src/drafting.js'
+import { StartFailure } from '../../src/phases/process.js'
 import { INTERRUPTED } from '../../src/run-steps.js'
 import { RUN, checkpoint, harness, type Script } from './run-harness.js'
 
@@ -91,6 +92,25 @@ describe('a spec run resumed at the spec stage', () => {
     expect(resumed(h)).toBe('resume spec-1: 1. yes')
     expect(h.of('tool_call').filter((e) => e.tool === 'saved_answer')).toHaveLength(1)
     expect(existsSync(pending)).toBe(false)
+  })
+
+  it('AC12, AC14: a process that fails to start blocks at spec and keeps the answer', async () => {
+    const failure = new StartFailure('/missing/claude', 'spawn /missing/claude ENOENT')
+    const h = harness({ phaseThrows: failure })
+    expect(await draft(specResume('1. yes'), h)).toBe('released')
+    expect(h.of('error').at(-1)).toMatchObject({
+      payload: {
+        blocks: true,
+        cause: 'step_failed',
+        stage: 'spec',
+        command: '/missing/claude',
+        output: 'spawn /missing/claude ENOENT',
+      },
+    })
+    expect(h.runEnd()).toBeUndefined()
+    expect(JSON.parse(readFileSync(join(runDirOf(h.home), 'pending-answer.json'), 'utf8'))).toEqual(
+      { kind: 'words', text: '1. yes' },
+    )
   })
 
   interface NoteRow {

@@ -74,7 +74,9 @@ export interface Script {
   /** Which refresh step fails with a GitError. */
   fails?: 'fetch' | 'ff' | 'link'
   /** The phase calls throw instead of returning. */
-  phaseThrows?: boolean
+  phaseThrows?: boolean | Error
+  /** Every `start` phase call throws this instead of returning. */
+  startThrows?: Error
   /** What the board answers to `run_end`, instead of accepting it. */
   runEndFails?: Error
   /** What `git worktree remove` rejects with. */
@@ -201,9 +203,11 @@ export function harness(script: Script) {
     }
   }
   const handoffs: Record<string, string> = {}
+  const restarts: { phaseId: string; handoff: string }[] = []
   const phases: Phases = {
     start: async (input, _deps, ids) => {
       order.push('phase')
+      if (script.startThrows !== undefined) throw script.startThrows
       calls.push(`start ${input.phase}-${input.attempt}`)
       handoffs[`${input.phase}-${input.attempt}`] = input.handoff
       return act({
@@ -220,13 +224,15 @@ export function harness(script: Script) {
     },
     resume: async (record, message) => {
       order.push('phase')
-      if (script.phaseThrows === true) throw new Error('process did not start')
+      if (script.phaseThrows !== undefined && script.phaseThrows !== false)
+        throw script.phaseThrows === true ? new Error('process did not start') : script.phaseThrows
       calls.push(`resume ${record.phase}-${record.attempt}: ${message}`)
       return act(record)
     },
-    restart: async (record) => {
+    restart: async (record, handoff) => {
       order.push('phase')
       calls.push(`restart ${record.phase}-${record.attempt}`)
+      restarts.push({ phaseId: record.phaseId, handoff })
       return act(record)
     },
     end: async (record, ok) => {
@@ -358,6 +364,7 @@ export function harness(script: Script) {
     gitCalls,
     writes,
     handoffs,
+    restarts,
     home,
     testRuns,
     changed: () => changedCalls,

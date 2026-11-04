@@ -6,6 +6,7 @@ import type { Checkpoint, PhaseName, Stage, Work } from './contract.js'
 import type { RunnerConfig } from './config.js'
 import { GitError, type Git } from './git.js'
 import { prepareLinked, removeLinked, restoreLinked } from './linked.js'
+import { StartFailure } from './phases/process.js'
 import type { PhaseDeps, PhaseInput, PhaseRecord, StepResult } from './phases/phase.js'
 import {
   readBase,
@@ -519,8 +520,9 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
     } catch (error) {
       if (error instanceof Release) {
         outcome = 'released'
-      } else if (error instanceof GitError) {
-        // A git or gh step that failed blocks the run where it stands; Resume retries the step.
+      } else if (error instanceof GitError || error instanceof StartFailure) {
+        // A git or gh step, or a Claude Code process that did not start, blocks the run where it
+        // stands; Resume retries the step.
         outcome = 'released'
         await block('step_failed', { command: error.command, output: error.output }).catch(
           () => undefined,

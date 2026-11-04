@@ -12,6 +12,7 @@ import {
   type Phases,
 } from '../../src/delivery.js'
 import { Git, GitError } from '../../src/git.js'
+import { StartFailure } from '../../src/phases/process.js'
 import { LOG_FILE } from '../../src/worktree-log.js'
 import type { PhaseRecord, StepResult } from '../../src/phases/phase.js'
 import {
@@ -1001,6 +1002,59 @@ describe('the files gate', () => {
   })
 })
 
+const START_FAILURE = new StartFailure('/missing/claude', 'spawn /missing/claude ENOENT')
+
+describe('a process that fails to start', () => {
+  it('AC11: blocks the run as step_failed and keeps the worktree', async () => {
+    const h = harness({ startThrows: START_FAILURE })
+    expect(await carryOut(START as Extract<Work, { kind: 'start' }>, h.deps)).toBe('released')
+    const errors = h.of('error')
+    expect(errors.at(-1)).toMatchObject({
+      payload: {
+        blocks: true,
+        cause: 'step_failed',
+        stage: 'plan',
+        command: '/missing/claude',
+        output: 'spawn /missing/claude ENOENT',
+      },
+    })
+    expect(h.checkpoints().at(-1)).toMatchObject({ stage: 'plan' })
+    expect(h.sent.findIndex((e) => e.type === 'checkpoint')).toBeLessThan(
+      h.sent.findIndex((e) => e.type === 'error'),
+    )
+    expect(h.runEnd()).toBeUndefined()
+    expect(h.gitCalls).not.toContain('remove')
+  })
+
+  it('AC13: a plain error still ends the run failed', async () => {
+    const h = harness({ startThrows: new Error('boom') })
+    expect(await carryOut(START as Extract<Work, { kind: 'start' }>, h.deps)).toBe('failed')
+    expect(h.runEnd()).toMatchObject({ payload: { outcome: 'failed', reason: 'boom' } })
+  })
+
+  it('AC15: Resume resumes the session the failed start was given, then restarts it if gone', async () => {
+    const first = harness({ startThrows: START_FAILURE })
+    await carryOut(START as Extract<Work, { kind: 'start' }>, first.deps)
+    const blocked = first.checkpoints().at(-1)!
+    expect(blocked.phase_id).not.toBeNull()
+    expect(blocked.session?.id).toBeDefined()
+
+    const again = withPlan(harness({ acts: { 'plan-1': ['gone', 'ok'] }, hasMessages: false }))
+    const work = resume(blocked, INTERRUPTED, [])
+    await carryOut(work as Extract<Work, { kind: 'resume' }>, again.deps)
+    expect(again.calls.some((c) => c.startsWith('resume plan-1'))).toBe(true)
+    expect(again.calls).toContain('restart plan-1')
+    expect(again.restarts).toHaveLength(1)
+    expect(again.restarts[0]?.phaseId).toBe(blocked.phase_id)
+    expect(again.restarts[0]?.handoff).toContain('phase="plan" attempt="1"')
+    expect(
+      again.sent.some(
+        (e) => e.type === 'run_end' && (e.payload as { outcome?: string }).outcome === 'failed',
+      ),
+    ).toBe(false)
+  })
+})
+
 describe('a Plan-stage resume refreshes the base first', () => {
   const SETUP = 'npm ci'
   const WITH_SETUP: RunWork = { ...RUN, project: { ...RUN.project, setup_command: SETUP } }
@@ -1275,6 +1329,15 @@ describe('a Plan-stage resume refreshes the base first', () => {
 
     it('AC19: a process that fails to start leaves the answer in the file', async () => {
       const h = withPlan(harness({ phaseThrows: true }))
+      await carryOut(claim('Split step 2.', RUN), h.deps)
+      expect(JSON.parse(readFileSync(file(h, 'pending-answer.json'), 'utf8'))).toEqual({
+        kind: 'words',
+        text: 'Split step 2.',
+      })
+    })
+
+    it('AC14: a process that fails to start with the typed error leaves the answer too', async () => {
+      const h = withPlan(harness({ phaseThrows: START_FAILURE }))
       await carryOut(claim('Split step 2.', RUN), h.deps)
       expect(JSON.parse(readFileSync(file(h, 'pending-answer.json'), 'utf8'))).toEqual({
         kind: 'words',
