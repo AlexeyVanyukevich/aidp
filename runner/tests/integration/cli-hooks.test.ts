@@ -336,3 +336,82 @@ describe('board-cli feedback on a Bash call in Build', () => {
     },
   )
 })
+
+describe('board-cli guard when it cannot check a call', () => {
+  const runDir = mkdtempSync(join(tmpdir(), 'run-'))
+  const base = {
+    BOARD_PHASE: 'build',
+    BOARD_RUN_DIR: runDir,
+    BOARD_WORKTREE: runDir,
+  }
+  const EDIT = { cwd: runDir, tool_name: 'Edit', tool_input: { file_path: join(runDir, 'x.ts') } }
+  const BASH = { cwd: runDir, tool_name: 'Bash', tool_input: { command: 'ls' } }
+
+  interface Failure {
+    name: string
+    files?: Record<string, string>
+    env?: Record<string, string>
+    stdin?: string
+    input?: object
+  }
+  const FAILURES: Failure[] = [
+    { name: 'BOARD_RUN_DIR unset', env: { BOARD_RUN_DIR: '' } },
+    { name: 'BOARD_PHASE unset', env: { BOARD_PHASE: '' } },
+    { name: 'stdin is not json', stdin: 'not json' },
+    {
+      name: 'allowed-files.json is not json',
+      files: { 'allowed-files.json': 'not json' },
+      input: EDIT,
+    },
+    { name: 'allowed-files.json is a string', files: { 'allowed-files.json': '"abc"' } },
+    { name: 'allowed-files.json is an object', files: { 'allowed-files.json': '{}' } },
+    {
+      name: 'approved-migrations.json is not json',
+      files: { 'approved-migrations.json': 'not json' },
+    },
+    { name: 'approved-migrations.json is [1]', files: { 'approved-migrations.json': '[1]' } },
+    { name: 'linked.json is not json', files: { 'linked.json': 'not json' } },
+    { name: 'linked.json lacks fields', files: { 'linked.json': '[{"key":"X"}]' } },
+  ]
+  const FILES = ['allowed-files.json', 'approved-migrations.json', 'linked.json']
+
+  it.each(FAILURES)('AC1, AC2: refuses and exits 0 when $name', (row) => {
+    for (const f of FILES) rmSync(join(runDir, f), { force: true })
+    for (const [name, text] of Object.entries(row.files ?? {}))
+      writeFileSync(join(runDir, name), text)
+    const result = spawnSync(CLI_PATH, ['guard'], {
+      input: row.stdin ?? JSON.stringify(row.input ?? BASH),
+      env: { ...process.env, ...base, ...row.env },
+      encoding: 'utf8',
+      cwd: tmpdir(),
+    })
+    expect(result.status).toBe(0)
+    const output = JSON.parse(result.stdout).hookSpecificOutput
+    expect(output.permissionDecision).toBe('deny')
+    const reason = output.permissionDecisionReason as string
+    const prefix = 'The guard could not check this call: '
+    const suffix = '. End your turn, and say why in your last message; do not work around it.'
+    expect(reason.startsWith(prefix)).toBe(true)
+    expect(reason.endsWith(suffix)).toBe(true)
+    const message = reason.slice(prefix.length, reason.length - suffix.length)
+    const line = result.stderr.split('\n').find((l) => l.startsWith('board-cli guard: '))
+    expect(line).toBeDefined()
+    expect(line).toContain(message)
+    for (const f of FILES) rmSync(join(runDir, f), { force: true })
+  })
+
+  it('AC9: a well-formed plan still denies an unplanned edit', () => {
+    writeFileSync(join(runDir, 'allowed-files.json'), JSON.stringify(['src/retry.ts']))
+    const result = spawnSync(CLI_PATH, ['guard'], {
+      input: JSON.stringify({ ...EDIT, tool_input: { file_path: join(runDir, 'src/other.ts') } }),
+      env: { ...process.env, ...base },
+      encoding: 'utf8',
+      cwd: tmpdir(),
+    })
+    expect(result.status).toBe(0)
+    expect(JSON.parse(result.stdout).hookSpecificOutput.permissionDecisionReason).toContain(
+      'not in the plan',
+    )
+    rmSync(join(runDir, 'allowed-files.json'))
+  })
+})
