@@ -73,15 +73,31 @@ export function writeExcluded(dir: string, paths: string[]): void {
   writeFileSync(join(dir, EXCLUDED), JSON.stringify(paths))
 }
 
-const readList = (dir: string, file: string): string[] =>
-  existsSync(join(dir, file)) ? (JSON.parse(readFileSync(join(dir, file), 'utf8')) as string[]) : []
+/** A present list must be an array of strings; anything else throws, naming the file. */
+function readList(dir: string, file: string): string[] {
+  let value: unknown
+  try {
+    value = JSON.parse(readFileSync(join(dir, file), 'utf8'))
+  } catch (error) {
+    throw new Error(
+      `${file} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string'))
+    throw new Error(`${file} is not an array of strings`)
+  return value as string[]
+}
 
-/** Nothing is excluded when the record is missing. */
-export const readExcluded = (dir: string): string[] => readList(dir, EXCLUDED)
+const readListOr = <T>(dir: string, file: string, missing: T): string[] | T =>
+  existsSync(join(dir, file)) ? readList(dir, file) : missing
+
+/** Nothing is excluded when the record is missing; a present but malformed one throws. */
+export const readExcluded = (dir: string): string[] => readListOr(dir, EXCLUDED, [])
 /** Null before there is a plan. */
 export const readAllowed = (dir: string): string[] | null =>
-  existsSync(join(dir, 'allowed-files.json')) ? readList(dir, 'allowed-files.json') : null
-export const readApproved = (dir: string): string[] => readList(dir, 'approved-migrations.json')
+  readListOr(dir, 'allowed-files.json', null)
+export const readApproved = (dir: string): string[] =>
+  readListOr(dir, 'approved-migrations.json', [])
 
 const PENDING_ANSWER = 'pending-answer.json'
 
