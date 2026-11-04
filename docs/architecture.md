@@ -454,10 +454,46 @@ kind `migration`: the path in `files`, a summary in `question` (what it changes,
 down step undoes it), and the whole file in `context_md` (up to 20,000 characters; `plan` approvals hold 20,000 too, `question`, `out_of_plan` and
 `questions` 8,000). The request offers `allow` and `refuse` and pauses the run as an `out_of_plan` one does.
 The Approvals tab shows the summary, the path, and the file as plain text in a monospace block.
-Allowing adds the path to the run's approved migrations and its allowed files for the rest of
-the run; the claim carries both, and the runner writes `approved-migrations.json` beside
-`allowed-files.json`, where the guard reads it. Outside Build the guard still refuses to create
-a migration. The files gate holds a migration the owner has not approved to the same rule for
+Allowing adds the path to the run's allowed files and approves its content for the rest of the
+run: the approval covers the path and the exact text the owner reviewed.
+
+_Content._ `context_md` is the raw file, exactly as it will be written. A `context_md` wrapped in
+a Markdown code fence (its first line opens one with three backticks or tildes, and its last
+non-blank line closes it) is refused with a `fenced` finding on `context_md`; no request is
+opened and the run does not pause. The server stores `context_md` as sent and never reformats it,
+so the builder formats the file as the project's formatter would before asking (for example with
+`npx prettier --stdin-filepath <path>` where the project uses prettier) and writes the allowed
+text with a single Write. For each path the approved content is the `context_md` of the most
+recently answered request for it that the owner allowed, whatever its age; a later refusal leaves
+it in force, and its resume message carries the earlier approved content, fenced, and tells the
+builder to put it back. The claim's `approved_migrations`, and the runner's
+`approved-migrations.json` beside `allowed-files.json`, hold `{ path, content }` entries, each
+path once. A claim in the old form (plain strings) ends the delivery run `failed` before any
+phase starts; an old-form or malformed `approved-migrations.json` makes the guard refuse every
+call and the files gate fail the run.
+
+_Enforcement._ Two texts are the same content when they are equal after reading CRLF as LF and
+any run of final newlines (or none) as one. In Build the guard allows a Write to an approved
+path only with such content, and refuses any other Write with the approved content, fenced, in
+the reason; it refuses Edit, MultiEdit and NotebookEdit there, since an approved migration is
+written whole. Outside Build the guard still refuses to create a migration. The guard allows
+every `Bash` command, so the files gate and the PostToolUse Bash hook check content too: an
+approved path among the changed paths whose worktree file is missing or differs, or, when it is
+committed, whose copy at `HEAD` is missing or differs, is a violation with the reason "a
+migration that differs from the one the owner approved". The report tells the builder to write
+the approved content again with one Write, or to ask again with kind `migration`, and names where
+the approved version is; it carries no content. Only the worktree and `HEAD` are checked: an
+earlier commit on the branch can still carry other content in the branch's history, which is
+accepted, since the file at `HEAD` is the one applied on the next server start.
+
+_Handoff._ Every Build handoff, whatever the attempt and whatever started the session (including
+a restarted phase), carries one `<approved_migration path="…">` element per approved migration,
+in path order. Its text is not HTML-escaped: it holds the content in a fence one backtick longer
+than the longest run of backticks in it (at least three), never cut, so a closing tag inside the
+content is harmless. Plan and Verify handoffs do not carry it. The runner and the server each
+hold a fencing function, tested against the shared table `tests/fixtures/migration-fence.json`.
+
+The files gate holds a migration the owner has not approved to the same rule for
 a change written through `Bash`: it is a violation even when the plan lists it, with the reason
 "a migration the owner has not approved", and the report tells the builder to ask with kind
 `migration`.
@@ -575,6 +611,11 @@ New migrations, and changes to migrations from the base branch, need the owner's
 migration whose name sorts at or before a sibling's, in the worktree or on `origin/<base>` as last
 fetched, is refused by the guard and by the `migration` request, never put to the owner; see
 "Migration approval".
+
+The owner's approval of a migration covers its content as well as its path: the guard, the files
+gate and the Bash hook allow only the text the owner reviewed at that path, in the worktree and
+at `HEAD`, and a `migration` request whose `context_md` is wrapped in a code fence is refused;
+see "Migration approval".
 
 No sign-in: the server binds 127.0.0.1, answers only to `ALLOWED_HOSTS`, and refuses writes
 from a foreign `Origin`. The runner authenticates with `RUNNER_KEY`; each `claude` process gets
