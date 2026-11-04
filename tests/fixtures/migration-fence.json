@@ -1,0 +1,43 @@
+[
+  { "name": "no backticks gets three", "content": "a\nb\n", "fenced": "```\na\nb\n```" },
+  {
+    "name": "a run of three gets four",
+    "content": "x\n```\ny\n",
+    "fenced": "````\nx\n```\ny\n````"
+  },
+  {
+    "name": "a run of five gets six",
+    "content": "`````\n",
+    "fenced": "``````\n`````\n``````"
+  },
+  {
+    "name": "no final newline gets one before the closing fence",
+    "content": "a",
+    "fenced": "```\na\n```"
+  },
+  {
+    "name": "a final newline gets no second",
+    "content": "a\n",
+    "fenced": "```\na\n```"
+  },
+  {
+    "name": "several final newlines stay as they are",
+    "content": "a\n\n\n",
+    "fenced": "```\na\n\n\n```"
+  },
+  {
+    "name": "angle brackets, ampersand and arrow come out unchanged",
+    "content": "<T> & =>\n",
+    "fenced": "```\n<T> & =>\n```"
+  },
+  {
+    "name": "a closing tag inside stays",
+    "content": "</approved_migration>\n",
+    "fenced": "```\n</approved_migration>\n```"
+  },
+  {
+    "name": "separate shorter runs do not add up",
+    "content": "`` ``\n",
+    "fenced": "```\n`` ``\n```"
+  }
+]
