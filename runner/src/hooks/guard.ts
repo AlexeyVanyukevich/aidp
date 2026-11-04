@@ -1,4 +1,5 @@
 import { isAbsolute, relative, resolve, sep, basename, posix } from 'node:path'
+import { fenceMigration, sameMigrationContent } from '../migration-content.js'
 import { migrationOrder } from './migration-order.js'
 
 export type Verdict = { allow: true } | { allow: false; reason: string }
@@ -157,7 +158,15 @@ export function isMigration(relativePath: string): boolean {
 }
 
 function migrationReason(path: string, exists: boolean): string {
-  return `${exists ? 'changing' : 'creating'} the migration \`${path}\` needs the owner's approval. Call request_approval with kind migration, the path in files, a summary of what it changes and whether its down step undoes it in question, and the whole file in context_md. Then end your turn.`
+  return `${exists ? 'changing' : 'creating'} the migration \`${path}\` needs the owner's approval. Call request_approval with kind migration, the path in files, a summary of what it changes and whether its down step undoes it in question, and the whole file in context_md. context_md is the raw file, exactly as it will be written, with no Markdown code fence. Before asking, format the file as the project's formatter would, for example with \`npx prettier --stdin-filepath ${path}\` where the project uses prettier, and send that output. Once the migration is allowed, write that text with a single Write. Then end your turn.`
+}
+
+function contentReason(path: string, content: string): string {
+  return `the content differs from the version the owner approved for the migration \`${path}\`. Write that version exactly, with a single Write, or ask again with kind migration and the whole new file. The approved version:\n\n${fenceMigration(content)}`
+}
+
+function editReason(path: string): string {
+  return `the migration \`${path}\` is approved and is written whole: use one Write of the approved content, not an edit.`
 }
 
 function orderReason(path: string, after: string): string {
@@ -173,7 +182,7 @@ export function decide(
     /** The board paused the run: nothing the agent does may change anything (spec §6). */
     paused: boolean
     /** Migrations the owner approved for this run; the guard reads them from the run directory. */
-    approvedMigrations?: string[]
+    approvedMigrations?: { path: string; content: string }[]
     /** The run's linked projects, from `linked.json`; absent when it has none. */
     linked?: LinkedPath[]
     /** The directory the last Bash call ended in: it only resolves a relative tool path. */
@@ -212,7 +221,15 @@ export function decide(
   if (ENV_FILE.test(basename(absolute)) || ENV_FILE.test(basename(canonical)))
     return deny('.env files hold secrets and are off limits')
   const relativePath = inside.split(sep).join('/')
-  const approved = (ctx.approvedMigrations ?? []).includes(relativePath)
+  const approvedEntry = (ctx.approvedMigrations ?? []).find((entry) => entry.path === relativePath)
+  const approved = approvedEntry !== undefined
+  if (approvedEntry !== undefined && ctx.phase === 'build') {
+    if (input.tool_name !== 'Write') return deny(editReason(relativePath))
+    const written = input.tool_input.content
+    if (typeof written !== 'string' || !sameMigrationContent(written, approvedEntry.content))
+      return deny(contentReason(relativePath, approvedEntry.content))
+    return { allow: true }
+  }
   if (isMigration(relativePath) && !approved) {
     const exists = ctx.exists(canonical)
     if (ctx.phase === 'build') {
