@@ -150,7 +150,7 @@ async function check(): Promise<void> {
     {
       phase: env('BOARD_PHASE'),
       allowedFiles: readAllowed(runDir),
-      approvedMigrations: readApproved(runDir).map((entry) => entry.path),
+      approvedMigrations: readApproved(runDir),
       paused: existsSync(join(runDir, PAUSED_MARKER)),
       linked: readLinkedStrict(runDir),
       cwd,

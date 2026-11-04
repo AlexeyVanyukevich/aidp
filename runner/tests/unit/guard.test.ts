@@ -95,7 +95,11 @@ describe('the guard', () => {
     const NEW = 'server/src/db/migrations/004_x.ts'
     const OLD = 'server/src/db/migrations/001_initial.ts'
     const INDEX = 'server/src/db/migrations/index.ts'
-    const mctx = (phase: string, allowed: string[], approved: string[] = []) => ({
+    const mctx = (
+      phase: string,
+      allowed: string[],
+      approved: { path: string; content: string }[] = [],
+    ) => ({
       phase,
       allowedFiles: allowed,
       approvedMigrations: approved,
@@ -122,9 +126,49 @@ describe('the guard', () => {
       expect(decide(edit(INDEX), mctx('build', [INDEX]))).toEqual({ allow: true })
       expect(reason(decide(edit(INDEX), mctx('build', [])))).toContain('out_of_plan')
     })
-    it('lets an approved migration through, in every round', () => {
-      expect(decide(edit(NEW, 'Write'), mctx('build', [], [NEW]))).toEqual({ allow: true })
-      expect(decide(edit(OLD, 'Edit'), mctx('build', [], [OLD]))).toEqual({ allow: true })
+    const APPROVED = 'export const a = (x: number) => x < 2 && x > 0\n'
+    const write = (path: string, content: string) => ({
+      tool_name: 'Write',
+      tool_input: { file_path: path, content },
+    })
+    const approvedNew = [{ path: NEW, content: APPROVED }]
+    it.each([
+      ['the approved text', APPROVED],
+      [
+        'the approved text with CRLF and no final newline',
+        APPROVED.replace(/\n$/, '').replace(/\n/g, '\r\n'),
+      ],
+    ])('lets a Write of %s through', (_name, content) => {
+      expect(decide(write(NEW, content), mctx('build', [], approvedNew))).toEqual({ allow: true })
+    })
+    it('refuses a Write that differs in one character, with the approved text fenced', () => {
+      const verdict = decide(
+        write(NEW, APPROVED.replace('x < 2', 'x < 3')),
+        mctx('build', [], approvedNew),
+      )
+      expect(verdict.allow).toBe(false)
+      expect(reason(verdict)).toContain(NEW)
+      expect(reason(verdict)).toContain('differs from the version the owner approved')
+      expect(reason(verdict)).toContain('kind migration')
+      expect(reason(verdict)).toContain(`\`\`\`\n${APPROVED}\`\`\``)
+    })
+    it.each(['Edit', 'MultiEdit', 'NotebookEdit'])(
+      'refuses %s of an approved migration',
+      (tool) => {
+        const verdict = decide(edit(NEW, tool), mctx('build', [], approvedNew))
+        expect(verdict.allow).toBe(false)
+        expect(reason(verdict)).toContain('one Write of the approved content')
+      },
+    )
+    it('leaves an approved migration alone in Verify', () => {
+      expect(decide(edit(NEW, 'Edit'), mctx('verify', [], approvedNew))).toEqual({ allow: true })
+    })
+    it('tells the builder to format the file and to write it with a single Write', () => {
+      const text = reason(decide(edit(NEW, 'Write'), mctx('build', [NEW])))
+      expect(text).toContain("format the file as the project's formatter would")
+      expect(text).toContain('npx prettier --stdin-filepath')
+      expect(text).toContain('single Write')
+      expect(text).toContain('exactly as it will be written')
     })
     it('refuses to create a migration outside Build', () => {
       expect(decide(edit(NEW, 'Write'), mctx('plan', [NEW])).allow).toBe(false)
@@ -135,7 +179,7 @@ describe('the guard', () => {
       const early = `${DIR}/004_helps.ts`
       const later = `${DIR}/007_helps.ts`
       const existing = `${DIR}/005_plan_kept_from.ts`
-      const octx = (allowed: string[], approved: string[] = []) => ({
+      const octx = (allowed: string[], approved: { path: string; content: string }[] = []) => ({
         phase: 'build',
         allowedFiles: allowed,
         approvedMigrations: approved,
@@ -168,7 +212,12 @@ describe('the guard', () => {
         expect(reason(verdict)).not.toContain('name order')
       })
       it('does not check a migration the owner allowed', () => {
-        expect(decide(edit(early, 'Write'), octx([], [early]))).toEqual({ allow: true })
+        expect(
+          decide(
+            { tool_name: 'Write', tool_input: { file_path: early, content: 'x\n' } },
+            octx([], [{ path: early, content: 'x\n' }]),
+          ),
+        ).toEqual({ allow: true })
       })
       it('does not look for siblings of a path that is no migration', () => {
         const verdict = decide(edit('src/a.ts', 'Write'), {
