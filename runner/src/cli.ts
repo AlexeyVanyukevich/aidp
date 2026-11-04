@@ -112,7 +112,11 @@ async function guard(): Promise<void> {
   try {
     await check()
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    // One line: a parse error quotes the text it read, line breaks included.
+    const message = (error instanceof Error ? error.message : String(error)).replace(
+      /\s*\n\s*/g,
+      ' ',
+    )
     process.stderr.write(`board-cli guard: ${message}\n`)
     process.stdout.write(
       denyOutput(

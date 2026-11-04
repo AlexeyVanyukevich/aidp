@@ -367,6 +367,12 @@ describe('board-cli guard when it cannot check a call', () => {
       names: 'allowed-files.json',
     },
     {
+      // JSON.parse quotes the text it read, newline and all; the error must stay one line.
+      name: 'allowed-files.json is not json and ends in a newline',
+      files: { 'allowed-files.json': 'not json\n' },
+      names: 'allowed-files.json',
+    },
+    {
       name: 'allowed-files.json is a string',
       files: { 'allowed-files.json': '"abc"' },
       names: 'allowed-files.json',
