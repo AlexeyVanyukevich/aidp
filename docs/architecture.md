@@ -609,18 +609,22 @@ Other paths outside the worktree are refused by the file tools as before.
 tool, the board's MCP tools included. Claude Code blocks a call only on exit 2 or a `deny` on
 stdout, and lets it go ahead on any other failure, so a guard that cannot check a call refuses it.
 A missing `BOARD_RUN_DIR` or `BOARD_PHASE`, hook input that is not JSON, or a present but
-malformed `allowed-files.json`, `approved-migrations.json` or `linked.json` (not JSON, or not a
-list of strings, or of checkouts with a `key`, `repo_path` and `path`) is such a failure. The guard
-writes `The guard could not check this call: <error>. End your turn, and say why in your last
-message; do not work around it.` as a `deny` on stdout, the error on a `board-cli guard: ` line on
-stderr, and exits 0. The reason tells the agent to end its turn because `request_approval` is
-refused as well. The `bin/board-cli` wrapper maps any non-zero exit of `guard` to exit 2, for a
-failure before the guard's own code runs; other commands keep `exec` and their exit status.
+malformed `allowed-files.json`, `approved-migrations.json` or `linked.json` (unreadable, not JSON,
+or not a list of strings, or of checkouts with a `key`, `repo_path` and `path`) is such a failure.
+The guard writes `The guard could not check this call: <error>. End your turn, and say why in your
+last message; do not work around it.` as a `deny` on stdout, the error on a `board-cli guard: `
+line on stderr, and exits 0. The reason tells the agent to end its turn because
+`request_approval` is refused as well. The `bin/board-cli` wrapper maps any non-zero exit of
+`guard` to exit 2, for a failure before the guard's own code runs; other commands keep `exec` and
+their exit status.
 
 A present but malformed `allowed-files.json`, `approved-migrations.json` or `excluded-paths.json`
-also fails a delivery run: the readers throw at the files gate or when the test command runs, the
-test command does not run, and the run ends `failed` with the reader's message as its reason. A
-missing file keeps its meaning (no plan, no approvals, no exclusions).
+also fails a delivery run. In the `tests` stage the files gate reads all three before the test
+command, so the run ends `failed` with the reader's message as its reason and the command does not
+run. A Verify started afresh after a resume reads only `excluded-paths.json`, after the test
+command has run, and ends the run the same way; a malformed `allowed-files.json` or
+`approved-migrations.json` there is met by the guard instead, which refuses Verify's every tool
+call. A missing file keeps its meaning (no plan, no approvals, no exclusions).
 
 ## Error translation
 
