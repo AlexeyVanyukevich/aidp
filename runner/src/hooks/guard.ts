@@ -137,6 +137,8 @@ function linkedVerdict(
   return null
 }
 
+const ENV_FILE = /^\.env(\..*)?$/
+
 const FILE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
 
 /** The tools a model can send to the background, where `-p` loses them when its turn ends. */
@@ -174,7 +176,12 @@ export function decide(
     approvedMigrations?: string[]
     /** The run's linked projects, from `linked.json`; absent when it has none. */
     linked?: LinkedPath[]
+    /** The directory the last Bash call ended in: it only resolves a relative tool path. */
     cwd: string
+    /** The run's worktree, resolved to its real path: the root every path is checked against. */
+    worktree: string
+    /** The canonical form of an absolute path (see `canonicalPath`), or null when it has none. */
+    canonical: (path: string) => string | null
     exists: (path: string) => boolean
     /** File names directly in a migrations directory (relative path), here and on the base. */
     migrationSiblings?: (directory: string) => string[]
@@ -197,15 +204,17 @@ export function decide(
   const raw = input.tool_input.file_path ?? input.tool_input.notebook_path
   if (typeof raw !== 'string') return { allow: true }
   const absolute = isAbsolute(raw) ? resolve(raw) : resolve(ctx.cwd, raw)
-  const inside = relative(ctx.cwd, absolute)
+  const canonical = ctx.canonical(absolute)
+  if (canonical === null) return deny(`the path \`${raw}\` cannot be resolved to a real location`)
+  const inside = relative(ctx.worktree, canonical)
   if (inside.startsWith('..') || isAbsolute(inside))
     return deny('this path is outside the worktree')
-  if (/^\.env(\..*)?$/.test(basename(absolute)))
+  if (ENV_FILE.test(basename(absolute)) || ENV_FILE.test(basename(canonical)))
     return deny('.env files hold secrets and are off limits')
   const relativePath = inside.split(sep).join('/')
   const approved = (ctx.approvedMigrations ?? []).includes(relativePath)
   if (isMigration(relativePath) && !approved) {
-    const exists = ctx.exists(absolute)
+    const exists = ctx.exists(canonical)
     if (ctx.phase === 'build') {
       if (!exists && ctx.migrationSiblings !== undefined) {
         const order = migrationOrder(

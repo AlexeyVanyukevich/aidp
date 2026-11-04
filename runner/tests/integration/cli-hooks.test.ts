@@ -1,5 +1,14 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
@@ -27,6 +36,7 @@ describe('board-cli as a hook', () => {
     BOARD_PHASE: 'build',
     BOARD_AGENT: 'builder',
     BOARD_RUN_DIR: runDir,
+    BOARD_WORKTREE: runDir,
   }
 
   it('buffers a tool call when the board is unreachable, and exits 0 so the agent goes on', () => {
@@ -95,20 +105,120 @@ describe('board-cli as a hook', () => {
     expect(result.status).toBe(0)
     expect(result.stdout).toBe('')
   })
+
+  /** A worktree directory with a `src` subdirectory, as a plain directory. */
+  const plainWorktree = () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'plain-')))
+    mkdirSync(join(dir, 'src'))
+    writeFileSync(join(runDir, 'allowed-files.json'), JSON.stringify(['src/retry.ts']))
+    return dir
+  }
+  const edit = (cwd: string, file_path: string) => ({
+    cwd,
+    tool_name: 'Edit',
+    tool_input: { file_path },
+  })
+
+  it('AC14: checks a relative path against the worktree, not the directory the call ended in', () => {
+    const worktree = plainWorktree()
+    const wenv = { ...env, BOARD_WORKTREE: worktree }
+    const src = join(worktree, 'src')
+    expect(call(['guard'], edit(src, 'retry.ts'), wenv).stdout).toBe('')
+    const denied = call(['guard'], edit(src, 'other.ts'), wenv)
+    expect(JSON.parse(denied.stdout).hookSpecificOutput.permissionDecision).toBe('deny')
+  })
+
+  interface Link {
+    name: string
+    worktree: 'real' | 'link'
+    cwd: 'real' | 'link'
+    path: (real: string, link: string) => string
+    refusal: string | null
+  }
+  const LINKS: Link[] = ['real', 'link'].flatMap((form) =>
+    (
+      [
+        { name: 'relative', path: () => 'retry.ts', refusal: null },
+        {
+          name: 'link form',
+          path: (_r: string, l: string) => join(l, 'src/retry.ts'),
+          refusal: null,
+        },
+        { name: 'real form', path: (r: string) => join(r, 'src/retry.ts'), refusal: null },
+        {
+          name: 'unplanned link form',
+          path: (_r: string, l: string) => join(l, 'src/other.ts'),
+          refusal: 'src/other.ts',
+        },
+      ] as const
+    ).map((row) => ({
+      ...row,
+      name: `AC15: worktree ${form}, ${row.name}`,
+      worktree: form as 'real' | 'link',
+      cwd: (form === 'real' ? 'link' : 'real') as 'real' | 'link',
+    })),
+  )
+  it.each(LINKS)('$name', (row) => {
+    const real = plainWorktree()
+    const link = join(mkdtempSync(join(tmpdir(), 'lnk-')), 'link')
+    symlinkSync(real, link)
+    const pick = (form: 'real' | 'link') => (form === 'real' ? real : link)
+    const result = call(['guard'], edit(join(pick(row.cwd), 'src'), row.path(real, link)), {
+      ...env,
+      BOARD_WORKTREE: pick(row.worktree),
+    })
+    expect(result.status).toBe(0)
+    if (row.refusal === null) expect(result.stdout).toBe('')
+    else {
+      const output = JSON.parse(result.stdout).hookSpecificOutput
+      expect(output.permissionDecision).toBe('deny')
+      expect(output.permissionDecisionReason).toContain(row.refusal)
+      expect(output.permissionDecisionReason).toContain('not in the plan')
+    }
+  })
+
+  const MISSING = [
+    { name: 'unset', value: '', mentions: [] as string[] },
+    {
+      name: 'a path that does not exist',
+      value: '/no/such/worktree',
+      mentions: ['/no/such/worktree'],
+    },
+  ]
+  it.each(MISSING)(
+    'AC16: the guard refuses every tool call when BOARD_WORKTREE is $name',
+    (row) => {
+      const result = call(
+        ['guard'],
+        { cwd: runDir, tool_name: 'Bash', tool_input: { command: 'ls' } },
+        { ...env, BOARD_WORKTREE: row.value },
+      )
+      expect(result.status).toBe(0)
+      const output = JSON.parse(result.stdout).hookSpecificOutput
+      expect(output.permissionDecision).toBe('deny')
+      expect(output.permissionDecisionReason).toContain('BOARD_WORKTREE')
+      for (const m of row.mentions) expect(output.permissionDecisionReason).toContain(m)
+    },
+  )
 })
 
 describe('board-cli feedback on a Bash call in Build', () => {
   beforeAll(useTestGitIdentity)
 
   /** A run directory and a worktree in which a Bash call has just created `notes.txt`. */
-  async function setup(over: { allowed?: boolean; base?: string } = {}) {
+  async function setup(
+    over: { allowed?: boolean; base?: string; notes?: boolean; plan?: string[] } = {},
+  ) {
     const { repo } = targetRepository()
     const worktree = join(mkdtempSync(join(tmpdir(), 'wt-')), 'run')
     await new Git(realExec, 'gh').prepareWorktree(repo, 'main', 'board/PAY-1-r1', worktree)
-    writeFileSync(join(worktree, 'notes.txt'), 'x\n')
+    if (over.notes !== false) writeFileSync(join(worktree, 'notes.txt'), 'x\n')
     const runDir = mkdtempSync(join(tmpdir(), 'run-'))
     if (over.allowed !== false)
-      writeFileSync(join(runDir, 'allowed-files.json'), JSON.stringify(['src/retry.ts']))
+      writeFileSync(
+        join(runDir, 'allowed-files.json'),
+        JSON.stringify(over.plan ?? ['src/retry.ts']),
+      )
     writeFileSync(join(runDir, 'base-branch.txt'), over.base ?? 'main')
     const env = {
       BOARD_URL: 'http://127.0.0.1:9',
@@ -118,6 +228,7 @@ describe('board-cli feedback on a Bash call in Build', () => {
       BOARD_PHASE: 'build',
       BOARD_AGENT: 'builder',
       BOARD_RUN_DIR: runDir,
+      BOARD_WORKTREE: worktree,
     }
     return { worktree, runDir, env }
   }
@@ -142,7 +253,7 @@ describe('board-cli feedback on a Bash call in Build', () => {
   interface Quiet {
     name: string
     input: (worktree: string) => object
-    over?: { allowed?: boolean; base?: string }
+    over?: { allowed?: boolean; base?: string; notes?: boolean; plan?: string[] }
     phase?: string
   }
   const QUIET: Quiet[] = [
@@ -173,4 +284,55 @@ describe('board-cli feedback on a Bash call in Build', () => {
     expect(result.status).toBe(0)
     expect(result.stdout).toBe('')
   })
+
+  it('AC3: a planned new file made from a subdirectory is not a violation', async () => {
+    const { worktree, env } = await setup({ notes: false, plan: ['sub/new.ts'] })
+    mkdirSync(join(worktree, 'sub'))
+    writeFileSync(join(worktree, 'sub/new.ts'), 'x\n')
+    const result = call(['event', 'PostToolUse'], bash(join(worktree, 'sub')), env)
+    expect(result.status).toBe(0)
+    expect(result.stdout).toBe('')
+  })
+
+  it('AC4: an unplanned file at the root is found from a subdirectory', async () => {
+    const { worktree, env } = await setup()
+    const result = call(['event', 'PostToolUse'], bash(join(worktree, 'src')), env)
+    const output = JSON.parse(result.stdout) as { decision: string; reason: string }
+    expect(output.decision).toBe('block')
+    expect(output.reason).toContain('notes.txt')
+  })
+
+  it('AC5: an unplanned file is found from a directory outside the worktree', async () => {
+    const { env } = await setup()
+    const outside = mkdtempSync(join(tmpdir(), 'outside-'))
+    const result = call(['event', 'PostToolUse'], bash(outside), env)
+    const output = JSON.parse(result.stdout) as { decision: string; reason: string }
+    expect(output.decision).toBe('block')
+    expect(output.reason).toContain('notes.txt')
+  })
+
+  const NO_WORKTREE = [
+    { name: 'unset', value: '', mentions: [] as string[] },
+    {
+      name: 'a path that does not exist',
+      value: '/no/such/worktree',
+      mentions: ['/no/such/worktree'],
+    },
+  ]
+  it.each(NO_WORKTREE)(
+    'AC6: blocks, records the event and exits 0 when BOARD_WORKTREE is $name',
+    async (row) => {
+      const { worktree, runDir, env } = await setup()
+      const result = call(['event', 'PostToolUse'], bash(worktree), {
+        ...env,
+        BOARD_WORKTREE: row.value,
+      })
+      expect(result.status).toBe(0)
+      const output = JSON.parse(result.stdout) as { decision: string; reason: string }
+      expect(output.decision).toBe('block')
+      expect(output.reason).toContain('BOARD_WORKTREE')
+      for (const m of row.mentions) expect(output.reason).toContain(m)
+      expect(recorded(runDir)).toContain('tool_call')
+    },
+  )
 })

@@ -171,6 +171,18 @@ describe('Git', () => {
       expect([...changed.uncommitted].sort()).toEqual(['b', 'c', 'd', 'notes/ünï "q".txt'])
     })
 
+    it('AC2: gives the same result from a subdirectory as from the root', async () => {
+      const { subject, worktree } = await fresh({ 'sub/tracked.ts': '1\n', 'top.ts': '1\n' })
+      write(worktree, 'sub/tracked.ts', '2\n')
+      write(worktree, 'sub/new.ts', '1\n')
+      write(worktree, 'top.txt', '1\n')
+
+      const fromSub = await subject.changedPaths(join(worktree, 'sub'), 'main')
+
+      expect(fromSub.uncommitted).toEqual(['sub/new.ts', 'sub/tracked.ts', 'top.txt'])
+      expect(fromSub).toEqual(await subject.changedPaths(worktree, 'main'))
+    })
+
     it('leaves out a path a later commit restores and a path only the base moved', async () => {
       const { repo, subject, worktree } = await fresh({ x: '1\n', y: '1\n' })
       write(worktree, 'x', '2\n')
