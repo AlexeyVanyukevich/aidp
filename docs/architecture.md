@@ -525,11 +525,17 @@ without listening, and the migration is not recorded as applied. `npm run migrat
 (`runner_lost`, its phase marked interrupted) and a question open for 48 hours
 (`approval_expired`); a tick after a gap of more than two intervals — the machine slept —
 decides nothing. The runner blocks a run whose `git` or `gh` step failed (`step_failed`, with the
-command and the end of its output) and one it was stopped in (`runner_stopped`). Resume continues
-from the checkpoint with "You were interrupted. Continue from where you stopped."; a stage with no
-session reruns its step. A session Claude Code deleted fails the run, while a session killed
-before its first message is started again on a new session in the same phase row. A worktree
-that is gone is made again (see "A lost worktree").
+command and the end of its output) and one it was stopped in (`runner_stopped`). A Claude Code
+process that fails to start blocks the run the same way (`step_failed`), with the binary as the
+command and Node's message, its code and a hint as the output (`CLAUDE_BIN`, the runner's `PATH`
+or the run's worktree, whichever the failure points at). Resume runs the process again: a phase
+that never started gets a new session in the same phase row, and a resumed one continues its own.
+An `'error'` after the process started is logged to the phase's stderr log, and the `'close'` that
+follows a start failure is ignored. Resume continues from the checkpoint with "You were
+interrupted. Continue from where you stopped."; a stage with no session reruns its step. A session
+Claude Code deleted fails the run, while a session killed before its first message is started
+again on a new session in the same phase row. A worktree that is gone is made again (see "A lost
+worktree").
 
 **Cancel** of a paused or blocked run withdraws its question and queues a cleanup, which the
 runner claims and answers by removing the worktree and the linked checkouts, found by its own
