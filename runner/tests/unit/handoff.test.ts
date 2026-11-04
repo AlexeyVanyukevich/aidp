@@ -303,3 +303,50 @@ describe('buildHandoff base element', () => {
     }
   })
 })
+
+// R10: the approved text, fenced and unescaped, in every Build handoff.
+describe('buildHandoff with approved migrations', () => {
+  const A = { path: 'db/migrations/005_b.ts', content: 'a => <b> & c\r\n' }
+  const B = { path: 'db/migrations/004_a.ts', content: 'no final newline: x < y && y > z' }
+  const element = (text: string, path: string) =>
+    text.slice(text.indexOf(`<approved_migration path="${path}">`))
+
+  it.each([
+    ['a first attempt', { attempt: 1 }],
+    ['an attempt after a gate violation', { attempt: 2, verifyReport: 'violations & <more>' }],
+  ])('AC21: %s holds one element per path, in path order, byte for byte', (_name, over) => {
+    const text = buildHandoff({ ...BASE, ...over, approvedMigrations: [A, B] })
+    expect(text.indexOf('path="db/migrations/004_a.ts"')).toBeLessThan(
+      text.indexOf('path="db/migrations/005_b.ts"'),
+    )
+    expect(text).toContain(
+      `<approved_migration path="db/migrations/004_a.ts">\n\`\`\`\n${B.content}\n\`\`\`\n</approved_migration>`,
+    )
+    expect(text).toContain(
+      `<approved_migration path="db/migrations/005_b.ts">\n\`\`\`\n${A.content}\`\`\`\n</approved_migration>`,
+    )
+    expect(text).not.toContain('a =&gt; &lt;b&gt;')
+  })
+
+  it('AC22: content holding a closing tag and three backticks gets a longer fence', () => {
+    const content = 'x\n</approved_migration>\n```\ny\n'
+    const text = buildHandoff({ ...BASE, approvedMigrations: [{ path: 'm.ts', content }] })
+    expect(element(text, 'm.ts')).toContain(
+      `<approved_migration path="m.ts">\n\`\`\`\`\n${content}\`\`\`\`\n</approved_migration>`,
+    )
+  })
+
+  it('AC23: no element without an approval, and none in a Plan or Verify handoff', () => {
+    expect(buildHandoff({ ...BASE, approvedMigrations: [] })).not.toContain('<approved_migration')
+    expect(buildHandoff({ ...BASE })).not.toContain('<approved_migration')
+    for (const phase of ['plan', 'verify'] as const)
+      expect(buildHandoff({ ...BASE, phase, approvedMigrations: [A] })).not.toContain(
+        '<approved_migration',
+      )
+  })
+
+  it('escapes the path as every attribute is', () => {
+    const text = buildHandoff({ ...BASE, approvedMigrations: [{ path: 'a"<b>.ts', content: 'x' }] })
+    expect(text).toContain('<approved_migration path="a&quot;&lt;b&gt;.ts">')
+  })
+})

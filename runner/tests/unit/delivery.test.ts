@@ -820,6 +820,14 @@ describe('the files gate', () => {
       })
       expect(h.testRuns).toHaveLength(0)
     })
+    it('hands every Build session the approved content, a restarted one included', async () => {
+      const h = withPlan(harness({ initial: { uncommitted: [M] } }))
+      writeWorktreeFile(h, 'export const x = 2\n')
+      await carryOut(atTests(1), withGit(h, null))
+      expect(h.handoffs['build-2']).toContain(
+        `<approved_migration path="${M}">\n\`\`\`\n${APPROVED}\`\`\`\n</approved_migration>`,
+      )
+    })
     it('lets the tests run when the file holds the approved content', async () => {
       const h = withPlan(harness({ initial: { uncommitted: [M] } }))
       writeWorktreeFile(h, 'export const x = 1\r\n')
