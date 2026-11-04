@@ -597,3 +597,22 @@ describe('questionCount', () => {
     expect(questionCount(approval)).toBe(count)
   })
 })
+
+describe('checkRequest for a fenced migration', () => {
+  const request = (context_md: string) => ({
+    kind: 'migration' as const,
+    question: 'Adds a column.',
+    options: [],
+    files: ['server/src/db/migrations/004_x.ts'],
+    context_md,
+  })
+  const fenced = [{ field: 'context_md', code: 'fenced' }]
+  it.each([
+    ['a ts fence', '```ts\nexport const x = 1\n```', fenced],
+    ['a tilde fence', '~~~\nexport const x = 1\n~~~\n', fenced],
+    ['a fence only in the middle', 'a\n```\nx\n```\nb', []],
+    ['a fence its last line does not close', '```ts\nexport const x = 1\n', []],
+  ])('%s', (_name, context_md, findings) => {
+    expect(checkRequest(request(context_md))).toEqual(findings)
+  })
+})

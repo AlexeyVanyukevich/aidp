@@ -532,6 +532,11 @@ describe('request_approval', () => {
     ['a blank question', { ...MIGRATION, question: ' ' }, /question/],
     ['blank code', { ...MIGRATION, context_md: ' ' }, /context_md/],
     ['too much code', { ...MIGRATION, context_md: 'x'.repeat(20_001) }, /context_md/],
+    [
+      'a fenced file',
+      { ...MIGRATION, context_md: '```ts\nx\n```' },
+      /context_md: fenced; send the raw file in context_md, without a Markdown code fence/,
+    ],
   ])('refuses a migration request with %s, pausing nothing', async (_name, args, finding) => {
     const { client, runId } = await session()
     const result = await client.callTool({ name: 'request_approval', arguments: args })
@@ -543,6 +548,15 @@ describe('request_approval', () => {
       .where('run_id', '=', runId)
       .execute()
     expect(open).toEqual([])
+  })
+
+  it('describes formatting before asking and a single Write after', async () => {
+    const { client } = await session()
+    const tools = await client.listTools()
+    const description = tools.tools.find((tool) => tool.name === 'request_approval')?.description
+    expect(description).toMatch(/format the file as the project’s formatter would/)
+    expect(description).toMatch(/npx prettier --stdin-filepath/)
+    expect(description).toMatch(/single Write/)
   })
 
   it.each([

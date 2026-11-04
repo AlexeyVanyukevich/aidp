@@ -1,5 +1,6 @@
 import { isAbsolute } from 'node:path'
 import type { ApprovalKind } from '../../shared/vocabulary.js'
+import { isFenced } from './migration-content.js'
 import { migrationOrder } from './migration-order.js'
 
 /**
@@ -64,6 +65,7 @@ export interface Finding {
     | 'duplicate'
     | 'not_relative'
     | 'out_of_order'
+    | 'fenced'
   /** For `out_of_order`: the greatest sibling name, which a new name must sort after. */
   after?: string
 }
@@ -179,6 +181,8 @@ export function checkRequest(input: RequestInput, order?: MigrationSiblings): Fi
     if (blank(input.context_md)) findings.push({ field: 'context_md', code: 'required' })
     else if ((input.context_md ?? '').length > LIMITS.migrationContext)
       findings.push({ field: 'context_md', code: 'too_long' })
+    else if (isFenced(input.context_md ?? ''))
+      findings.push({ field: 'context_md', code: 'fenced' })
     const files = input.files ?? []
     if (files.length === 0) findings.push({ field: 'files', code: 'required' })
     else if (files.length > 1) findings.push({ field: 'files', code: 'too_many' })
