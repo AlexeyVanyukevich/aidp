@@ -1,5 +1,5 @@
-import { rmSync } from 'node:fs'
-import { join } from 'node:path'
+import { readFileSync, rmSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import type { Exec } from './exec.js'
 
 export class GitError extends Error {
@@ -186,6 +186,91 @@ export class Git {
       to,
     ])
     return [...new Set(out.split('\0').filter((p) => p !== ''))].sort()
+  }
+
+  /** The merge-base of HEAD and `origin/<base>`. */
+  async mergeBase(dir: string, base: string): Promise<string> {
+    return (await this.run('git', ['-C', dir, 'merge-base', 'HEAD', `origin/${base}`])).trim()
+  }
+
+  /** A ref's commit. */
+  async revParse(dir: string, ref: string): Promise<string> {
+    return (await this.run('git', ['-C', dir, 'rev-parse', '--verify', ref])).trim()
+  }
+
+  /** Whether `origin/<base>` is an ancestor of HEAD; any failure other than "no" is a `GitError`. */
+  async baseIsAncestor(dir: string, base: string): Promise<boolean> {
+    const args = ['-C', dir, 'merge-base', '--is-ancestor', `origin/${base}`, 'HEAD']
+    const result = await this.exec('git', args, {})
+    if (result.code === 0) return true
+    if (result.code === 1) return false
+    throw new GitError(`git ${args.join(' ')}`, (result.stderr || result.stdout).trim())
+  }
+
+  /** The paths a rebase or merge left unmerged, sorted. */
+  async unmergedPaths(dir: string): Promise<string[]> {
+    const out = await this.run('git', ['-C', dir, 'diff', '-z', '--name-only', '--diff-filter=U'])
+    return [...new Set(out.split('\0').filter((p) => p !== ''))].sort()
+  }
+
+  /**
+   * Rebases the branch onto `origin/<base>`. A conflict leaves the rebase in progress and returns
+   * the unmerged paths; any other failure is a `GitError`.
+   */
+  async rebase(dir: string, base: string): Promise<{ conflicts: string[] }> {
+    const args = ['-C', dir, 'rebase', `origin/${base}`]
+    const result = await this.exec('git', args, {})
+    if (result.code === 0) return { conflicts: [] }
+    const conflicts = await this.unmergedPaths(dir).catch(() => [])
+    if (conflicts.length > 0) return { conflicts }
+    throw new GitError(`git ${args.join(' ')}`, (result.stderr || result.stdout).trim())
+  }
+
+  async rebaseAbort(dir: string): Promise<void> {
+    await this.run('git', ['-C', dir, 'rebase', '--abort'])
+  }
+
+  /**
+   * The rebase in progress for `branch` in this worktree, found through `git rev-parse
+   * --git-path` (a linked worktree's `.git` is a file), or null.
+   */
+  async rebaseInProgress(dir: string, branch: string): Promise<{ onto: string } | null> {
+    for (const name of ['rebase-merge', 'rebase-apply']) {
+      const path = resolve(
+        dir,
+        (await this.run('git', ['-C', dir, 'rev-parse', '--git-path', name])).trim(),
+      )
+      const read = (file: string): string | null => {
+        try {
+          return readFileSync(join(path, file), 'utf8').trim()
+        } catch {
+          return null
+        }
+      }
+      if (read('head-name') !== `refs/heads/${branch}`) continue
+      const onto = read('onto')
+      if (onto !== null) return { onto }
+    }
+    return null
+  }
+
+  /** The commits in `from..to`, newest first, each as the abbreviated sha git prints and its subject. */
+  async logRange(dir: string, from: string, to: string): Promise<{ sha: string; subject: string }[]> {
+    const out = await this.run('git', [
+      '-C',
+      dir,
+      'log',
+      '--abbrev-commit',
+      '--format=%h%x09%s',
+      `${from}..${to}`,
+    ])
+    return out
+      .split('\n')
+      .filter((l) => l !== '')
+      .map((l) => {
+        const [sha = '', ...rest] = l.split('\t')
+        return { sha, subject: rest.join('\t') }
+      })
   }
 
   async push(dir: string, branch: string): Promise<void> {

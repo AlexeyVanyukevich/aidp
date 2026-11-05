@@ -228,6 +228,72 @@ describe('Git', () => {
     })
   })
 
+  describe('rebasing a run onto the current base', () => {
+    const subject = new Git(realExec, FAKE_GH)
+    const branch = 'board/PAY-1-r1'
+    const fresh = async () => {
+      const { repo } = targetRepository()
+      const worktree = join(mkdtempSync(join(tmpdir(), 'wt-')), 'run')
+      await subject.prepareWorktree(repo, 'main', branch, worktree)
+      return { repo, worktree }
+    }
+    const commit = (dir: string, file: string, content: string) => {
+      writeFileSync(join(dir, file), content)
+      git(['add', '-A'], dir)
+      git(['commit', '-q', '-m', `edit ${file}`], dir)
+    }
+
+    it('AC10: a clean rebase moves the branch onto the new base', async () => {
+      const { repo, worktree } = await fresh()
+      commit(worktree, 'own.txt', 'mine\n')
+      pushToMain(repo, { 'other.txt': 'theirs\n' }, 'base moves')
+      await subject.fetchBase(repo, 'main')
+      expect(await subject.baseIsAncestor(worktree, 'main')).toBe(false)
+      const before = await subject.mergeBase(worktree, 'main')
+
+      expect(await subject.rebase(worktree, 'main')).toEqual({ conflicts: [] })
+
+      expect(await subject.baseIsAncestor(worktree, 'main')).toBe(true)
+      expect(await subject.mergeBase(worktree, 'main')).toBe(
+        await subject.revParse(worktree, 'origin/main'),
+      )
+      expect(await subject.mergeBase(worktree, 'main')).not.toBe(before)
+      expect(await subject.newCommits(worktree, 'main')).toBe(1)
+      expect(await subject.logRange(worktree, before, 'origin/main')).toEqual([
+        { sha: expect.stringMatching(/^[0-9a-f]{7,}$/), subject: 'base moves' },
+      ])
+    })
+
+    it('AC10: a conflicting rebase reports its paths and, once aborted, leaves HEAD where it was', async () => {
+      const { repo, worktree } = await fresh()
+      commit(worktree, 'src/retry.ts', 'mine\n')
+      const head = await subject.head(worktree)
+      pushToMain(repo, { 'src/retry.ts': 'theirs\n' }, 'base edits it')
+      await subject.fetchBase(repo, 'main')
+
+      const result = await subject.rebase(worktree, 'main')
+
+      expect(result).toEqual({ conflicts: ['src/retry.ts'] })
+      const found = await subject.rebaseInProgress(worktree, branch)
+      expect(found).toEqual({ onto: await subject.revParse(worktree, 'origin/main') })
+      expect(await subject.rebaseInProgress(worktree, 'board/OTHER-r1')).toBeNull()
+      expect(await subject.unmergedPaths(worktree)).toEqual(['src/retry.ts'])
+
+      await subject.rebaseAbort(worktree)
+
+      expect(await subject.head(worktree)).toBe(head)
+      expect(await subject.currentBranch(worktree)).toBe(branch)
+      expect(await subject.rebaseInProgress(worktree, branch)).toBeNull()
+    })
+
+    it('reports no rebase in a worktree that has none, and throws a GitError for a bad base', async () => {
+      const { worktree } = await fresh()
+      expect(await subject.rebaseInProgress(worktree, branch)).toBeNull()
+      await expect(subject.rebase(worktree, 'nope')).rejects.toBeInstanceOf(GitError)
+      await expect(subject.baseIsAncestor(worktree, 'nope')).rejects.toBeInstanceOf(GitError)
+    })
+  })
+
   describe('refreshing a run to the current base', () => {
     const subject = new Git(realExec, FAKE_GH)
     const fresh = async () => {
