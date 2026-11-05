@@ -82,6 +82,41 @@ describe('runProcess', () => {
     expect(readFileSync(join(runDir, 'worktree.txt'), 'utf8')).toBe(input.worktree)
   })
 
+  it('passes the run variables and none of the runner’s own', async () => {
+    const saved = { ...process.env }
+    Object.assign(process.env, {
+      RUNNER_KEY: 'k',
+      DATABASE_URL: 'd',
+      PORT: '1',
+      BOARD_HOME: '/the/real/home',
+    })
+    try {
+      const { runDir, input, deps } = setUp('env > "$BOARD_RUN_DIR/env.txt"')
+      await runProcess(input, deps)
+      const lines = readFileSync(join(runDir, 'env.txt'), 'utf8').split('\n')
+      for (const name of ['RUNNER_KEY=', 'DATABASE_URL=', 'PORT=', 'BOARD_HOME=']) {
+        expect(lines.some((line) => line.startsWith(name))).toBe(false)
+      }
+      const expected = {
+        BOARD_URL: deps.boardUrl,
+        BOARD_RUN_TOKEN: input.token,
+        BOARD_RUN_ID: input.runId,
+        BOARD_PHASE_ID: input.phaseId,
+        BOARD_PHASE: input.phase,
+        BOARD_AGENT: 'builder',
+        BOARD_RUN_DIR: runDir,
+        BOARD_WORKTREE: input.worktree,
+      }
+      for (const [key, value] of Object.entries(expected)) {
+        if (key === 'BOARD_AGENT') expect(lines.some((l) => l.startsWith(`${key}=`))).toBe(true)
+        else expect(lines).toContain(`${key}=${value}`)
+      }
+    } finally {
+      for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key]
+      Object.assign(process.env, saved)
+    }
+  })
+
   it('keeps a pid file while the process runs, and removes it after', async () => {
     const { input, deps, pidFile } = setUp('sleep 0.4')
     const running = runProcess(input, deps)

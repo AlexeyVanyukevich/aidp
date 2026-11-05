@@ -6,6 +6,7 @@ import type { Readable } from 'node:stream'
 import type { SessionTotals } from '../contract.js'
 import { newEvent, type EventSink } from '../sink.js'
 import { StreamNormalizer } from '../stream/normalize.js'
+import { childEnv } from '../child-env.js'
 import { PHASES } from './agents.js'
 import { addDirsOf, buildClaudeArgs } from './claude-args.js'
 import { PAUSED_MARKER } from './run-dir.js'
@@ -169,7 +170,7 @@ export async function runProcess(input: ProcessInput, deps: ProcessDeps): Promis
     child = spawn(deps.claudeBin, args, {
       cwd: input.worktree,
       env: {
-        ...process.env,
+        ...childEnv(process.env),
         BOARD_URL: deps.boardUrl,
         BOARD_RUN_TOKEN: input.token,
         BOARD_RUN_ID: input.runId,
