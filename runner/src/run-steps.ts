@@ -10,9 +10,12 @@ import { StartFailure } from './phases/process.js'
 import type { PhaseDeps, PhaseInput, PhaseRecord, StepResult } from './phases/phase.js'
 import {
   readBase,
+  readExcluded,
+  readMark,
   readPendingAnswer,
   writeBase,
   writeExcluded,
+  writeMark,
   writePendingAnswer,
   type BasePhase,
 } from './phases/run-dir.js'
@@ -189,6 +192,12 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
   const send = (type: 'checkpoint' | 'error' | 'tool_call', fields: object) =>
     deps.sink.send([newEvent({ runId: run.id, phaseId: null, type }, fields)])
 
+  /** A tool_call the runner itself made, as the board shows it. */
+  const runnerEvent = (fields: object) =>
+    deps.sink.send([
+      newEvent({ runId: run.id, phaseId: null, type: 'tool_call', agent: 'runner' }, fields),
+    ])
+
   /** Every removal the run makes is logged, and the board is told where a token allows. */
   const removals: LogContext = {
     home: deps.config.home,
@@ -254,7 +263,11 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
    * repository's own rules (its dependencies) are there when the agents' sessions begin. A
    * failure or a timeout blocks the run in `prepare`; Resume runs the stage again.
    */
-  const runSetup = async (command: string | null, beforeBlock?: () => Promise<void>) => {
+  const runSetup = async (
+    command: string | null,
+    beforeBlock?: () => Promise<void>,
+    base?: string,
+  ) => {
     if (command === null) return
     const result = await (deps.runTests ?? runTestCommand)(command, io.worktree, {
       timeoutMs: deps.config.testTimeoutMs,
@@ -276,6 +289,35 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
       await beforeBlock?.()
       await block('step_failed', { command, output: result.output.slice(-4_096) })
     }
+    // The commit setup ran on, so a later rebase of the branch is known to make setup owed.
+    if (base !== undefined)
+      writeMark(io.runDir, 'setup', await deps.git.mergeBase(io.worktree, base))
+  }
+
+  /**
+   * Whether setup is owed: the project has a setup command, and the merge-base of HEAD and
+   * `origin/<base>` is not the one setup last ran on (or setup never recorded one).
+   */
+  const setupOwed = async (command: string | null, base: string): Promise<boolean> =>
+    command !== null &&
+    readMark(io.runDir, 'setup') !== (await deps.git.mergeBase(io.worktree, base))
+
+  /**
+   * Undoes every uncommitted path of the tests stage. The ones the runner did not write itself
+   * (those not in `excluded-paths.json`) are the builder's: they are named in an event.
+   */
+  const undoUncommitted = async (base: string): Promise<void> => {
+    const excluded = new Set(readExcluded(io.runDir))
+    const { uncommitted } = await deps.git.changedPaths(io.worktree, base)
+    const builders = uncommitted.filter((p) => !excluded.has(p)).sort()
+    await deps.git.undoUncommitted(io.worktree, base)
+    if (builders.length > 0)
+      await runnerEvent({
+        tool: 'undo_uncommitted',
+        target: `undid ${builders.length} paths the build left uncommitted`,
+        status: 'ok',
+        payload: { paths: builders },
+      })
   }
 
   /**
@@ -289,7 +331,7 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
     repo: string
     branch: string | null
     add: () => Promise<void>
-    setup?: { command: string | null; after: () => Promise<void> }
+    setup?: { command: string | null; after: () => Promise<void>; base?: string }
   }): Promise<void> => {
     const report = async (
       result: 'recreated' | 'failed',
@@ -343,7 +385,7 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
     const head = await deps.git.head(io.worktree).catch(() => undefined)
     await report('recreated', head === undefined ? {} : { head })
     if (o.setup !== undefined) {
-      await runSetup(o.setup.command, clear)
+      await runSetup(o.setup.command, clear, o.setup.base)
       await o.setup.after()
     }
   }
@@ -375,7 +417,7 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
     await deps.git.undoUncommitted(io.worktree, base)
     await deps.git.fastForward(io.worktree, base)
     await prepareLinkedCheckouts()
-    await runSetup(setupCommand)
+    await runSetup(setupCommand, undefined, base)
     writeExcluded(
       io.runDir,
       setupCommand === null ? [] : (await deps.git.changedPaths(io.worktree, base)).uncommitted,
@@ -573,6 +615,9 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
     checkpoint,
     block,
     runSetup,
+    setupOwed,
+    undoUncommitted,
+    runnerEvent,
     prepareLinkedCheckouts,
     restoreLinkedCheckouts,
     refreshBase,
