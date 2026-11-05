@@ -7,21 +7,28 @@ import type { Git } from './git.js'
 import { buildHandoff, type HandoffInput } from './phases/handoff.js'
 import { formatViolations, newlyChanged, readApprovedCopies, violationsOf } from './files-gate.js'
 import {
+  BASE_CONFLICT_REPORT,
   GATE_HEAD,
   GATE_REPORT,
   type ApprovedMigration,
+  clearMark,
   clearPendingAnswer,
+  clearUntested,
   isApprovedList,
   prepareRunDir,
   readAllowed,
   readApproved,
   readExcluded,
+  readMark,
   readPendingAnswer,
+  readUntested,
   writeAllowedFiles,
   writeApprovedMigrations,
   writeBaseBranch,
   writeExcluded,
+  writeMark,
   writePendingAnswer,
+  writeUntested,
 } from './phases/run-dir.js'
 import {
   End,
@@ -52,6 +59,12 @@ const NO_COMMIT_TEXT = 'The build made no commit, so there was nothing to verify
 const FILES_GATE = 'files_gate'
 const FILES_GATE_TEXT =
   "The build changed files the run does not allow. Check that you changed only the plan's files, undo the rest, and commit."
+/** A checkpoint's failing report when the branch did not rebase onto the base: its text is in the run directory. */
+const BASE_CONFLICT = 'base_conflict'
+const BASE_CONFLICT_TEXT =
+  'The branch conflicts with the base branch. Run `git rebase origin/<base>`, resolve each conflicting path, `git add` it and `git rebase --continue` until the rebase is done.'
+const NOTE_PATHS = 100
+const PR_UNTESTED = 20
 const PLAN_QUESTION =
   'The planner is not confident in this plan. Approve it, or say what to change.'
 
@@ -157,7 +170,9 @@ export async function carryOut(
             ? NO_COMMIT_TEXT
             : state.failingId === FILES_GATE
               ? gateReport()
-              : (await artifact('verify_report', { id: state.failingId }))?.body_md
+              : state.failingId === BASE_CONFLICT
+                ? conflictReport()
+                : (await artifact('verify_report', { id: state.failingId }))?.body_md
       return buildHandoff({
         ...common,
         plan: plan.body_md,
@@ -167,13 +182,98 @@ export async function carryOut(
     }
     // A Verify started afresh after a resume has no test output yet: the tests run again.
     if (testOutput === undefined) await tests()
+    const moved = await verifyNote()
     return buildHandoff({
       ...common,
+      ...(moved === undefined ? {} : { note: moved }),
       plan: plan.body_md,
       testOutput: testOutput ?? '',
       diff: await deps.git.diff(worktree, project.base_branch),
       planAnswers: run.plan_answers ?? [],
     })
+  }
+
+  const conflictReport = () => {
+    const file = join(runDir, BASE_CONFLICT_REPORT)
+    return existsSync(file)
+      ? readFileSync(file, 'utf8')
+      : BASE_CONFLICT_TEXT.replaceAll('<base>', project.base_branch)
+  }
+
+  /**
+   * The verifier's note when the base moved since Build began, or since the last Verify. Reading
+   * it moves the reference: the next Verify is told only what is new.
+   */
+  const verifyNote = async (): Promise<string | undefined> => {
+    const tested = readMark(runDir, 'tested')
+    const last = readMark(runDir, 'verify')
+    const reference = last ?? readMark(runDir, 'build')
+    if (tested === null || reference === null) return undefined
+    writeMark(runDir, 'verify', tested)
+    if (tested === reference) return undefined
+    const paths = await deps.git.changedBetween(worktree, reference, tested)
+    const commits = await deps.git.commitCount(worktree, reference, tested)
+    const listed = paths.slice(0, NOTE_PATHS)
+    const more = paths.length - listed.length
+    return [
+      `The base branch moved since ${last === null ? 'Build began' : 'the last Verify'}. It was at ${reference}; the branch is now tested on ${tested}, ${commits} commits later.`,
+      'Paths changed between them:',
+      ...listed,
+      ...(more > 0 ? [`and ${more} more`] : []),
+      'Check that the change still meets the spec with these changes to the base in place.',
+    ].join('\n')
+  }
+
+  /**
+   * A rebase onto the base that did not go through, found at the start of the tests stage or made
+   * by the runner: the branch is put back as it was, the worktree and the setup record are reset,
+   * and the next Build is told which paths conflict. On the last attempt the run is blocked.
+   */
+  const baseConflict = async (onto: string, paths: string[], aborted: boolean): Promise<void> => {
+    const base = project.base_branch
+    if (!aborted) await deps.git.rebaseAbort(worktree)
+    await steps.runnerEvent({
+      tool: 'base_rebase',
+      target: `${paths.length} paths conflict with the base`,
+      status: 'error',
+      payload: { to: onto, conflicts: paths },
+    })
+    await steps.undoUncommitted(base)
+    writeExcluded(runDir, [])
+    clearMark(runDir, 'setup')
+    const command = `git rebase origin/${base}`
+    const report = [
+      `The branch conflicts with ${base}. The rebase was onto ${onto}; these paths conflict:`,
+      '',
+      ...paths.map((p) => `- ${p}`),
+      '',
+      `Run \`${command}\`, resolve each path, \`git add\` it and \`git rebase --continue\` until the rebase is done.`,
+      '',
+    ].join('\n')
+    writeFileSync(join(runDir, BASE_CONFLICT_REPORT), report)
+    if (state.attempt >= MAX_ATTEMPTS)
+      await steps.block('step_failed', {
+        command,
+        output: [
+          ...paths,
+          `In ${worktree}, run \`${command}\`, resolve each path listed, \`git add\` it and run \`git rebase --continue\` until the rebase is done, then Resume.`,
+        ].join('\n'),
+      })
+    nextAttempt(BASE_CONFLICT)
+  }
+
+  /** The pull request body's lines about the base: what was tested, and what arrived too late. */
+  const testedSection = (): string => {
+    const tested = readMark(runDir, 'tested')
+    if (tested === null) return ''
+    const untested = readUntested(runDir)
+    const listed = untested.slice(0, PR_UNTESTED).map((c) => `${c.sha} ${c.subject}`)
+    const more = untested.length - listed.length
+    const section =
+      untested.length === 0
+        ? ''
+        : `## Not tested with this change\n\n${[...listed, ...(more > 0 ? [`and ${more} more`] : [])].join('\n')}\n\n`
+    return `Tested on \`${project.base_branch}\` at \`${tested}\`.\n\n${section}`
   }
 
   const gateReport = () => {
@@ -297,6 +397,7 @@ export async function carryOut(
             : {
                 setup: {
                   command: project.setup_command,
+                  base: project.base_branch,
                   after: async () =>
                     writeExcluded(
                       runDir,
@@ -306,7 +407,15 @@ export async function carryOut(
               }),
         })
       } else if ((await deps.git.currentBranch(worktree).catch(() => null)) !== branch) {
-        throw new End('failed', "the run's worktree is gone")
+        // A rebase of the run's branch in progress has HEAD detached: that is not a lost worktree.
+        const half = await deps.git.rebaseInProgress(worktree, branch).catch(() => null)
+        if (half === null) throw new End('failed', "the run's worktree is gone")
+        // Build continues with the rebase in place, and the tests stage handles it (R4).
+        if (state.stage !== 'build' && state.stage !== 'tests')
+          await steps.block('step_failed', {
+            command: 'git rebase',
+            output: `A rebase of ${branch} is in progress in ${worktree}. Abort it with \`git rebase --abort\`, then Resume.`,
+          })
       }
       if (!refreshAtPlan) await steps.restoreLinkedCheckouts()
     }
@@ -325,7 +434,7 @@ export async function carryOut(
           }
           await deps.git.prepareWorktree(project.repo_path, project.base_branch, branch, worktree)
           await steps.prepareLinkedCheckouts()
-          await steps.runSetup(project.setup_command)
+          await steps.runSetup(project.setup_command, undefined, project.base_branch)
           // What setup left in the worktree is the runner's doing, not the builder's.
           writeExcluded(runDir, project.setup_command === null ? [] : await uncommitted())
           state.stage = kept === null ? 'plan' : 'build'
@@ -420,6 +529,8 @@ export async function carryOut(
           break
         }
         case 'build': {
+          if (state.attempt === 1 && readMark(runDir, 'build') === null)
+            writeMark(runDir, 'build', await deps.git.mergeBase(worktree, project.base_branch))
           const result = await steps.phaseStep('build', handoffFor('build'))
           if (!result.ok) await steps.failPhase('build')
           await steps.endPhase(true)
@@ -428,8 +539,53 @@ export async function carryOut(
         }
         case 'tests': {
           await steps.checkpoint()
+          const base = project.base_branch
+          // A rebase left in progress is a conflict: the builder's, or one a resume found.
+          const half = await deps.git.rebaseInProgress(worktree, branch)
+          if (half !== null) {
+            const paths = await deps.git.unmergedPaths(worktree)
+            await deps.git.rebaseAbort(worktree)
+            await baseConflict(half.onto, paths, true)
+            break
+          }
+          await deps.git.fetchBase(project.repo_path, base)
+          const rebaseOwed = !(await deps.git.baseIsAncestor(worktree, base))
+          if (await steps.setupOwed(project.setup_command, base)) {
+            await steps.undoUncommitted(base)
+            if (!rebaseOwed) {
+              await steps.runSetup(project.setup_command, undefined, base)
+              writeExcluded(runDir, await uncommitted())
+            }
+          }
           if (!(await gate())) break
-          const commits = await deps.git.newCommits(worktree, project.base_branch)
+          if (rebaseOwed) {
+            await steps.undoUncommitted(base)
+            const from = await deps.git.mergeBase(worktree, base)
+            const to = await deps.git.revParse(worktree, `origin/${base}`)
+            const { conflicts } = await deps.git.rebase(worktree, base)
+            if (conflicts.length > 0) {
+              await baseConflict(to, conflicts, false)
+              break
+            }
+            const commits = await deps.git.commitCount(worktree, from, to)
+            await steps.runnerEvent({
+              tool: 'base_rebase',
+              target: `rebased onto ${to}, ${commits} commits later`,
+              status: 'ok',
+              payload: {
+                from,
+                to,
+                commits,
+                paths: await deps.git.changedBetween(worktree, from, to),
+              },
+            })
+            await steps.runSetup(project.setup_command, undefined, base)
+            writeExcluded(runDir, project.setup_command === null ? [] : await uncommitted())
+          }
+          // Verify may not move the branch that is pushed: the push stage compares against this.
+          writeFileSync(join(runDir, GATE_HEAD), await deps.git.head(worktree))
+          writeMark(runDir, 'tested', await deps.git.revParse(worktree, `origin/${base}`))
+          const commits = await deps.git.newCommits(worktree, base)
           await tests()
           await steps.stopIfShuttingDown()
           if (commits === 0) nextAttempt(NO_COMMIT)
@@ -463,6 +619,24 @@ export async function carryOut(
                 `Verify changed the branch: HEAD is ${now}, Build ended on ${built}`,
               )
           }
+          // A base commit that arrived after the tests is recorded, never a reason to stop.
+          const tested = readMark(runDir, 'tested')
+          if (tested !== null) {
+            const base = project.base_branch
+            await deps.git.fetchBase(project.repo_path, base)
+            const now = await deps.git.revParse(worktree, `origin/${base}`)
+            if (now === tested) clearUntested(runDir)
+            else {
+              const commits = await deps.git.logRange(worktree, tested, `origin/${base}`)
+              writeUntested(runDir, commits)
+              await steps.runnerEvent({
+                tool: 'base_check',
+                target: `${commits.length} commits reached ${base} after the tests`,
+                status: 'error',
+                payload: { tested, now, commits },
+              })
+            }
+          }
           await deps.git.push(worktree, branch)
           state.stage = 'pr'
           break
@@ -478,7 +652,7 @@ export async function carryOut(
               base: project.base_branch,
               branch,
               title: `${task.key}: ${task.title}`,
-              body: `${task.key}, run ${run.number}, spec v${specOf().version}.\n\n## Verify report\n\n${report?.body_md ?? ''}\n`,
+              body: `${task.key}, run ${run.number}, spec v${specOf().version}.\n\n${testedSection()}## Verify report\n\n${report?.body_md ?? ''}\n`,
             }))
           return { outcome: 'review' as const, extra: { pr_number: pr.number, pr_url: pr.url } }
         }
