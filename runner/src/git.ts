@@ -255,7 +255,11 @@ export class Git {
   }
 
   /** The commits in `from..to`, newest first, each as the abbreviated sha git prints and its subject. */
-  async logRange(dir: string, from: string, to: string): Promise<{ sha: string; subject: string }[]> {
+  async logRange(
+    dir: string,
+    from: string,
+    to: string,
+  ): Promise<{ sha: string; subject: string }[]> {
     const out = await this.run('git', [
       '-C',
       dir,
