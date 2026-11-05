@@ -1,4 +1,11 @@
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -168,5 +175,127 @@ const NOTE_ROWS: NoteRow[] = [
 describe('baseMovedNote', () => {
   it.each(NOTE_ROWS)('AC9: $name', ({ phase, commits, paths, expected }) => {
     expect(baseMovedNote(phase, { from: 'aaa', to: 'bbb', commits, paths })).toBe(expected)
+  })
+})
+
+// R1, R3: setup records the merge-base it ran on; the tests stage undoes what the builder left.
+describe('setup bookkeeping', () => {
+  const MERGE_BASE = 'm'.repeat(40)
+  const setupFile = (runDir: string) => join(runDir, 'setup-base.txt')
+
+  function rig(o: { setupExit?: number; uncommitted?: string[]; excluded?: string[] } = {}) {
+    const home = mkdtempSync(join(tmpdir(), 'home-'))
+    const { worktree, runDir } = runPaths(home, RUN.id)
+    mkdirSync(runDir, { recursive: true })
+    mkdirSync(worktree, { recursive: true })
+    if (o.excluded !== undefined)
+      writeFileSync(join(runDir, 'excluded-paths.json'), JSON.stringify(o.excluded))
+    const events: { tool: string | null; target: string | null; payload: unknown }[] = []
+    const undone: number[] = []
+    const deps = {
+      api: { issueToken: async () => 't' },
+      git: {
+        mergeBase: async () => MERGE_BASE,
+        fetchBase: async () => undefined,
+        head: async () => 'h',
+        undoUncommitted: async () => {
+          undone.push(1)
+        },
+        fastForward: async () => undefined,
+        changedPaths: async () => ({
+          mergeBase: MERGE_BASE,
+          committed: [],
+          uncommitted: o.uncommitted ?? [],
+        }),
+        branchExists: async () => true,
+        prepareDetachedWorktree: async () => undefined,
+        removeWorktree: async () => undefined,
+        pruneWorktrees: async () => undefined,
+      } as unknown as Git,
+      sink: {
+        send: async (batch: { tool: string | null; target: string | null; payload: unknown }[]) => {
+          events.push(...batch)
+        },
+      },
+      runTests: async () => ({
+        exitCode: o.setupExit ?? 0,
+        timedOut: false,
+        output: '',
+        truncated: false,
+        durationMs: 1,
+      }),
+      setToken: () => undefined,
+      config: { home, testTimeoutMs: 1000 },
+    } as unknown as RunDeps
+    const steps = runSteps({ kind: 'start', run: RUN }, deps, { worktree, runDir, budgetUsd: null })
+    return { steps, runDir, events, undone }
+  }
+
+  type Point = 'prepare' | 'refresh' | 'recreate' | 'tests'
+  const POINTS: Point[] = ['prepare', 'refresh', 'recreate', 'tests']
+  const runPoint = (r: ReturnType<typeof rig>, point: Point) => {
+    if (point === 'refresh') return r.steps.refreshBase('plan', '/repo', 'main', 'npm ci')
+    if (point === 'recreate')
+      return r.steps.recreate({
+        caller: 'delivery_resume',
+        repo: '/repo',
+        branch: null,
+        add: async () => undefined,
+        setup: { command: 'npm ci', after: async () => undefined, base: 'main' },
+      })
+    // `prepare` and the tests stage both call runSetup with the base.
+    return r.steps.runSetup('npm ci', undefined, 'main')
+  }
+
+  it.each(POINTS)('AC1: %s writes the merge-base when setup succeeds', async (point) => {
+    const r = rig()
+    await runPoint(r, point)
+    expect(readFileSync(setupFile(r.runDir), 'utf8')).toBe(MERGE_BASE)
+  })
+
+  it.each(POINTS)('AC1: %s leaves the file as it was when setup fails', async (point) => {
+    const r = rig({ setupExit: 1 })
+    writeFileSync(setupFile(r.runDir), 'old')
+    await expect(runPoint(r, point)).rejects.toBeInstanceOf(Release)
+    expect(readFileSync(setupFile(r.runDir), 'utf8')).toBe('old')
+  })
+
+  it('writes nothing when the project has no setup command', async () => {
+    const r = rig()
+    await r.steps.runSetup(null, undefined, 'main')
+    expect(existsSync(setupFile(r.runDir))).toBe(false)
+  })
+
+  it.each<[string, string | null, string | null, boolean]>([
+    ['equal to the merge-base', 'npm ci', MERGE_BASE, false],
+    ['different from it', 'npm ci', 'other', true],
+    ['missing', 'npm ci', null, true],
+    ['missing, without a setup command', null, null, false],
+  ])('R1: setup owed when the file is %s', async (_name, command, file, owed) => {
+    const r = rig()
+    if (file !== null) writeFileSync(setupFile(r.runDir), file)
+    expect(await r.steps.setupOwed(command, 'main')).toBe(owed)
+  })
+
+  it.each<[string, string[], string[] | undefined, string[] | null]>([
+    ['the builder’s paths only', ['a.ts', 'lock.json'], ['lock.json'], ['a.ts']],
+    ['paths sorted', ['b.ts', 'a.ts'], [], ['a.ts', 'b.ts']],
+    ['only the runner’s paths: no event', ['lock.json'], ['lock.json'], null],
+    ['nothing uncommitted: no event', [], undefined, null],
+  ])('AC7: undo_uncommitted names %s', async (_name, uncommitted, excluded, named) => {
+    const r = rig({ uncommitted, ...(excluded === undefined ? {} : { excluded }) })
+    await r.steps.undoUncommitted('main')
+    expect(r.undone).toHaveLength(1)
+    const sent = r.events.filter((e) => e.tool === 'undo_uncommitted')
+    if (named === null) expect(sent).toEqual([])
+    else {
+      expect(sent).toHaveLength(1)
+      expect(sent[0]).toMatchObject({
+        target: `undid ${named.length} paths the build left uncommitted`,
+        status: 'ok',
+        agent: 'runner',
+        payload: { paths: named },
+      })
+    }
   })
 })
