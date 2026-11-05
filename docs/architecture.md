@@ -328,7 +328,8 @@ uncommitted path (staged, unstaged, untracked, never ignored), restoring a path 
 content at HEAD and deleting one it does not; fast-forwards the branch with `git merge --ff-only
 origin/<base>`; remakes the linked checkouts from the claim's current links; runs the setup
 command again (a `setup_command` event); and rewrites `excluded-paths.json` to the uncommitted
-list, or to an empty list for a project without a setup command. A failure of any step is a
+list, or to an empty list for a project without a setup command; a setup that succeeded writes
+`setup-base.txt` (see "The tests stage on the current base"). A failure of any step is a
 `step_failed` block at `plan`, with no phase process run. The Plan phase's branch has no commits of
 its own, which is why the undo and the fast-forward are safe there. A run holding a kept plan
 refreshes nothing, and a resume at Build or Verify refreshes nothing. A spec run's resume at the
@@ -421,8 +422,9 @@ form. A path with no canonical form is refused. When `BOARD_WORKTREE` is unset, 
 resolve, the guard refuses every tool call, naming the variable.
 
 _The files gate._ The guard checks only the file tools, so a change written through `Bash` (a
-script, `sed -i`) is checked afterwards, on what the worktree holds. At the start of the `tests`
-stage, before the commit count and the test command, the runner lists the paths the branch
+script, `sed -i`) is checked afterwards, on what the worktree holds. In the `tests` stage, after
+the stage's fetch and setup (see "The tests stage on the current base") and before the rebase, the
+commit count and the test command, the runner lists the paths the branch
 changes: _committed_ is the net difference from the merge-base with `origin/<base>` as last
 fetched (`git diff -z --name-only --no-renames`, so deletions and both sides of a rename count and
 a path restored to its fork-point content does not), _uncommitted_ is staged, unstaged and
@@ -441,12 +443,96 @@ allowed`. When the gate passes it records the worktree's `HEAD` (`gate-head.txt`
 
 _Excluded paths._ What the runner's own commands write is not the builder's. `excluded-paths.json`
 holds those paths: right after the setup command in `prepare` (and again in each Plan-stage
-refresh) it is set to the uncommitted list,
+refresh and each run of setup in the tests stage) it is set to the uncommitted list,
 and around each run of the test command the runner adds every uncommitted path that the run
 created. Exclusions apply to the uncommitted list only and go by path; a committed path is never
 excluded, so committing `git add -A` output of setup is a violation. Files the builder's own
 commands create before the runner's first test run are not excluded: on attempt 1 they count
 until the builder deletes them, which is the cost of a builder that runs the tests itself.
+
+_The tests stage on the current base._ The tests and Verify run on the branch rebased onto the
+base as it stands when the `tests` stage starts, with setup run on that base. In order, the
+runner:
+
+1. Finds a rebase of the run's branch still in progress, and treats it as a conflict (below). A
+   rebase is of the run's branch when `git rev-parse --git-path rebase-merge` or `rebase-apply`
+   (a linked worktree's `.git` is a file, so the state is never joined onto the worktree
+   directory) names a directory whose `head-name` is `refs/heads/<branch>`; its `onto` file is the
+   commit the rebase is onto.
+2. Runs `git fetch origin <base>` in the project's `repo_path`. A rebase is owed when
+   `origin/<base>` is not an ancestor of HEAD.
+3. When setup is owed, undoes every uncommitted path; unless a rebase is owed, it then runs the
+   setup command (a `setup_command` event), rewrites `excluded-paths.json` to the uncommitted list
+   and writes `setup-base.txt`. A failed setup blocks the run as `step_failed` at `tests`.
+4. Runs the files gate.
+5. When a rebase is owed: undoes every uncommitted path, runs `git rebase origin/<base>`, and on
+   success runs setup, rewrites `excluded-paths.json` and writes `setup-base.txt`.
+6. Writes the worktree's HEAD to `gate-head.txt`, so the push stage compares against the rebased
+   HEAD, and the fetched `origin/<base>` commit to `tested-base.txt`. Then the commit count and the
+   test command run.
+
+`setup-base.txt` holds the merge-base of HEAD and `origin/<base>` as of the last setup that
+succeeded: `prepare`, the Plan-stage refresh, a worktree remade on resume, and the tests stage
+each write it after a successful setup, and a failed setup leaves it as it was. Setup is owed when
+the project has a setup command and the file is missing or differs from that merge-base, so a
+branch the builder or the owner rebased gets setup again, and a run started before the file
+existed gets it once.
+
+Each time the runner undoes uncommitted paths in this stage it first takes the ones not in
+`excluded-paths.json`, which are the builder's; when there are any it sends a runner `tool_call`
+event `undo_uncommitted` (status `ok`, target `undid <n> paths the build left uncommitted`,
+payload `paths`). Uncommitted edits to allowed files stay in place when no rebase is owed and
+setup is not (AIDP-72).
+
+A rebase that succeeded sends a `base_rebase` event, status `ok`, target `rebased onto <sha>, <n>
+commits later`, payload `from` (the merge-base before), `to`, `commits` and `paths`. A conflict,
+whether from the runner's rebase or a half-finished one found in step 1 (the builder left it, or a
+resume found it), does not run the test command. The runner lists the unmerged paths, runs `git
+rebase --abort` (which leaves the branch as it was), undoes every uncommitted path, sets
+`excluded-paths.json` to an empty list, deletes `setup-base.txt` and writes
+`base-conflict-report.md`: the commit the rebase was onto, the conflicting paths, and the
+instruction to run `git rebase origin/<base>`, resolve, `git add` and `git rebase --continue`. A
+`base_rebase` event with status `error`, target `<n> paths conflict with the base` and payload `to`
+and `conflicts` is sent. On attempt 1 or 2 Build goes round again with the failing report
+`base_conflict` in the checkpoint, sharing Verify's three attempts; `handoffFor('build')` reads the
+report from the file, or uses a fixed text when it is missing. On attempt 3 the run is blocked
+instead of ended: `step_failed` at `tests`, command `git rebase origin/<base>`, output the paths
+and the instruction to rebase by hand and Resume. The attempt stays at 3, and Resume runs the
+`tests` stage again from step 1. A tests stage where no rebase was owed and none was in progress
+sends no `base_rebase` event. The linked checkouts are not fetched or remade in the `tests` or
+`push` stage, nothing force-pushes, and the base is never merged in.
+
+_The half-finished rebase on resume._ A resume whose worktree is not on the run's branch looks for
+a rebase of that branch in progress (above). Without one the run ends `failed` with "the run's
+worktree is gone". With one, the run goes on at `build` (the builder's session continues with the
+rebase in place) and at `tests` (step 1); at `plan`, `verify`, `push` or `pr` it blocks as
+`step_failed` at that stage, command `git rebase`, with output telling the owner to abort it with
+`git rebase --abort` and Resume. An owner who finished the rebase instead moves HEAD, and a run
+resumed at `verify` or `push` ends at `push` with "Verify changed the branch".
+
+_The verifier's note._ When Build's attempt 1 begins, the runner writes the merge-base of HEAD and
+`origin/<base>` to `build-base.txt` if it is missing. Each time a Verify handoff is built, the
+reference is `verify-base.txt` if present and `build-base.txt` otherwise; when `tested-base.txt`
+differs from it, the handoff carries a `<note>`: the base moved since Build began (or since the
+last Verify), the old and new commits and the commits between them, the paths changed (sorted, the
+first 100, then `and <k> more`), and a request to check that the change still meets the spec with
+those changes in place. The runner then writes the tested base to `verify-base.txt`. A missing
+`tested-base.txt`, or no reference, gives no note; resuming a Verify session adds none.
+
+_The check before the push._ When `tested-base.txt` exists, the `push` stage runs `git fetch
+origin <base>` again before the branch is pushed. When `origin/<base>` differs from the tested
+base, the runner writes the commits `<tested>..origin/<base>` to `untested-commits.json` (a list of
+`{ sha, subject }`) and sends a runner `tool_call` event `base_check` (status `error`, target `<n>
+commits reached <base> after the tests`, payload `tested`, `now` and `commits`); when it is equal,
+the file is removed and nothing is sent. The branch is pushed either way with the same `-u origin
+<branch>` and no force: a base that moves after the tests is recorded, not tested again. A failed
+fetch blocks the run as `step_failed`. A run without `tested-base.txt` fetches and compares
+nothing.
+
+_The pull request body._ After its first line the body has ``Tested on `<base>` at `<sha>`.``
+(from `tested-base.txt`); when `untested-commits.json` lists commits, a section `## Not tested with
+this change` follows, before the Verify report, with one `<sha> <subject>` line per commit (the
+first 20, then `and <k> more`). A run without `tested-base.txt` writes the body as before.
 
 _Feedback on Bash._ After each `Bash` call in Build, the PostToolUse hook runs the same
 computation and, with any violation, writes `{"decision":"block","reason":…}` with the report's
@@ -601,7 +687,9 @@ with "the run's worktree and its branch <branch> are gone". A spec run resumed p
 gets a detached worktree of `origin/<base>` again, then the Spec-stage refresh runs as usual; the
 worktree is at the base's current tip while `spec-base.txt` keeps the base the spec-writer last
 read, so the base-moved note reports the difference. A worktree that exists on another branch
-still fails the run. Each re-creation logs a `recreate` line and sends a `recreate_worktree`
+still fails the run, unless a rebase of the run's branch is in progress there (see "The
+half-finished rebase on resume"). A delivery run's remade worktree writes `setup-base.txt` after
+its setup. Each re-creation logs a `recreate` line and sends a `recreate_worktree`
 tool call (target the path, status `ok` or `error`, payload `caller`, `result`, the branch, the
 new HEAD, and `output` on failure). A failed add or setup blocks the run as `step_failed`, after
 what was left at the path is cleared through the guard (caller `recreate`); the next Resume
@@ -656,11 +744,12 @@ never matches.
 The guard sees what a tool is asked to do, not what a `Bash` command writes, so Build's file list
 is also checked on the worktree: by the files gate before the test command, and by the PostToolUse
 hook after each `Bash` call (see "Out-of-plan edits"). Both read the changed paths through `git`
-with `-z`, and nothing is fetched. Before the push, the runner compares the worktree's `HEAD` with
-the one recorded when the gate passed; if Verify committed, the run ends `failed` with `Verify
-changed the branch: HEAD is <sha>, Build ended on <sha>` and nothing is pushed (a run started
-before the gate existed has no record and pushes as before). A `Bash` write outside the worktree
-is not caught.
+with `-z`. Before the push, the runner compares the worktree's `HEAD` with the one recorded at
+the end of the tests stage, after any rebase onto the base; if Verify committed, the run ends
+`failed` with `Verify changed the branch: HEAD is <sha>, Build ended on <sha>` and nothing is
+pushed (a run started before the gate existed has no record and pushes as before). The push stage
+then fetches the base again, only to record what arrived after the tests (see "The tests stage on
+the current base"); the push is never forced. A `Bash` write outside the worktree is not caught.
 
 The guard reads `linked.json`. Edit, Write, MultiEdit and NotebookEdit on a path inside a linked
 checkout or a linked project's `repo_path` are refused, naming the project's key and saying linked
