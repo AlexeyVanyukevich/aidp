@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -17,6 +17,8 @@ import { LOG_FILE } from '../../src/worktree-log.js'
 import type { PhaseRecord, StepResult } from '../../src/phases/phase.js'
 import {
   BRANCH,
+  FORK,
+  ORIGIN,
   RUN,
   RUN_DIR,
   START,
@@ -1086,30 +1088,31 @@ describe('a Plan-stage resume refreshes the base first', () => {
     async (_n, message, planner) => {
       const h = withPlan(harness({ setupCommand: SETUP, moveTo: MOVE }))
       await carryOut(claim(message), h.deps)
-      const refresh = h.order.filter((o) => o !== 'phase')
-      expect(refresh.slice(0, 4)).toEqual(['fetch', 'undo', 'ff', 'setup'])
-      expect(h.order.filter((o) => o === 'fetch')).toHaveLength(1)
+      // The tests stage fetches and sets up again later; the refresh is what comes before any phase.
+      const refresh = h.order.slice(0, h.order.indexOf('phase'))
+      expect(refresh).toEqual(['fetch', 'undo', 'ff', 'setup'])
       expect(h.order.filter((o) => o === 'ff')).toHaveLength(1)
-      expect(h.order.filter((o) => o === 'setup')).toHaveLength(1)
-      expect(h.order.indexOf('phase')).toBeGreaterThan(h.order.indexOf('setup'))
       expect(h.calls.some((c) => c.startsWith('resume plan'))).toBe(planner)
       if (!planner) expect(h.calls.slice(0, 2)).toEqual(['end plan-1 ok', 'start build-1'])
     },
   )
 
-  it.each<[string, Checkpoint, RunWork]>([
-    ['Build', checkpoint('build', 1, 'build-phase'), WITH_SETUP],
-    ['tests', checkpoint('tests', 1), WITH_SETUP],
-    ['Verify', checkpoint('verify', 1, 'verify-phase'), WITH_SETUP],
+  // The tests stage fetches by itself (R5); only the refresh fast-forwards.
+  it.each<[string, Checkpoint, RunWork, string]>([
+    ['Build', checkpoint('build', 1, 'build-phase'), WITH_SETUP, 'phase'],
+    ['tests', checkpoint('tests', 1), WITH_SETUP, 'fetch'],
+    ['Verify', checkpoint('verify', 1, 'verify-phase'), WITH_SETUP, 'phase'],
     [
       'a kept plan',
       checkpoint('plan', 1),
       { ...WITH_SETUP, kept_plan: { artifact_id: 'plan-1', from_run: 1 } },
+      'phase',
     ],
-  ])('AC3: a resume in %s does no refresh', async (_n, cp, run) => {
+  ])('AC3: a resume in %s does no refresh', async (_n, cp, run, first) => {
     const h = withPlan(harness({ setupCommand: SETUP, moveTo: MOVE }))
     await carryOut(claim(INTERRUPTED, run, cp), h.deps)
-    expect(h.order.filter((o) => ['fetch', 'undo', 'ff', 'setup'].includes(o))).toEqual([])
+    expect(h.order).not.toContain('ff')
+    expect(h.order[0]).toBe(first)
   })
 
   it('AC3: a Build resume gets its message unchanged and writes no plan-base.txt', async () => {
@@ -1375,5 +1378,480 @@ describe('a Plan-stage resume refreshes the base first', () => {
       expect(h.calls[0]!.endsWith(`\n\n${INTERRUPTED}`)).toBe(true)
       expect(answerEvents(h)).toEqual([])
     })
+  })
+})
+
+// The tests stage runs on the base as it stands (AIDP-54).
+describe('the tests stage on the current base', () => {
+  const SETUP = 'npm ci'
+  const WITH_SETUP: RunWork = { ...RUN, project: { ...RUN.project, setup_command: SETUP } }
+  const dir = (h: ReturnType<typeof harness>) => RUN_DIR(h.home)
+  const seed = (h: ReturnType<typeof harness>, files: Record<string, string>) => {
+    mkdirSync(dir(h), { recursive: true })
+    for (const [name, text] of Object.entries(files)) writeFileSync(join(dir(h), name), text)
+  }
+  const text = (h: ReturnType<typeof harness>, name: string) =>
+    readFileSync(join(dir(h), name), 'utf8')
+  const has = (h: ReturnType<typeof harness>, name: string) => existsSync(join(dir(h), name))
+  const at = (
+    stage: Checkpoint['stage'],
+    attempt: number,
+    run: RunWork = RUN,
+    phase?: string,
+  ): Extract<Work, { kind: 'resume' }> =>
+    ({ ...resume(checkpoint(stage, attempt, phase), INTERRUPTED), run }) as Extract<
+      Work,
+      { kind: 'resume' }
+    >
+  /** What happened before the first phase call of the tests stage's own round. */
+  const beforePhase = (h: ReturnType<typeof harness>) => h.order.slice(0, h.order.indexOf('phase'))
+  const events = (h: ReturnType<typeof harness>, tool: string) =>
+    h.of('tool_call').filter((e) => e.tool === tool)
+  const MOVED = { fetchTo: [ORIGIN] }
+
+  interface SetupRow {
+    name: string
+    seed: string | null
+    script: Script
+    withSetup: boolean
+    order: string[]
+  }
+  const SETUP_ROWS: SetupRow[] = [
+    {
+      name: 'equal to the merge-base, base not moved',
+      seed: FORK,
+      script: {},
+      withSetup: true,
+      order: ['fetch', 'gate'],
+    },
+    {
+      name: 'different from it (the builder rebased), base not moved',
+      seed: 'other',
+      script: {},
+      withSetup: true,
+      order: ['fetch', 'undo', 'setup', 'gate'],
+    },
+    {
+      name: 'missing, base not moved',
+      seed: null,
+      script: {},
+      withSetup: true,
+      order: ['fetch', 'undo', 'setup', 'gate'],
+    },
+    {
+      name: 'different from it, base moved since the builder’s rebase',
+      seed: 'other',
+      script: MOVED,
+      withSetup: true,
+      order: ['fetch', 'undo', 'gate', 'undo', 'rebase', 'setup'],
+    },
+    {
+      name: 'missing, and the project has no setup command',
+      seed: null,
+      script: {},
+      withSetup: false,
+      order: ['fetch', 'gate'],
+    },
+  ]
+  it.each(SETUP_ROWS)('AC2: setup-base.txt $name', async (row) => {
+    const h = withPlan(harness({ setupCommand: SETUP, ...row.script }))
+    if (row.seed !== null) seed(h, { 'setup-base.txt': row.seed })
+    await carryOut(at('tests', 1, row.withSetup ? WITH_SETUP : RUN), h.deps)
+    expect(beforePhase(h)).toEqual(row.order)
+    expect(h.testRuns).toHaveLength(1)
+  })
+
+  it('AC8, AC14: rebases a base that gained commits, sets up on it, and records what it tested', async () => {
+    const h = withPlan(
+      harness({ setupCommand: SETUP, afterSetup: ['package-lock.json'], ...MOVED }),
+    )
+    seed(h, { 'setup-base.txt': FORK })
+    await carryOut(at('tests', 1, WITH_SETUP), h.deps)
+    expect(beforePhase(h)).toEqual(['fetch', 'gate', 'undo', 'rebase', 'setup'])
+    expect(text(h, 'gate-head.txt')).toBe('rebased-1')
+    expect(text(h, 'tested-base.txt')).toBe(ORIGIN)
+    expect(text(h, 'setup-base.txt')).toBe(ORIGIN)
+    expect(JSON.parse(text(h, 'excluded-paths.json'))).toEqual(['package-lock.json'])
+    expect(events(h, 'base_rebase')).toHaveLength(1)
+    expect(events(h, 'base_rebase')[0]).toMatchObject({
+      agent: 'runner',
+      status: 'ok',
+      target: `rebased onto ${ORIGIN}, 3 commits later`,
+      payload: { from: FORK, to: ORIGIN, commits: 3, paths: ['a.ts'] },
+    })
+    expect(h.testRuns).toEqual(['npm test'])
+  })
+
+  it('AC9: an unmoved base is fetched and nothing else is done', async () => {
+    const h = withPlan(harness({ setupCommand: SETUP }))
+    seed(h, { 'setup-base.txt': FORK })
+    await carryOut(at('tests', 1, WITH_SETUP), h.deps)
+    expect(beforePhase(h)).toEqual(['fetch', 'gate'])
+    expect(events(h, 'base_rebase')).toEqual([])
+    expect(text(h, 'tested-base.txt')).toBe(FORK)
+  })
+
+  it('AC3: a branch the owner rebased by hand after the attempt-3 block is set up before the gate', async () => {
+    const h = withPlan(harness({ setupCommand: SETUP, afterSetup: ['package-lock.json'] }))
+    seed(h, { 'excluded-paths.json': '[]' })
+    await carryOut(at('tests', 3, WITH_SETUP), h.deps)
+    expect(beforePhase(h)).toEqual(['fetch', 'undo', 'setup', 'gate'])
+    expect(JSON.parse(text(h, 'excluded-paths.json'))).toEqual(['package-lock.json'])
+    expect(h.testRuns).toHaveLength(1)
+  })
+
+  it('AC4: a setup that fails after the rebase blocks at tests, and Resume undoes its leftovers first', async () => {
+    const h = withPlan(
+      harness({ setupCommand: SETUP, setupExits: [1, 0], afterSetup: ['lock.json'], ...MOVED }),
+    )
+    seed(h, { 'setup-base.txt': FORK })
+    expect(await carryOut(at('tests', 1, WITH_SETUP), h.deps)).toBe('released')
+    expect(h.of('error').at(-1)?.payload).toMatchObject({
+      blocks: true,
+      cause: 'step_failed',
+      stage: 'tests',
+      command: SETUP,
+    })
+    expect(text(h, 'setup-base.txt')).toBe(FORK)
+    expect(h.testRuns).toEqual([])
+
+    h.order.length = 0
+    await carryOut(at('tests', 1, WITH_SETUP), h.deps)
+    expect(beforePhase(h)).toEqual(['fetch', 'undo', 'setup', 'gate'])
+    expect(events(h, 'files_gate').at(-1)).toMatchObject({
+      status: 'ok',
+      payload: { violations: [] },
+    })
+    expect(h.testRuns).toEqual(['npm test'])
+    expect(text(h, 'setup-base.txt')).toBe(ORIGIN)
+  })
+
+  it('AC7: only the builder’s uncommitted paths are named when the runner rebases', async () => {
+    const h = withPlan(
+      harness({
+        ...MOVED,
+        initial: { uncommitted: ['src/retry.ts', 'lock.json'] },
+      }),
+    )
+    seed(h, { 'excluded-paths.json': '["lock.json"]' })
+    await carryOut(at('tests', 1), h.deps)
+    expect(events(h, 'undo_uncommitted')).toHaveLength(1)
+    expect(events(h, 'undo_uncommitted')[0]).toMatchObject({
+      target: 'undid 1 paths the build left uncommitted',
+      payload: { paths: ['src/retry.ts'] },
+    })
+  })
+
+  it('AC7: no undo_uncommitted event when only the runner’s own paths are uncommitted', async () => {
+    const h = withPlan(harness({ ...MOVED, initial: { uncommitted: ['lock.json'] } }))
+    seed(h, { 'excluded-paths.json': '["lock.json"]' })
+    await carryOut(at('tests', 1), h.deps)
+    expect(h.order).toContain('undo')
+    expect(events(h, 'undo_uncommitted')).toEqual([])
+  })
+
+  describe('a conflict with the base', () => {
+    const CONFLICTS = ['src/a.ts', 'src/b.ts']
+    const start = (script: Script) => {
+      const h = withPlan(harness({ setupCommand: SETUP, fetchTo: [ORIGIN], ...script }))
+      return { h, work: { ...START, run: WITH_SETUP } as Extract<Work, { kind: 'start' }> }
+    }
+
+    it('AC11: goes back to Build with the report, and does not run the tests', async () => {
+      const { h, work } = start({
+        conflicts: [CONFLICTS],
+        acts: { 'build-2': ['paused'] },
+        afterSetup: ['package-lock.json'],
+      })
+      expect(await carryOut(work, h.deps)).toBe('released')
+      expect(h.testRuns).toEqual([])
+      expect(h.order).toContain('abort')
+      expect(JSON.parse(text(h, 'excluded-paths.json'))).toEqual([])
+      expect(has(h, 'setup-base.txt')).toBe(false)
+      expect(h.checkpoints().at(-1)).toMatchObject({
+        stage: 'build',
+        attempt: 2,
+        failing_report_id: 'base_conflict',
+      })
+      const report = text(h, 'base-conflict-report.md')
+      expect(report).toContain(ORIGIN)
+      for (const path of CONFLICTS) expect(report).toContain(path)
+      expect(report).toContain('git rebase origin/main')
+      expect(h.handoffs['build-2']).toContain(`<verify_report>\n${report}`)
+      expect(events(h, 'base_rebase')[0]).toMatchObject({
+        status: 'error',
+        target: '2 paths conflict with the base',
+        payload: { to: ORIGIN, conflicts: CONFLICTS },
+      })
+    })
+
+    it('AC11: the second Build round tests the rebased branch', async () => {
+      const { h, work } = start({ conflicts: [CONFLICTS] })
+      expect(await carryOut(work, h.deps)).toBe('review')
+      expect(h.testRuns).toEqual(['npm test'])
+      expect(events(h, 'base_rebase').map((e) => e.status)).toEqual(['error', 'ok'])
+    })
+
+    it('AC11: uses a fixed text when the report file is gone', async () => {
+      const h = withPlan(harness({ acts: { 'build-2': ['paused'] } }))
+      const work = {
+        ...resume({ ...checkpoint('build', 2), failing_report_id: 'base_conflict' }, null),
+        run: WITH_SETUP,
+      } as Extract<Work, { kind: 'resume' }>
+      await carryOut(work, h.deps)
+      expect(h.handoffs['build-2']).toContain(
+        '<verify_report>\nThe branch conflicts with the base branch. Run `git rebase origin/main`',
+      )
+    })
+
+    it('AC12: a rebase found at the start of the stage is aborted before the fetch and the gate', async () => {
+      const h = withPlan(
+        harness({
+          rebasing: { onto: ORIGIN, paths: CONFLICTS },
+          acts: { 'build-2': ['paused'] },
+        }),
+      )
+      expect(await carryOut(at('tests', 1), h.deps)).toBe('released')
+      expect(h.order[0]).toBe('abort')
+      expect(h.order).not.toContain('fetch')
+      expect(h.order).not.toContain('gate')
+      expect(h.testRuns).toEqual([])
+      expect(h.checkpoints().at(-1)).toMatchObject({
+        attempt: 2,
+        failing_report_id: 'base_conflict',
+      })
+      expect(events(h, 'base_rebase')[0]).toMatchObject({
+        status: 'error',
+        payload: { to: ORIGIN, conflicts: CONFLICTS },
+      })
+    })
+
+    it('AC13: on attempt 3 the run is blocked at tests, not failed', async () => {
+      const h = withPlan(harness({ ...MOVED, conflicts: [CONFLICTS], setupCommand: SETUP }))
+      seed(h, { 'setup-base.txt': FORK })
+      expect(await carryOut(at('tests', 3, WITH_SETUP), h.deps)).toBe('released')
+      expect(h.runEnd()).toBeUndefined()
+      const blocked = h.of('error').at(-1)?.payload as Record<string, string>
+      expect(blocked).toMatchObject({
+        blocks: true,
+        cause: 'step_failed',
+        stage: 'tests',
+        command: 'git rebase origin/main',
+      })
+      for (const path of CONFLICTS) expect(blocked.output).toContain(path)
+      expect(blocked.output).toContain('git rebase --continue')
+      expect(blocked.output).toContain('then Resume.')
+      expect(h.checkpoints().at(-1)).toMatchObject({ stage: 'tests', attempt: 3 })
+      expect(JSON.parse(text(h, 'excluded-paths.json'))).toEqual([])
+      expect(has(h, 'setup-base.txt')).toBe(false)
+      expect(h.testRuns).toEqual([])
+    })
+  })
+
+  interface ResumeRow {
+    stage: Checkpoint['stage']
+    phase?: string
+    rebasing: boolean
+    expected: 'resumes build' | 'base_conflict' | 'blocks' | 'gone'
+  }
+  const RESUMES: ResumeRow[] = [
+    { stage: 'build', phase: 'build-phase', rebasing: true, expected: 'resumes build' },
+    { stage: 'tests', rebasing: true, expected: 'base_conflict' },
+    { stage: 'plan', phase: 'plan-phase', rebasing: true, expected: 'blocks' },
+    { stage: 'verify', phase: 'verify-phase', rebasing: true, expected: 'blocks' },
+    { stage: 'push', rebasing: true, expected: 'blocks' },
+    { stage: 'pr', rebasing: true, expected: 'blocks' },
+    { stage: 'build', phase: 'build-phase', rebasing: false, expected: 'gone' },
+    { stage: 'push', rebasing: false, expected: 'gone' },
+  ]
+  it.each(RESUMES)(
+    'AC5: a worktree off the branch at $stage, rebase in progress: $rebasing, $expected',
+    async (row) => {
+      const h = withPlan(
+        harness({
+          ...(row.rebasing
+            ? { rebasing: { onto: ORIGIN, paths: ['a.ts'] } }
+            : { branchNow: 'HEAD' }),
+          acts: { 'build-1': ['paused'], 'build-2': ['paused'] },
+        }),
+      )
+      const outcome = await carryOut(at(row.stage, 1, RUN, row.phase), h.deps)
+      if (row.expected === 'gone') {
+        expect(outcome).toBe('failed')
+        expect(h.runEnd()?.payload).toMatchObject({ reason: "the run's worktree is gone" })
+      } else if (row.expected === 'blocks') {
+        expect(outcome).toBe('released')
+        const blocked = h.of('error').at(-1)?.payload as Record<string, string>
+        expect(blocked).toMatchObject({
+          blocks: true,
+          cause: 'step_failed',
+          stage: row.stage,
+          command: 'git rebase',
+        })
+        expect(blocked.output).toContain('`git rebase --abort`')
+        expect(blocked.output).not.toContain('--continue')
+        expect(h.calls).toEqual([])
+      } else if (row.expected === 'resumes build') {
+        expect(h.calls[0]).toMatch(/^resume build-1/)
+      } else {
+        expect(h.checkpoints().at(-1)).toMatchObject({
+          attempt: 2,
+          failing_report_id: 'base_conflict',
+        })
+      }
+    },
+  )
+
+  it('AC6: a rebase the owner finished before Resume at push ends as Verify changing the branch', async () => {
+    const h = withPlan(harness({}))
+    seed(h, { 'gate-head.txt': 'before-the-rebase' })
+    expect(await carryOut(at('push', 1), h.deps)).toBe('failed')
+    expect(h.runEnd()?.payload).toMatchObject({
+      reason: expect.stringContaining('Verify changed the branch'),
+    })
+  })
+
+  it('R11: Build’s first attempt records the base it began on, once', async () => {
+    const h = withPlan(harness({ acts: { 'build-1': ['paused'] } }))
+    await carryOut(at('build', 1), h.deps)
+    expect(text(h, 'build-base.txt')).toBe(FORK)
+    writeFileSync(join(dir(h), 'build-base.txt'), 'earlier')
+    await carryOut(at('build', 1), h.deps)
+    expect(text(h, 'build-base.txt')).toBe('earlier')
+  })
+
+  interface NoteRow {
+    name: string
+    marks: { build?: string; verify?: string; tested?: string }
+    note: 'Build began' | 'the last Verify' | null
+    from?: string
+    verifyBase: string | null
+  }
+  const NOTE_ROWS: NoteRow[] = [
+    {
+      name: 'unchanged since Build',
+      marks: { build: 'B', tested: 'B' },
+      note: null,
+      verifyBase: 'B',
+    },
+    {
+      name: 'moved since Build, no Verify yet',
+      marks: { build: 'B', tested: 'T' },
+      note: 'Build began',
+      from: 'B',
+      verifyBase: 'T',
+    },
+    {
+      name: 'moved since the last Verify',
+      marks: { build: 'B', verify: 'V', tested: 'T' },
+      note: 'the last Verify',
+      from: 'V',
+      verifyBase: 'T',
+    },
+    {
+      name: 'moved since Build but not since the last Verify',
+      marks: { build: 'B', verify: 'T', tested: 'T' },
+      note: null,
+      verifyBase: 'T',
+    },
+    { name: 'no tested base', marks: { build: 'B' }, note: null, verifyBase: null },
+    { name: 'no reference at all', marks: { tested: 'T' }, note: null, verifyBase: null },
+  ]
+  it.each(NOTE_ROWS)('AC15: $name', async (row) => {
+    const h = withPlan(harness({ moveTo: { head: 'abc123', commits: 4, paths: ['x.ts', 'y.ts'] } }))
+    seed(
+      h,
+      Object.fromEntries(
+        Object.entries(row.marks).map(([mark, commit]) => [`${mark}-base.txt`, commit]),
+      ),
+    )
+    await carryOut(at('verify', 1), h.deps)
+    const handoff = h.handoffs['verify-1'] ?? ''
+    if (row.note === null) expect(handoff).not.toContain('<note>')
+    else {
+      expect(handoff).toContain(
+        `The base branch moved since ${row.note}. It was at ${row.from}; the branch is now tested on T, 4 commits later.\nPaths changed between them:\nx.ts\ny.ts\nCheck that the change still meets the spec with these changes to the base in place.`,
+      )
+    }
+    if (row.verifyBase === null) expect(has(h, 'verify-base.txt')).toBe(false)
+    else expect(text(h, 'verify-base.txt')).toBe(row.verifyBase)
+  })
+
+  it('R11: lists the first 100 paths and how many more', async () => {
+    const paths = Array.from({ length: 103 }, (_, i) => `p${String(i).padStart(3, '0')}.ts`)
+    const h = withPlan(harness({ moveTo: { head: 'abc123', paths } }))
+    seed(h, { 'build-base.txt': 'B', 'tested-base.txt': 'T' })
+    await carryOut(at('verify', 1), h.deps)
+    expect(h.handoffs['verify-1']).toContain(`${paths[99]}\nand 3 more\nCheck that`)
+    expect(h.handoffs['verify-1']).not.toContain(paths[100]!)
+  })
+
+  describe('the push stage and the pull request', () => {
+    const LATE = [{ sha: 'abc1234', subject: 'fix: late' }]
+    const pushed = async (script: Script, files: Record<string, string>) => {
+      const h = withPlan(harness({ ...script }))
+      seed(h, { 'gate-head.txt': 'abc123', ...files })
+      const outcome = await carryOut(at('push', 1), h.deps)
+      return { h, outcome }
+    }
+
+    it('AC16: records the commits that reached the base after the tests, and pushes anyway', async () => {
+      const { h, outcome } = await pushed({ ...MOVED, untested: LATE }, { 'tested-base.txt': FORK })
+      expect(outcome).toBe('review')
+      expect(JSON.parse(text(h, 'untested-commits.json'))).toEqual(LATE)
+      expect(events(h, 'base_check')).toHaveLength(1)
+      expect(events(h, 'base_check')[0]).toMatchObject({
+        status: 'error',
+        target: '1 commits reached main after the tests',
+        payload: { tested: FORK, now: ORIGIN, commits: LATE },
+      })
+      expect(h.gitCalls).toContain(`push ${BRANCH}`)
+      const body = h.prBodies[0]!
+      expect(body).toContain(`Tested on \`main\` at \`${FORK}\`.`)
+      expect(body).toContain('## Not tested with this change\n\nabc1234 fix: late')
+      expect(body.indexOf('## Not tested')).toBeLessThan(body.indexOf('## Verify report'))
+      expect(body.indexOf('Tested on')).toBeGreaterThan(body.indexOf('PAY-1, run 2'))
+    })
+
+    it('AC16: lists the first 20 commits and how many more', async () => {
+      const many = Array.from({ length: 22 }, (_, i) => ({ sha: `s${i}`, subject: `c${i}` }))
+      const { h } = await pushed({ ...MOVED, untested: many }, { 'tested-base.txt': FORK })
+      const body = h.prBodies[0]!
+      expect(body).toContain('s19 c19\nand 2 more\n\n## Verify report')
+      expect(body).not.toContain('s20 c20')
+    })
+
+    it('AC17: an unmoved base sends no base_check, drops a stale list, and keeps no section', async () => {
+      const { h } = await pushed(
+        {},
+        { 'tested-base.txt': FORK, 'untested-commits.json': JSON.stringify(LATE) },
+      )
+      expect(events(h, 'base_check')).toEqual([])
+      expect(has(h, 'untested-commits.json')).toBe(false)
+      expect(h.prBodies[0]).toContain(`Tested on \`main\` at \`${FORK}\`.`)
+      expect(h.prBodies[0]).not.toContain('## Not tested')
+    })
+
+    it('AC17: a run without tested-base.txt fetches nothing and writes the body as before', async () => {
+      const { h } = await pushed({}, {})
+      expect(h.order).not.toContain('fetch')
+      expect(events(h, 'base_check')).toEqual([])
+      expect(h.prBodies[0]).toBe('PAY-1, run 2, spec v1.\n\n## Verify report\n\n\n')
+    })
+
+    it('R12: a failed fetch blocks the run at push', async () => {
+      const { h, outcome } = await pushed({ fails: 'fetch' }, { 'tested-base.txt': FORK })
+      expect(outcome).toBe('released')
+      expect(h.of('error').at(-1)?.payload).toMatchObject({ cause: 'step_failed', stage: 'push' })
+      expect(h.gitCalls).not.toContain(`push ${BRANCH}`)
+    })
+  })
+
+  it('R7: a whole run writes the base it tested', async () => {
+    const h = harness({})
+    await carryOut(START as Extract<Work, { kind: 'start' }>, h.deps)
+    expect(text(h, 'tested-base.txt')).toBe(FORK)
+    expect(text(h, 'gate-head.txt')).toBe('abc123')
+    expect(h.prBodies[0]).toContain(`Tested on \`main\` at \`${FORK}\`.`)
   })
 })

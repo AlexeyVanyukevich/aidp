@@ -85,7 +85,20 @@ export interface Script {
   branchGone?: boolean
   /** Adding a worktree again creates the directory, then rejects with a GitError. */
   recreateFails?: boolean
+  /** The base's commit after each fetch, in turn; a fetch without an entry leaves it where it was. */
+  fetchTo?: (string | undefined)[]
+  /** The unmerged paths each rebase leaves, in turn; none (or empty) is a clean rebase. */
+  conflicts?: (string[] | undefined)[]
+  /** A rebase of the run's branch already in progress, with the paths it leaves unmerged. */
+  rebasing?: { onto: string; paths: string[] }
+  /** What the worktree's current branch reads; a rebase in progress reads HEAD. */
+  branchNow?: string
+  /** The commits that arrived on the base after the tests, as the push stage lists them. */
+  untested?: { sha: string; subject: string }[]
 }
+
+export const FORK = 'b'.repeat(40)
+export const ORIGIN = 'o'.repeat(40)
 
 export function harness(script: Script) {
   const sent: RunnerEvent[] = []
@@ -95,6 +108,8 @@ export function harness(script: Script) {
   const order: string[] = []
   let setups = 0
   const gitCalls: string[] = []
+  /** The body of each pull request created. */
+  const prBodies: string[] = []
   /** Where each push and pull request was made. */
   const writes: string[] = []
   const used: Record<string, number> = {}
@@ -106,6 +121,13 @@ export function harness(script: Script) {
   let tests = 0
   let setupRan = false
   let headNow = 'abc123'
+  /** The base's commit, and the one the branch holds: they differ while a rebase is owed. */
+  let origin = FORK
+  let holds = FORK
+  let fetches = 0
+  let rebases = 0
+  let rebasing = script.rebasing === undefined ? null : { ...script.rebasing }
+  let conflictsNow: string[] = script.rebasing?.paths ?? []
   /** The commands the runner ran as the project's test command. */
   const testRuns: string[] = []
   const runResult = {
@@ -124,6 +146,7 @@ export function harness(script: Script) {
     issueToken: async () => 'token',
     retire: async () => undefined,
     sendEvents: async (_t: string, events: RunnerEvent[]) => {
+      for (const e of events) if (e.tool === 'files_gate') order.push('gate')
       if (script.refuse !== undefined && events.some((e) => e.type === 'approval_requested'))
         throw script.refuse
       if (script.runEndFails !== undefined && events.some((e) => e.type === 'run_end'))
@@ -252,12 +275,36 @@ export function harness(script: Script) {
       if (script.changedFails?.includes(changedCalls))
         throw new GitError('git -C wt merge-base HEAD origin/main', 'fatal: bad revision')
       return {
-        mergeBase: 'b'.repeat(40),
+        mergeBase: holds,
         committed: [...tree.committed],
         uncommitted: [...tree.uncommitted],
       }
     },
-    currentBranch: async () => BRANCH,
+    currentBranch: async () => (rebasing !== null ? 'HEAD' : (script.branchNow ?? BRANCH)),
+    mergeBase: async () => holds,
+    revParse: async () => origin,
+    baseIsAncestor: async () => holds === origin,
+    unmergedPaths: async () => [...conflictsNow],
+    rebaseInProgress: async () => (rebasing === null ? null : { onto: rebasing.onto }),
+    rebaseAbort: async () => {
+      order.push('abort')
+      rebasing = null
+      conflictsNow = []
+    },
+    rebase: async () => {
+      order.push('rebase')
+      const paths = script.conflicts?.[rebases] ?? []
+      rebases += 1
+      if (paths.length > 0) {
+        rebasing = { onto: origin, paths }
+        conflictsNow = paths
+        return { conflicts: paths }
+      }
+      holds = origin
+      headNow = `rebased-${rebases}`
+      return { conflicts: [] }
+    },
+    logRange: async () => script.untested ?? [],
     deleteBranch: async () => {
       gitCalls.push('delete branch')
     },
@@ -273,7 +320,8 @@ export function harness(script: Script) {
         ? { number: 5, url: 'https://github.com/owner/pay/pull/5' }
         : null
     },
-    createPr: async (dir: string, pr: { githubRepo: string; base: string }) => {
+    createPr: async (dir: string, pr: { githubRepo: string; base: string; body: string }) => {
+      prBodies.push(pr.body)
       writes.push(`create pr in ${dir} for ${pr.githubRepo} on ${pr.base}`)
       gitCalls.push('create pr')
       return { number: 9, url: 'https://github.com/owner/pay/pull/9' }
@@ -285,6 +333,7 @@ export function harness(script: Script) {
     },
     fetchBase: async () => {
       order.push('fetch')
+      origin = script.fetchTo?.[fetches++] ?? origin
       if (script.fails === 'fetch') throw new GitError('git fetch origin main', 'no network')
     },
     undoUncommitted: async () => {
@@ -362,6 +411,7 @@ export function harness(script: Script) {
     calls,
     order,
     gitCalls,
+    prBodies,
     writes,
     handoffs,
     restarts,
