@@ -202,6 +202,21 @@ One that exits non-zero or times out blocks the run as `step_failed`, carrying t
 the last 4,096 characters of its output; the checkpoint stays in `prepare`, and Resume recreates
 the worktree and runs the command again.
 
+**The environment of commands and sessions.** The setup command, the test command and the agents'
+`claude` sessions do not receive `RUNNER_KEY`, `DATABASE_URL`, `PORT` or any variable starting
+with `BOARD_`. A session keeps only the eight run variables the runner sets for it: `BOARD_URL`,
+`BOARD_RUN_TOKEN`, `BOARD_RUN_ID`, `BOARD_PHASE_ID`, `BOARD_PHASE`, `BOARD_AGENT`,
+`BOARD_RUN_DIR` and `BOARD_WORKTREE`. The setup command and the test command each get their own
+temporary `BOARD_HOME`, a fresh `aidp-command-*` directory under the OS temporary directory,
+deleted before `runTestCommand` resolves (after exit, non-zero exit and timeout alike; a failed
+removal is ignored). When that directory cannot be made, the command does not run: the result has
+a null exit code, no timeout, and an output saying no temporary `BOARD_HOME` could be created,
+with the error's message, so the setup command blocks the run as `step_failed` and Verify sees
+that output. Everything else the runner's environment holds still reaches them — `SMOKE_*` and
+any other variable the owner's shell exports — accepted because the board runs on one owner's
+machine. The runner and server test suites also run with a temporary `BOARD_HOME`, made by their
+globalSetup and removed at the end, so they never touch the owner's `~/.aidp`.
+
 **Test commands.** A project keeps several named test commands in `project_test_commands` (`id`,
 `project_id`, `name`, `command`, `is_default`, `created_at`), deleted with the project. A unique
 index on (`project_id`, `lower(name)`) keeps names distinct ignoring case, and a partial unique
