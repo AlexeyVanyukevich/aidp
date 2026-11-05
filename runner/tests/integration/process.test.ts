@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { BoardApi } from '../../src/api.js'
+import { PHASES } from '../../src/phases/agents.js'
 import { runProcess, StartFailure, type ProcessInput } from '../../src/phases/process.js'
 import { prepareRunDir } from '../../src/phases/run-dir.js'
 import { EventSink } from '../../src/sink.js'
@@ -103,13 +104,12 @@ describe('runProcess', () => {
         BOARD_RUN_ID: input.runId,
         BOARD_PHASE_ID: input.phaseId,
         BOARD_PHASE: input.phase,
-        BOARD_AGENT: 'builder',
+        BOARD_AGENT: PHASES[input.phase].agent,
         BOARD_RUN_DIR: runDir,
         BOARD_WORKTREE: input.worktree,
       }
       for (const [key, value] of Object.entries(expected)) {
-        if (key === 'BOARD_AGENT') expect(lines.some((l) => l.startsWith(`${key}=`))).toBe(true)
-        else expect(lines).toContain(`${key}=${value}`)
+        expect(lines).toContain(`${key}=${value}`)
       }
     } finally {
       for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key]
