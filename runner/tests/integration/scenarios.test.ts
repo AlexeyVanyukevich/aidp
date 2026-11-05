@@ -1160,3 +1160,74 @@ describe('a run whose worktree is lost while it waits', () => {
     f.stopAll()
   })
 })
+
+// AIDP-54: the branch is tested on the base as it stands, and what arrives later is recorded.
+describe('a base that moves during the run', () => {
+  /** A script that pushes one commit to the target's main, as another developer would. */
+  const pushesToBase = (file: string) => {
+    const script = join(mkdtempSync(join(tmpdir(), 'mover-')), 'push.sh')
+    writeFileSync(
+      script,
+      `set -e\ncd ${target.repo}\necho moved > ${file}\ngit add -A\ngit commit -q -m "base adds ${file}"\ngit push -q origin HEAD:main\n`,
+    )
+    return { bash: `sh ${script}` }
+  }
+  const runDirOf = async (f: { home: string }, taskId: string) => {
+    const [run] = await runs(taskId)
+    return join(f.home, 'runs', run!.id)
+  }
+
+  it('AC20: tests the branch rebased onto a commit that reached the base during Build', async () => {
+    const taskId = await approvedTask()
+    const f = fleet({
+      planner: [[{ tool: 'save_plan', args: PLAN }]],
+      builder: [
+        [
+          { edit: 'src/retry.ts', content: 'export const delays = [1, 2, 4]\n' },
+          { commit: 'back off' },
+          pushesToBase('moved-in-build.txt'),
+        ],
+      ],
+      verifier: [[report('pass')]],
+    })
+    expect(await f.daemon().runOnce()).toBe('review')
+    expect(await state(taskId)).toBe('review')
+
+    const rebases = (await eventsOf('tool_call')).filter((e) => e.tool === 'base_rebase')
+    expect(rebases).toEqual([expect.objectContaining({ status: 'ok' })])
+    const files = execFileSync(
+      'git',
+      ['-C', target.remote, 'ls-tree', '-r', '--name-only', 'board/PAY-1-r1'],
+      { encoding: 'utf8' },
+    )
+    expect(files).toContain('moved-in-build.txt')
+    const tip = execFileSync('git', ['-C', target.repo, 'rev-parse', 'HEAD'], {
+      encoding: 'utf8',
+    }).trim()
+    expect(readFileSync(join(await runDirOf(f, taskId), 'tested-base.txt'), 'utf8')).toBe(tip)
+    expect(existsSync(join(await runDirOf(f, taskId), 'untested-commits.json'))).toBe(false)
+  })
+
+  it('AC20: lists a commit that reached the base during Verify as not tested, and pushes anyway', async () => {
+    const taskId = await approvedTask()
+    const f = fleet({
+      planner: [[{ tool: 'save_plan', args: PLAN }]],
+      builder: [builds('export const delays = [1, 2, 4]\n')],
+      verifier: [[pushesToBase('moved-in-verify.txt'), report('pass')]],
+    })
+    expect(await f.daemon().runOnce()).toBe('review')
+    expect(await state(taskId)).toBe('review')
+
+    const untested = JSON.parse(
+      readFileSync(join(await runDirOf(f, taskId), 'untested-commits.json'), 'utf8'),
+    ) as { sha: string; subject: string }[]
+    expect(untested.map((c) => c.subject)).toEqual(['base adds moved-in-verify.txt'])
+    const checks = (await eventsOf('tool_call')).filter((e) => e.tool === 'base_check')
+    expect(checks).toEqual([expect.objectContaining({ status: 'error' })])
+    expect(
+      execFileSync('git', ['-C', target.remote, 'ls-remote', target.remote, 'board/PAY-1-r1'], {
+        encoding: 'utf8',
+      }),
+    ).toContain('refs/heads/board/PAY-1-r1')
+  })
+})
