@@ -138,6 +138,59 @@ export function readApproved(dir: string): ApprovedMigration[] {
   return value
 }
 
+/**
+ * The commits the run's base is tracked by. `setup`: the merge-base setup last ran on; `build`:
+ * where Build's first attempt began; `tested`: the base the tests ran on; `verify`: the base the
+ * last Verify was told about.
+ */
+export type BaseMark = 'setup' | 'build' | 'tested' | 'verify'
+const markFile = (mark: BaseMark) => `${mark}-base.txt`
+
+/** The commit a mark holds; null when the run never wrote it (a run from before the mark). */
+export function readMark(dir: string, mark: BaseMark): string | null {
+  const file = join(dir, markFile(mark))
+  return existsSync(file) ? readFileSync(file, 'utf8').trim() : null
+}
+export function writeMark(dir: string, mark: BaseMark, commit: string): void {
+  writeFileSync(join(dir, markFile(mark)), commit)
+}
+export function clearMark(dir: string, mark: BaseMark): void {
+  rmSync(join(dir, markFile(mark)), { force: true })
+}
+
+/** What the tests stage found when the branch did not rebase onto the base; the next Build reads it. */
+export const BASE_CONFLICT_REPORT = 'base-conflict-report.md'
+const UNTESTED = 'untested-commits.json'
+
+export interface UntestedCommit {
+  sha: string
+  subject: string
+}
+export function writeUntested(dir: string, commits: UntestedCommit[]): void {
+  writeFileSync(join(dir, UNTESTED), JSON.stringify(commits))
+}
+export function clearUntested(dir: string): void {
+  rmSync(join(dir, UNTESTED), { force: true })
+}
+/** The commits that reached the base after the tests; empty when none, or the file is missing. */
+export function readUntested(dir: string): UntestedCommit[] {
+  const file = join(dir, UNTESTED)
+  if (!existsSync(file)) return []
+  const value = readJson(dir, UNTESTED)
+  if (
+    !Array.isArray(value) ||
+    !value.every(
+      (c) =>
+        typeof c === 'object' &&
+        c !== null &&
+        typeof (c as Record<string, unknown>).sha === 'string' &&
+        typeof (c as Record<string, unknown>).subject === 'string',
+    )
+  )
+    throw new Error(`${UNTESTED} is not an array of { sha, subject } entries`)
+  return value as UntestedCommit[]
+}
+
 const PENDING_ANSWER = 'pending-answer.json'
 
 /** The two phases that read the code again after a pause, each with its own base file. */

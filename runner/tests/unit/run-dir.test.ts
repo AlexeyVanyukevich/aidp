@@ -1,8 +1,18 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { readAllowed, readApproved, readExcluded } from '../../src/phases/run-dir.js'
+import {
+  clearMark,
+  clearUntested,
+  readAllowed,
+  readApproved,
+  readExcluded,
+  readMark,
+  readUntested,
+  writeMark,
+  writeUntested,
+} from '../../src/phases/run-dir.js'
 
 const ENTRIES = [{ path: 'a/migrations/004_x.ts', content: 'a => <b> & c\r\n\n' }]
 const READERS = {
@@ -85,6 +95,39 @@ const CASES: Row[] = (Object.keys(READERS) as (keyof typeof READERS)[]).flatMap(
       result: { throws: `${file} cannot be read` },
     },
   ]
+})
+
+describe('the run directory’s base marks', () => {
+  const MARKS = ['setup', 'build', 'tested', 'verify'] as const
+  it.each(MARKS)('%s: null when missing, trimmed when written, null once cleared', (mark) => {
+    const dir = mkdtempSync(join(tmpdir(), 'rd-'))
+    try {
+      expect(readMark(dir, mark)).toBeNull()
+      writeMark(dir, mark, 'abc123')
+      expect(readFileSync(join(dir, `${mark}-base.txt`), 'utf8')).toBe('abc123')
+      writeFileSync(join(dir, `${mark}-base.txt`), 'abc123\n')
+      expect(readMark(dir, mark)).toBe('abc123')
+      clearMark(dir, mark)
+      expect(readMark(dir, mark)).toBeNull()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the untested commits as a list, empty when missing or cleared', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rd-'))
+    try {
+      expect(readUntested(dir)).toEqual([])
+      writeUntested(dir, [{ sha: 'abc1234', subject: 'fix: x' }])
+      expect(readUntested(dir)).toEqual([{ sha: 'abc1234', subject: 'fix: x' }])
+      writeFileSync(join(dir, 'untested-commits.json'), '["abc"]')
+      expect(() => readUntested(dir)).toThrow('untested-commits.json is not an array')
+      clearUntested(dir)
+      expect(readUntested(dir)).toEqual([])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('the run directory’s list readers', () => {
