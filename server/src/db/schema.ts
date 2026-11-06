@@ -3,6 +3,7 @@ import type {
   ApprovalKind,
   ApprovalStatus,
   ArtifactKind,
+  RunKind,
   Block,
   Checkpoint,
   EventType,
@@ -75,7 +76,7 @@ export interface SpecsTable {
 export interface RunsTable {
   id: Generated<string>
   task_id: string
-  kind: 'spec' | 'delivery'
+  kind: RunKind
   /** Its number among the task's runs of the same kind: "Draft 2", "Run 1". */
   number: number
   /** The approved version a delivery run delivers; the version a spec run redrafts, or null. */

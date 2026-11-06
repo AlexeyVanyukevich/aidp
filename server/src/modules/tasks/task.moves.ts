@@ -16,6 +16,7 @@ export async function moveFacts(db: Db, taskId: string): Promise<Facts> {
     .selectFrom('runs')
     .select('kind')
     .where('task_id', '=', taskId)
+    .where('kind', '!=', 'title')
     .orderBy('created_at', 'desc')
     .limit(1)
     .executeTakeFirst()
@@ -25,7 +26,7 @@ export async function moveFacts(db: Db, taskId: string): Promise<Facts> {
     .where('task_id', '=', taskId)
     .limit(1)
     .executeTakeFirst()
-  return { run: run?.kind ?? 'delivery', hasSpec: spec !== undefined }
+  return { run: run?.kind === 'spec' ? 'spec' : 'delivery', hasSpec: spec !== undefined }
 }
 
 /**
