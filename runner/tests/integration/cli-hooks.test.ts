@@ -13,14 +13,24 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { realExec } from '../../src/exec.js'
+import { runnerCode } from '../../src/fingerprint.js'
 import { Git } from '../../src/git.js'
 import { CLI_PATH } from '../../src/self.js'
 import { targetRepository, useTestGitIdentity } from './target-repo.js'
 
-function call(args: string[], input: object, env: Record<string, string>) {
+const CODE = runnerCode()
+
+/** `undefined` unsets a variable. */
+function call(args: string[], input: object, env: Record<string, string | undefined>) {
+  const merged: Record<string, string | undefined> = {
+    ...process.env,
+    BOARD_RUNNER_CODE: CODE,
+    ...env,
+  }
+  for (const key of Object.keys(merged)) if (merged[key] === undefined) delete merged[key]
   return spawnSync(CLI_PATH, args, {
     input: JSON.stringify(input),
-    env: { ...process.env, ...env },
+    env: merged as Record<string, string>,
     encoding: 'utf8',
     cwd: tmpdir(),
   })
@@ -104,6 +114,42 @@ describe('board-cli as a hook', () => {
     )
     expect(result.status).toBe(0)
     expect(result.stdout).toBe('')
+  })
+
+  // R3, R4: the guard compares the runner's code with the one the phase started with.
+  const CODES: { name: string; value: string | undefined; denied: boolean }[] = [
+    { name: 'matches', value: CODE, denied: false },
+    { name: 'is unset', value: undefined, denied: true },
+    { name: 'is empty', value: '', denied: true },
+    { name: 'is different', value: 'another-value', denied: true },
+  ]
+  it.each(CODES)('the guard on a Read when BOARD_RUNNER_CODE $name', ({ value, denied }) => {
+    const result = call(
+      ['guard'],
+      { cwd: runDir, tool_name: 'Read', tool_input: { file_path: join(runDir, 'x') } },
+      { ...env, BOARD_RUNNER_CODE: value },
+    )
+    expect(result.status).toBe(0)
+    if (!denied) return expect(result.stdout).toBe('')
+    const output = JSON.parse(result.stdout).hookSpecificOutput
+    expect(output.permissionDecision).toBe('deny')
+    expect(output.permissionDecisionReason).toContain("runner's code changed")
+    expect(output.permissionDecisionReason).toContain('End your turn')
+  })
+
+  it.each(CODES)('the event hook records the event when BOARD_RUNNER_CODE $name', ({ value }) => {
+    const before = existsSync(join(runDir, 'events.ndjson'))
+      ? readFileSync(join(runDir, 'events.ndjson'), 'utf8').split('\n').length
+      : 0
+    const result = call(
+      ['event', 'PostToolUse'],
+      { tool_name: 'Read', tool_input: { file_path: 'x' }, tool_response: {} },
+      { ...env, BOARD_RUNNER_CODE: value },
+    )
+    expect(result.status).toBe(0)
+    expect(result.stdout).toBe('')
+    const after = readFileSync(join(runDir, 'events.ndjson'), 'utf8').split('\n').length
+    expect(after).toBeGreaterThan(before)
   })
 
   /** A worktree directory with a `src` subdirectory, as a plain directory. */
@@ -370,6 +416,7 @@ describe('board-cli feedback on a Bash call in Build', () => {
 describe('board-cli guard when it cannot check a call', () => {
   const runDir = mkdtempSync(join(tmpdir(), 'run-'))
   const base = {
+    BOARD_RUNNER_CODE: CODE,
     BOARD_PHASE: 'build',
     BOARD_RUN_DIR: runDir,
     BOARD_WORKTREE: runDir,
