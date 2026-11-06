@@ -103,7 +103,7 @@ export async function carryOut(
 
   const summaries = async (): Promise<HandoffInput['summaries']> =>
     (latestRun ?? (await getRun())).phases
-      .filter((p) => p.status === 'succeeded' && p.summary_md !== null)
+      .filter((p) => p.name !== 'help' && p.status === 'succeeded' && p.summary_md !== null)
       .map((p) => ({ phase: p.name, attempt: p.attempt, text: p.summary_md ?? '' }))
 
   const uncommitted = async () =>

@@ -127,6 +127,23 @@ export interface ApprovalView {
   created_at: string
   answered_at: string | null
 }
+export type HelpMode = 'suggest' | 'explain'
+export type HelpStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'stopped'
+/** What a helper saved: a suggestion, or a plain restatement in three parts. */
+export type HelpResult =
+  | { mode: 'suggest'; option_id?: string; text?: string; reasoning: string; unsure: string }
+  | { mode: 'explain'; asked: string; matters: string; leads_to: string }
+export interface HelpView {
+  id: string
+  approval_id: string
+  /** The question of a batch; null for a single request. */
+  question_index: number | null
+  mode: HelpMode
+  status: HelpStatus
+  result: HelpResult | null
+  reason: string | null
+  created_at: string
+}
 export interface OpenApproval extends ApprovalView {
   task_id: string
   task_key: string
@@ -234,6 +251,7 @@ export interface CostSummary {
     flagged: boolean
     interrupted: boolean
     cut: boolean
+    run: { kind: string; number: number } | null
   })[]
   byAgent: (CostLine & { agent: string })[]
   byModel: (CostLine & { model: string })[]

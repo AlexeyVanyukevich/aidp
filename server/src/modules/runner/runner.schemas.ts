@@ -57,4 +57,19 @@ export const HeartbeatBody = Type.Object(
   { additionalProperties: false },
 )
 
+export const HelpHeartbeatBody = Type.Object(
+  { runner_id: NonBlankString({ maxLength: 100 }), help_ids: Type.Array(Uuid, { maxItems: 10 }) },
+  { additionalProperties: false },
+)
+
+export const HelpFailBody = Type.Object(
+  { reason: NonBlankString({ maxLength: 500 }) },
+  { additionalProperties: false },
+)
+
+export const HelpReleaseBody = Type.Object(
+  { runner_id: NonBlankString({ maxLength: 100 }) },
+  { additionalProperties: false },
+)
+
 export const RunParams = Type.Object({ id: Uuid })

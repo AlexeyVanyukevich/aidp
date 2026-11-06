@@ -1,4 +1,5 @@
-import type { ApprovalStatus, RunStatus } from '../../shared/vocabulary.js'
+import { lostHelps } from '../approvals/help-rules.js'
+import type { ApprovalStatus, HelpStatus, RunStatus } from '../../shared/vocabulary.js'
 
 /** Three missed heartbeats, at the runner's 30 s, and a heartbeat due at 90 s still counts. */
 export const LOST_AFTER_MS = 90_000
@@ -12,9 +13,12 @@ export interface SweepInput {
   intervalMs: number
   runs: { id: string; status: RunStatus; lastHeartbeatAt: Date | null }[]
   approvals: { id: string; status: ApprovalStatus; createdAt: Date }[]
+  /** Helps beside the runs: a running one whose process stopped heartbeating is lost. */
+  helps: { id: string; status: HelpStatus; lastHeartbeatAt: Date | null }[]
 }
 
-export type SweepDecision = { rearm: true } | { rearm: false; lost: string[]; expired: string[] }
+export type SweepDecision =
+  { rearm: true } | { rearm: false; lost: string[]; expired: string[]; lostHelps: string[] }
 
 /**
  * Which runs have lost their runner and which approvals have expired. A tick after a gap of more
@@ -36,6 +40,7 @@ export function sweepDecisions(input: SweepInput): SweepDecision {
           age(run.lastHeartbeatAt) > LOST_AFTER_MS,
       )
       .map((run) => run.id),
+    lostHelps: lostHelps(input.helps, now),
     expired: input.approvals
       .filter(
         (approval) => approval.status === 'open' && age(approval.createdAt) >= APPROVAL_TTL_MS,

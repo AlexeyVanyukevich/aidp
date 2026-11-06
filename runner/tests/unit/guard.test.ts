@@ -539,3 +539,32 @@ describe('the guard and the worktree', () => {
     expect(reasonOf(verdict)).toContain('runner/migrations/0002_x.ts')
   })
 })
+
+describe('the guard for a helper', () => {
+  const help = () => ({ ...ctx('help', null) })
+  it.each([
+    ['Write', { file_path: 'src/a.ts' }],
+    ['Edit', { file_path: 'src/a.ts' }],
+    ['Bash', { command: 'ls' }],
+    ['mcp__board__request_approval', { question: 'x' }],
+    ['mcp__board__save_plan', {}],
+  ])('refuses %s', (tool_name, tool_input) => {
+    expect(decide({ tool_name, tool_input }, help()).allow).toBe(false)
+  })
+
+  it.each([
+    ['Read', { file_path: 'src/a.ts' }],
+    ['Grep', { pattern: 'x' }],
+    ['Glob', { pattern: '**/*.ts' }],
+    ['mcp__board__get_question', {}],
+    ['mcp__board__get_phase_record', {}],
+    ['mcp__board__save_help_result', { text: 'x' }],
+  ])('allows %s', (tool_name, tool_input) => {
+    expect(decide({ tool_name, tool_input }, help())).toEqual({ allow: true })
+  })
+
+  it('refuses a read outside the worktree', () => {
+    const verdict = decide({ tool_name: 'Read', tool_input: { file_path: '/etc/passwd' } }, help())
+    expect(verdict.allow).toBe(false)
+  })
+})

@@ -373,6 +373,19 @@ describe('checkAnswer', () => {
   ])('%s', (_name, answer, findings) => {
     expect(checkAnswer({ options: [A, B] }, answer)).toEqual(findings)
   })
+
+  it.each<[string, Parameters<typeof checkAnswer>[1], { field: string; code: string }[]]>([
+    ['approving the plan', { option_id: 'approve' }, []],
+    ['changes asked in words', { text: 'Split step 2' }, []],
+    [
+      'approving the plan with words',
+      { option_id: 'approve', text: 'but split step 2' },
+      [{ field: 'text', code: 'not_allowed' }],
+    ],
+  ])('a plan request: %s', (_name, answer, findings) => {
+    const plan = { kind: 'plan' as const, options: [{ id: 'approve', label: 'Approve plan' }] }
+    expect(checkAnswer(plan, answer)).toEqual(findings)
+  })
 })
 
 // Slice 3: a batch of questions, asked together and answered whole (slice 3 spec, §6).

@@ -6,6 +6,9 @@ import type {
   ApprovalView,
   BatchAnswer,
   BatchQuestion,
+  HelpMode,
+  HelpResult,
+  HelpView,
   TaskState,
 } from '../types'
 
@@ -107,4 +110,95 @@ export function currentApproval(
   return approvals.find(
     (a) => a.status === 'open' || (a.status === 'expired' && state === 'blocked'),
   )
+}
+
+// Helps: a read-only helper's suggestion or plain explanation of a waiting question.
+
+/** The state of one mode's help for one question. */
+export interface ModeHelp {
+  /** A help of this mode is queued or running: its button is busy and starts nothing more. */
+  busy: boolean
+  /** The latest succeeded help's result. */
+  shown: HelpResult | undefined
+  /** The reason the latest help failed, when it did. */
+  failure: string | undefined
+}
+export interface QuestionHelp {
+  suggest: ModeHelp
+  explain: ModeHelp
+}
+
+/** The helps of one question: a single request's `index` is null. */
+export function questionHelp(
+  helps: HelpView[],
+  approvalId: string,
+  index: number | null,
+): QuestionHelp {
+  const of = (mode: HelpMode): ModeHelp => {
+    const mine = helps
+      .filter((h) => h.approval_id === approvalId && h.question_index === index && h.mode === mode)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    const latest = mine[0]
+    return {
+      busy: latest?.status === 'queued' || latest?.status === 'running',
+      shown: mine.find((h) => h.status === 'succeeded')?.result ?? undefined,
+      failure: latest?.status === 'failed' ? (latest.reason ?? 'the helper failed') : undefined,
+    }
+  }
+  return { suggest: of('suggest'), explain: of('explain') }
+}
+
+export const failureText = (mode: HelpMode, reason: string) =>
+  `${mode === 'suggest' ? 'No suggestion' : 'No explanation'}: ${reason}`
+
+/** What the card's status region says of a help that ended. */
+export function helpAnnouncement(help: HelpView, approval: ApprovalView | undefined): string {
+  const label =
+    approval?.kind === 'questions' && help.question_index !== null
+      ? `question ${help.question_index + 1} of ${approval.question_count}`
+      : 'the open question'
+  if (help.status === 'failed')
+    return `${help.mode === 'suggest' ? 'No suggestion' : 'No explanation'} for ${label}: ${help.reason ?? 'the helper failed'}`
+  return help.mode === 'suggest'
+    ? `Suggested answer ready for ${label}`
+    : `Explanation ready for ${label}`
+}
+
+const IN_FLIGHT = new Set(['queued', 'running'])
+
+/** The helps that ended since `seen`, which maps a help's id to the status it last had. */
+export function newlyEnded(seen: Map<string, string>, helps: HelpView[]): HelpView[] {
+  const ended = helps.filter(
+    (h) =>
+      (h.status === 'succeeded' || h.status === 'failed') && IN_FLIGHT.has(seen.get(h.id) ?? ''),
+  )
+  seen.clear()
+  for (const h of helps) seen.set(h.id, h.status)
+  return ended
+}
+
+/** A single request's choice, or one question's of a batch. */
+export interface Choice {
+  option?: string
+  text: string
+}
+
+/** Use this answer: the suggested option when it has one, and the suggested words, replacing. */
+export function applySuggestion(current: Choice, result: HelpResult): Choice {
+  if (result.mode !== 'suggest') return current
+  const option = result.option_id ?? current.option
+  return {
+    text: result.text ?? current.text,
+    ...(option === undefined ? {} : { option }),
+  }
+}
+
+/** What a single request sends: the chosen option, the words, or both; null with neither. */
+export function singleAnswer(choice: Choice): ApprovalAnswer | null {
+  const text = choice.text.trim()
+  if (choice.option === undefined && text === '') return null
+  return {
+    ...(choice.option === undefined ? {} : { option_id: choice.option }),
+    ...(text === '' ? {} : { text }),
+  }
 }

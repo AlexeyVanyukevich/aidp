@@ -20,6 +20,8 @@ export interface CostPhase {
   reportedCost: Record<string, number> | null
   /** A process of the phase was stopped: Claude Code's own figure misses part of it. */
   interrupted?: boolean
+  /** The run the phase belongs to, as "Draft n" or "Run n" names it. */
+  run?: { kind: string; number: number }
 }
 
 export interface Line {
@@ -37,6 +39,7 @@ export type PhaseLine = Line & {
   interrupted: boolean
   /** Its counters are a floor: a message was cut off before its usage was final. */
   cut: boolean
+  run: { kind: string; number: number } | null
 }
 
 export interface CostSummary {
@@ -106,6 +109,7 @@ export function summarizeCosts(input: {
       flagged: drift !== null && drift > DRIFT_LIMIT,
       interrupted,
       cut: cutPhases.has(phase.id),
+      run: phase.run ?? null,
     }
   })
 

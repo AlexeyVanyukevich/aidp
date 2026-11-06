@@ -30,15 +30,20 @@ export async function resolveRunToken(
   db: Kysely<Database>,
   header: string | undefined,
   now: Date,
-): Promise<{ runId: string; taskId: string }> {
+): Promise<{ runId: string; taskId: string; helpId: string | null }> {
   const token = bearer(header)
   if (token === undefined) throw new UnauthorizedError()
   const row = await db
     .selectFrom('run_tokens')
     .innerJoin('runs', 'runs.id', 'run_tokens.run_id')
-    .select(['runs.id as runId', 'runs.task_id as taskId', 'run_tokens.expires_at'])
+    .select([
+      'runs.id as runId',
+      'runs.task_id as taskId',
+      'run_tokens.expires_at',
+      'run_tokens.help_id',
+    ])
     .where('run_tokens.token_hash', '=', hashToken(token))
     .executeTakeFirst()
   if (row === undefined || row.expires_at <= now) throw new UnauthorizedError()
-  return { runId: row.runId, taskId: row.taskId }
+  return { runId: row.runId, taskId: row.taskId, helpId: row.help_id }
 }

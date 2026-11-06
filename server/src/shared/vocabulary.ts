@@ -27,12 +27,35 @@ export type RunStatus = (typeof RUN_STATUSES)[number]
 export const RUN_KINDS = ['spec', 'delivery', 'title'] as const
 export type RunKind = (typeof RUN_KINDS)[number]
 
-export const PHASE_NAMES = ['spec', 'plan', 'build', 'verify', 'title'] as const
+/** `help` is a read-only helper's session beside a paused run; it is never a run's current phase. */
+export const PHASE_NAMES = ['spec', 'plan', 'build', 'verify', 'title', 'help'] as const
 export type PhaseName = (typeof PHASE_NAMES)[number]
 
 /** A paused phase waits for an answer or a Resume; the same session carries on after it. */
 export const PHASE_STATUSES = ['running', 'paused', 'succeeded', 'failed'] as const
 export type PhaseStatus = (typeof PHASE_STATUSES)[number]
+
+export const HELP_MODES = ['suggest', 'explain'] as const
+export type HelpMode = (typeof HELP_MODES)[number]
+
+export const HELP_STATUSES = ['queued', 'running', 'succeeded', 'failed', 'stopped'] as const
+export type HelpStatus = (typeof HELP_STATUSES)[number]
+
+/** What a helper saved: a suggestion, or a plain restatement in three parts. */
+export type HelpResult =
+  | {
+      mode: 'suggest'
+      option_id?: string
+      text?: string
+      reasoning: string
+      unsure: string
+    }
+  | {
+      mode: 'explain'
+      asked: string
+      matters: string
+      leads_to: string
+    }
 
 export const APPROVAL_STATUSES = ['open', 'answered', 'expired', 'withdrawn'] as const
 export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number]

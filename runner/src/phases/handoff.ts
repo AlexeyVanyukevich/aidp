@@ -38,9 +38,9 @@ export interface HandoffInput {
   }[]
 }
 
-const escape = (text: string) =>
+export const escape = (text: string) =>
   text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
-const attr = (text: string) => escape(text).replaceAll('"', '&quot;')
+export const attr = (text: string) => escape(text).replaceAll('"', '&quot;')
 
 function cut(label: string, text: string, max: number): string {
   return text.length <= max
@@ -83,6 +83,7 @@ const RETURNS: Record<HandoffInput['phase'], string> = {
     '<build_report status="done|blocked" files="…" tests="…" confidence="high|medium|low"/> and one paragraph.',
   verify: 'Call save_report with a verdict on every criterion, then reply with one paragraph.',
   title: 'Call suggest_title, then reply with one sentence.',
+  help: 'Call save_help_result, then end your turn.',
 }
 
 /** The platform design's handoff contract: the same tags for every phase. */
@@ -97,9 +98,10 @@ export function buildHandoff(input: HandoffInput): string {
   if (input.note !== undefined) parts.push(`<note>\n${escape(input.note)}\n</note>`)
   if (input.phase === 'spec' && input.base !== undefined)
     parts.push(`<base branch="${attr(input.base.branch)}" commit="${attr(input.base.commit)}"/>`)
-  if (input.summaries.length > 0) {
+  const summaries = input.summaries.filter((s) => s.phase !== 'help')
+  if (summaries.length > 0) {
     parts.push(
-      `<context>\n${input.summaries.map((s) => `<summary phase="${s.phase}" attempt="${s.attempt}">${escape(s.text)}</summary>`).join('\n')}\n</context>`,
+      `<context>\n${summaries.map((s) => `<summary phase="${s.phase}" attempt="${s.attempt}">${escape(s.text)}</summary>`).join('\n')}\n</context>`,
     )
   }
   for (const previous of input.previousPlans ?? [])

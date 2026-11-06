@@ -2,6 +2,8 @@ import type {
   ApprovalAnswer,
   BatchAnswer,
   ApprovalView,
+  HelpMode,
+  HelpView,
   EventView,
   OpenApproval,
   PrFile,
@@ -117,6 +119,12 @@ export const api = {
   openApprovals: () => request<OpenApproval[]>('GET', '/api/approvals?status=open'),
   answer: (approvalId: string, body: ApprovalAnswer | BatchAnswer) =>
     request<ApprovalView>('POST', `/api/approvals/${approvalId}/answer`, body),
+  helps: (taskId: string) => request<HelpView[]>('GET', `/api/tasks/${taskId}/helps`),
+  askHelp: (approvalId: string, mode: HelpMode, questionIndex: number | null) =>
+    request<HelpView>('POST', `/api/approvals/${approvalId}/helps`, {
+      mode,
+      ...(questionIndex === null ? {} : { question_index: questionIndex }),
+    }),
   costs: (taskId: string) => request<CostSummary>('GET', `/api/tasks/${taskId}/costs`),
   /** `files` is null when GitHub did not list them. */
   prFiles: (runId: string) =>

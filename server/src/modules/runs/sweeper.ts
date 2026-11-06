@@ -2,6 +2,7 @@ import type { Kysely, Transaction } from 'kysely'
 import type { Database } from '../../db/schema.js'
 import type { Block, Stage } from '../../shared/vocabulary.js'
 import { publish } from '../../shared/bus.js'
+import { HELP_LOST_AFTER_MS } from '../approvals/help-rules.js'
 import { moveTask } from '../tasks/task.moves.js'
 import {
   APPROVAL_TTL_MS,
@@ -40,7 +41,7 @@ export class Sweeper {
 
   async tick(): Promise<SweepDecision> {
     const now = this.clock()
-    const [runs, approvals] = await Promise.all([
+    const [runs, approvals, helps] = await Promise.all([
       this.db
         .selectFrom('runs')
         .select(['id', 'status', 'last_heartbeat_at as lastHeartbeatAt'])
@@ -51,6 +52,11 @@ export class Sweeper {
         .select(['id', 'status', 'created_at as createdAt'])
         .where('status', '=', 'open')
         .execute(),
+      this.db
+        .selectFrom('helps')
+        .select(['id', 'status', 'last_heartbeat_at as lastHeartbeatAt'])
+        .where('status', '=', 'running')
+        .execute(),
     ])
     const decision = sweepDecisions({
       now,
@@ -58,10 +64,12 @@ export class Sweeper {
       intervalMs: this.intervalMs,
       runs,
       approvals,
+      helps,
     })
     this.lastTick = now
     if (decision.rearm) return decision
     for (const runId of decision.lost) await this.lose(runId, now)
+    for (const helpId of decision.lostHelps) await this.loseHelp(helpId, now)
     for (const approvalId of decision.expired) await this.expire(approvalId, now)
     return decision
   }
@@ -93,6 +101,7 @@ export class Sweeper {
         .set({ status: 'paused', interrupted: true })
         .where('run_id', '=', runId)
         .where('status', '=', 'running')
+        .where('name', '!=', 'help')
         .execute()
       const task = await trx
         .selectFrom('tasks')
@@ -131,6 +140,34 @@ export class Sweeper {
       .where('id', '=', runId)
       .executeTakeFirstOrThrow()
     await publish(trx, { topic: 'task.updated', taskId: run.task_id })
+  }
+
+  /** A help whose process stopped heartbeating fails, and its Help phase closes with it. */
+  private async loseHelp(helpId: string, now: Date): Promise<void> {
+    await this.db.transaction().execute(async (trx) => {
+      const help = await trx
+        .updateTable('helps')
+        .set({ status: 'failed', reason: 'the helper stopped responding', ended_at: now })
+        .where('id', '=', helpId)
+        .where('status', '=', 'running')
+        .where('last_heartbeat_at', '<', new Date(now.getTime() - HELP_LOST_AFTER_MS))
+        .returning(['phase_id', 'run_id'])
+        .executeTakeFirst()
+      if (help === undefined) return
+      if (help.phase_id !== null)
+        await trx
+          .updateTable('phases')
+          .set({ status: 'failed', interrupted: true, ended_at: now })
+          .where('id', '=', help.phase_id)
+          .where('status', 'in', ['running', 'paused'])
+          .execute()
+      const run = await trx
+        .selectFrom('runs')
+        .select('task_id')
+        .where('id', '=', help.run_id)
+        .executeTakeFirstOrThrow()
+      await publish(trx, { topic: 'help.updated', taskId: run.task_id })
+    })
   }
 
   private async expire(approvalId: string, now: Date): Promise<void> {

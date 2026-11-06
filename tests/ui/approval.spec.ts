@@ -27,12 +27,17 @@ test('a run that asks is answered on its card, and goes on to a pull request', a
   )
   const panel = card.getByRole('tabpanel', { name: 'Approvals' })
   await expect(panel.getByRole('heading', { level: 3, name: 'Open question' })).toBeVisible()
-  const options = panel.getByRole('group', { name: 'Which colour should the retry banner be?' })
-  const blue = options.getByRole('button', { name: 'blue (recommended)' })
+  const options = panel.getByRole('radiogroup', {
+    name: 'Which colour should the retry banner be?',
+  })
+  const blue = options.getByRole('radio', { name: 'blue (recommended)' })
   await expect(blue).toHaveAccessibleDescription('Matches the logo')
   await expectAccessible(page)
 
-  await blue.click()
+  // Choosing sends nothing: only Send answer does.
+  await blue.check()
+  await expect(panel.getByRole('heading', { level: 3, name: 'Open question' })).toBeVisible()
+  await panel.getByRole('button', { name: 'Send answer' }).click()
   await expect(
     card.getByRole('status').filter({ hasText: `${key} answered. The run continues.` }),
   ).toBeVisible()
@@ -64,7 +69,17 @@ test('a plan the planner is not sure of waits for approval, and builds once appr
   await expect(changes).toHaveAccessibleDescription(/Write an answer, or choose one of the options/)
   await expectAccessible(page)
 
-  await panel.getByRole('button', { name: 'Approve plan' }).click()
+  // Approving carries no words: a radio like any other, sent with Send answer.
+  const approve = panel.getByRole('radio', { name: 'Approve plan' })
+  await approve.check()
+  await changes.fill('but split step 2')
+  await panel.getByRole('button', { name: 'Send answer' }).click()
+  await expect(changes).toBeFocused()
+  await expect(changes).toHaveAttribute('aria-invalid', 'true')
+  await expect(changes).toHaveAccessibleDescription(/Approving the plan carries no words/)
+
+  await changes.fill('')
+  await panel.getByRole('button', { name: 'Send answer' }).click()
   await expect(card.getByText(`${key} · Review`)).toBeVisible(RUN)
 })
 
@@ -105,21 +120,24 @@ test('a question is answered from the keyboard alone, focus landing where it sho
   const card = page.getByRole('dialog', { name: 'Ask about sizes' })
   const panel = card.getByRole('tabpanel', { name: 'Approvals' })
 
-  // The panel's order (spec §11): the options in turn, the field, Send answer.
-  const small = panel.getByRole('button', { name: 'small' })
-  const large = panel.getByRole('button', { name: 'large (recommended)' })
-  await tabTo(page, small)
+  // The panel's order: the two helps, the options as one group, the field, Send answer.
+  const suggest = panel.getByRole('button', { name: 'Suggest an answer' })
+  const small = panel.getByRole('radio', { name: 'small' })
+  const large = panel.getByRole('radio', { name: 'large (recommended)' })
+  await tabTo(page, suggest)
   await page.keyboard.press('Tab')
+  await expect(panel.getByRole('button', { name: 'Explain simply' })).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(small).toBeFocused()
+  await page.keyboard.press('ArrowDown')
   await expect(large).toBeFocused()
+  await expect(large).toBeChecked()
   await page.keyboard.press('Tab')
   await expect(panel.getByRole('textbox', { name: 'Your answer' })).toBeFocused()
   await page.keyboard.press('Tab')
   await expect(panel.getByRole('button', { name: 'Send answer' })).toBeFocused()
 
   // Answering removes the controls that did it: focus goes to the state line first.
-  await page.keyboard.press('Shift+Tab')
-  await page.keyboard.press('Shift+Tab')
-  await expect(large).toBeFocused()
   await page.keyboard.press('Enter')
   await expect.poll(() => focusedText(page)).toMatch(new RegExp(`^${key} · `))
   await expect(
@@ -191,12 +209,15 @@ test('a migration request shows its path and code, in a block that scrolls at 32
   // The block scrolls within itself: it never reaches past the 320 px viewport.
   const box = await block.boundingBox()
   expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(320)
-  await expect(panel.getByRole('button', { name: 'Allow the migration' })).toBeVisible()
-  await expect(panel.getByRole('button', { name: 'Keep to the plan' })).toBeVisible()
-  // The block scrolls, so the keyboard reaches it: one tab stop, then the first option.
+  await expect(panel.getByRole('radio', { name: 'Allow the migration' })).toBeVisible()
+  await expect(panel.getByRole('radio', { name: 'Keep to the plan' })).toBeVisible()
+  // A migration request is helped like any: the two buttons, with the options unchanged.
+  await expect(panel.getByRole('button', { name: 'Suggest an answer' })).toBeVisible()
+  await expect(panel.getByRole('button', { name: 'Explain simply' })).toBeVisible()
+  // The block scrolls, so the keyboard reaches it: one tab stop, then the first help.
   await tabTo(page, block)
   await page.keyboard.press('Tab')
-  await expect(panel.getByRole('button', { name: 'Allow the migration' })).toBeFocused()
+  await expect(panel.getByRole('button', { name: 'Suggest an answer' })).toBeFocused()
   await expectAccessible(page)
 })
 

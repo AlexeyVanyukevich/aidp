@@ -19,6 +19,14 @@ describe('keysFor', () => {
       // A spec run's save arrives as a run event: the Spec tab shows each version it saves.
       [['board'], ['runs', 't'], ['costs', 't'], ['events', 'r'], ['specs', 't']],
     ],
+    [
+      { topic: 'help.updated', taskId: 't' },
+      [
+        ['helps', 't'],
+        ['runs', 't'],
+        ['costs', 't'],
+      ],
+    ],
     [{ topic: 'project.updated', key: 'PAY' }, [['projects'], ['test-commands', 'PAY']]],
     // Notices sent while the server's connection was down are lost: everything is refetched.
     [{ topic: 'resync' }, [[]]],

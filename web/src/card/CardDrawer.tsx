@@ -8,8 +8,9 @@ import { isConflict } from '../errors'
 import { Loaded } from '../Loaded'
 import { useDocumentTitle } from '../page'
 import { testCommandsKey } from '../stream'
-import type { TaskState, TaskView } from '../types'
+import type { ApprovalView, TaskState, TaskView } from '../types'
 import { ApprovalsTab } from './ApprovalsTab'
+import { helpAnnouncement, newlyEnded } from './approvals'
 import { actionsFor, blockText, initialTab, stateAnnouncement } from './blocks'
 import { CostTab } from './CostTab'
 import { PlanTab } from './PlanTab'
@@ -33,6 +34,32 @@ export function CardDrawer() {
   const stateLine = useRef<HTMLParagraphElement>(null)
   const problemBox = useRef<HTMLDivElement>(null)
   useDocumentTitle(task.data ? `${task.data.key} ${task.data.title}` : undefined)
+
+  // A help that ends is announced here, whichever tab is showing: the status region is the
+  // card's, and a result arrives without navigation.
+  const waiting = task.data?.state === 'needs_approval' || task.data?.state === 'blocked'
+  const helps = useQuery({
+    queryKey: ['helps', taskId],
+    queryFn: () => api.helps(taskId),
+    enabled: waiting,
+  })
+  const seenHelps = useRef(new Map<string, string>())
+  useEffect(() => {
+    if (helps.data === undefined) return
+    const ended = newlyEnded(seenHelps.current, helps.data)
+    if (ended.length === 0) return
+    const approvals = client.getQueryData<ApprovalView[]>(['approvals', taskId])
+    setMessage(
+      ended
+        .map((help) =>
+          helpAnnouncement(
+            help,
+            approvals?.find((a) => a.id === help.approval_id),
+          ),
+        )
+        .join('. '),
+    )
+  }, [helps.data, client, taskId])
 
   // A card waiting on a question opens on it, once, when it first loads.
   const opened = useRef(false)
