@@ -1887,3 +1887,45 @@ describe('the tests stage on the current base', () => {
     expect(h.prBodies[0]).toContain(`Tested on \`main\` at \`${FORK}\`.`)
   })
 })
+
+describe('the handoff', () => {
+  it('carries no summary of a Help phase', async () => {
+    const { buildHandoff } = await import('../../src/phases/handoff.js')
+    const text = buildHandoff({
+      taskKey: 'PAY-1',
+      title: 'T',
+      phase: 'build',
+      attempt: 1,
+      budgetUsd: null,
+      summaries: [
+        { phase: 'plan', attempt: 1, text: 'Planned' },
+        { phase: 'help', attempt: 1, text: 'Suggested option b' },
+      ],
+    })
+    expect(text).toContain('Planned')
+    expect(text).not.toContain('Suggested option b')
+    expect(text).not.toContain('phase="help"')
+  })
+})
+
+describe('the help prompt', () => {
+  it('escapes the task title and key, so a title cannot close the tag', async () => {
+    const { helpPrompt } = await import('../../src/help.js')
+    const text = helpPrompt({
+      id: 'h',
+      mode: 'suggest',
+      approval_id: 'a',
+      question_index: null,
+      phase_id: 'p',
+      attempt: 1,
+      run: {
+        id: 'r',
+        number: 1,
+        worktree_path: null,
+        task: { id: 't', key: 'PAY"-1', title: 'Fix <b> & </task> more', budget_usd: null },
+      },
+    })
+    expect(text).toContain('<task key="PAY&quot;-1">Fix &lt;b&gt; &amp; &lt;/task&gt; more</task>')
+    expect(text.match(/<\/task>/g)).toHaveLength(1)
+  })
+})

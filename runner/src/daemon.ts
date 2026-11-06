@@ -8,6 +8,7 @@ import { draftSpec } from './drafting.js'
 import { realExec } from './exec.js'
 import { checkExecutable } from './executable.js'
 import { runnerCode } from './fingerprint.js'
+import { carryHelp, HELP_SLOTS } from './help.js'
 import { suggestTitle } from './titling.js'
 import { Git } from './git.js'
 import { continuePhase, endPhase, restartPhase, startPhase } from './phases/phase.js'
@@ -47,6 +48,10 @@ export class Daemon {
   private codeCheck: Promise<boolean> | null = null
   /** The title loop, running, so an exit can wait for it. */
   private titleLane: Promise<void> = Promise.resolve()
+  /** Aborted when the daemon restarts on moved code: a help in flight ends failed at once. */
+  private readonly helpStop = new AbortController()
+  /** The help loop, running, so an exit can wait for it. */
+  private helpLane: Promise<void> = Promise.resolve()
 
   constructor(
     private readonly config: RunnerConfig,
@@ -86,7 +91,7 @@ export class Daemon {
     }
     const claimedAt = this.now()
     if (this.moved || (await this.sawMovedCode())) {
-      const heard = await this.holdWhile(work.run.id, claimedAt, () => this.quiesceTitleLane())
+      const heard = await this.holdWhile(work.run.id, claimedAt, () => this.quiesceLanes())
       this.handOff(work, heard)
       return 'handed'
     }
@@ -311,20 +316,23 @@ export class Daemon {
   /**
    * Until `stop`: two claim loops. The main one claims spec and delivery runs; a stop mid-run
    * blocks that run, which Resume continues (spec §8). The title one claims title runs, beside
-   * the run the main loop carries; a stop mid-run fails a title run.
+   * the run the main loop carries; a stop mid-run fails a title run. A third loop carries helps
+   * beside both, never more than `HELP_SLOTS` at once, claiming while the run slot is busy and
+   * while it is idle.
    */
   async loop(stop: AbortSignal): Promise<void> {
     await this.takeOverClaim(stop)
     this.titleLane = this.titleLoop(stop)
+    this.helpLane = this.helpLoop(stop)
     await this.mainLoop(stop)
-    await this.titleLane
+    await Promise.all([this.titleLane, this.helpLane])
   }
 
   private async mainLoop(stop: AbortSignal): Promise<void> {
     while (!stop.aborted && !this.exiting) {
       if (await this.sawMovedCode()) {
         console.log("board-cli: the runner's code changed; restarting")
-        await this.quiesceTitleLane()
+        await this.quiesceLanes()
         this.exit(RESTART_STATUS)
         return
       }
@@ -354,6 +362,74 @@ export class Daemon {
       }),
     ])
     clearTimeout(timer)
+  }
+
+  /**
+   * Before the daemon exits on moved code: both lanes are stopped. A running help ends at once,
+   * failed "runner restarted" (once the code moved the guard refuses even its saving call, so it
+   * could never finish), and a claim still open is waited for, at most the claim wait.
+   */
+  private async quiesceLanes(): Promise<void> {
+    this.helpStop.abort()
+    await Promise.all([this.quiesceTitleLane(), this.quiesceHelpLane()])
+  }
+
+  private async quiesceHelpLane(): Promise<void> {
+    let timer: NodeJS.Timeout | undefined
+    await Promise.race([
+      this.helpLane,
+      new Promise<void>((done) => {
+        timer = setTimeout(done, this.config.claimWaitMs + this.config.stopGraceMs + 5_000)
+      }),
+    ])
+    clearTimeout(timer)
+  }
+
+  /**
+   * Carries helps. A help is never handed on through the handoff file: one claimed once the code
+   * has moved is given back to the board, queued again, and the new daemon claims it as usual.
+   */
+  async helpLoop(stop: AbortSignal): Promise<void> {
+    const running = new Set<Promise<void>>()
+    const idle = () => stop.aborted || this.exiting || this.moved || this.helpStop.signal.aborted
+    while (!idle()) {
+      if (running.size >= HELP_SLOTS) {
+        await Promise.race(running)
+        continue
+      }
+      try {
+        if (await this.sawMovedCode()) break
+        const work = await this.api.claimHelp(this.config.runnerId, this.config.claimWaitMs)
+        if (work === null) continue
+        if (idle() || (await this.sawMovedCode())) {
+          await this.api.releaseHelp(work.id, this.config.runnerId).catch(() => undefined)
+          break
+        }
+        const carried: Promise<void> = carryHelp(work, {
+          api: this.api,
+          config: this.config,
+          runnerCode: this.startCode,
+          shutdown: stop,
+          restart: this.helpStop.signal,
+        })
+          .catch((error: unknown) => {
+            console.error(
+              `board-cli: help ${work.id}: ${error instanceof Error ? error.message : String(error)}`,
+            )
+            return this.api.failHelp(work.id, 'the helper could not run').catch(() => undefined)
+          })
+          .finally(() => running.delete(carried))
+        running.add(carried)
+      } catch (error) {
+        console.error(
+          `board-cli: ${error instanceof Error ? error.message : String(error)}; retrying in ${BACKOFF_MS / 1000}s`,
+        )
+        await new Promise((done) => setTimeout(done, BACKOFF_MS))
+      }
+    }
+    // The code moved: a help in hand cannot finish, so it ends now rather than at the exit.
+    if (this.moved) this.helpStop.abort()
+    await Promise.all(running)
   }
 
   private async titleLoop(stop: AbortSignal): Promise<void> {

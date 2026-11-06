@@ -173,6 +173,19 @@ function orderReason(path: string, after: string): string {
   return `the migration \`${path}\` sorts too early: migrations apply in name order, and a new name must sort after \`${after}\`. Rename it so it does, and write it again. It needs no approval request.`
 }
 
+/** What a helper may call: it reads, and saves its one result. Nothing else. */
+const HELP_TOOLS = new Set([
+  'Read',
+  'Grep',
+  'Glob',
+  ...['get_task', 'get_spec', 'get_question', 'get_phase_record', 'save_help_result'].map(
+    (tool) => `mcp__board__${tool}`,
+  ),
+])
+
+/** A path a helper's search or read names, when it names one. */
+const READ_PATH_KEYS = ['file_path', 'path', 'notebook_path'] as const
+
 export function decide(
   input: { tool_name: string; tool_input: Record<string, unknown> },
   ctx: {
@@ -197,6 +210,18 @@ export function decide(
   },
 ): Verdict {
   if (ctx.paused) return deny('The run is paused; end your turn.')
+  if (ctx.phase === 'help') {
+    if (!HELP_TOOLS.has(input.tool_name))
+      return deny('a helper only reads and saves its result; it writes nothing and runs nothing')
+    for (const key of READ_PATH_KEYS) {
+      const raw = input.tool_input[key]
+      if (typeof raw !== 'string') continue
+      const inside = relative(ctx.cwd, isAbsolute(raw) ? resolve(raw) : resolve(ctx.cwd, raw))
+      if (inside.startsWith('..') || isAbsolute(inside))
+        return deny('this path is outside the worktree')
+    }
+    return { allow: true }
+  }
   // The model asks for the background itself (slice 3 spec, §3, fact 3).
   if (BACKGROUND_TOOLS.has(input.tool_name) && input.tool_input.run_in_background === true)
     return deny(BACKGROUND)
