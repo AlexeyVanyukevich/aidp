@@ -50,6 +50,7 @@ async function open(page: Page, layout: Layout, request: Parameters<typeof regis
     input,
     button: page.getByRole('button', { name: 'Add task' }),
     heading: page.getByRole('heading', { level: 1 }),
+    settings: page.getByRole('link', { name: `Settings of ${layout.key}` }),
     notice: page.getByRole('status'),
     columns: page.locator('.columns').first(),
     head: page.locator('.board-head'),
@@ -85,6 +86,13 @@ for (const layout of LAYOUTS) {
     expect(Math.abs(button0.height - input0.height)).toBeLessThanOrEqual(1)
     expect(Math.abs(head0.y + head0.height - (input0.y + input0.height))).toBeLessThanOrEqual(1)
     expect(await noScroll()).toBe(true)
+    // The link is as wide as its text, so the header's empty space does not open Settings.
+    const [linkWidth, textWidth] = await ui.settings.evaluate((link) => {
+      const text = document.createRange()
+      text.selectNodeContents(link)
+      return [link.getBoundingClientRect().width, text.getBoundingClientRect().width]
+    })
+    expect(Math.abs(linkWidth - textWidth)).toBeLessThanOrEqual(1)
 
     await ui.button.click()
     const error = page.getByText('Enter a title.')
