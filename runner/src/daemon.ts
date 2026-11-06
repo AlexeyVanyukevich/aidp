@@ -84,9 +84,10 @@ export class Daemon {
       await this.cleanUp(work)
       return 'cleaned'
     }
+    const claimedAt = this.now()
     if (this.moved || (await this.sawMovedCode())) {
-      await this.quiesceTitleLane()
-      this.handOff(work)
+      const heard = await this.holdWhile(work.run.id, claimedAt, () => this.quiesceTitleLane())
+      this.handOff(work, heard)
       return 'handed'
     }
     return this.carryWork(work, shutdown)
@@ -167,10 +168,39 @@ export class Daemon {
     return (this.overrides.clock ?? (() => new Date()))()
   }
 
-  /** Leaves a claimed start or resume to the daemon that replaces this one, then exits. */
-  private handOff(work: Extract<Work, { kind: 'start' | 'resume' }>): void {
+  /**
+   * Runs `wait` while heartbeating a claimed run nobody is carrying out yet, so the sweeper does
+   * not lose it, and heartbeats it once more at the end. Resolves to when the board last heard
+   * of the run: `since`, the claim, if no heartbeat got through.
+   */
+  private async holdWhile(runId: string, since: Date, wait: () => Promise<void>): Promise<Date> {
+    let heard = since
+    const beat = async () => {
+      const sent = this.now()
+      await this.api.heartbeat(this.config.runnerId, [runId]).then(
+        () => {
+          if (sent > heard) heard = sent
+        },
+        () => undefined,
+      )
+    }
+    const timer = setInterval(() => void beat(), this.config.heartbeatMs)
+    try {
+      await wait()
+    } finally {
+      clearInterval(timer)
+    }
+    await beat()
+    return heard
+  }
+
+  /**
+   * Leaves a claimed start or resume to the daemon that replaces this one, then exits.
+   * `claimed_at` is when the board last heard of the run, which the sweeper counts from.
+   */
+  private handOff(work: Extract<Work, { kind: 'start' | 'resume' }>, heard: Date): void {
     const temporary = `${this.handoffPath}.tmp`
-    writeFileSync(temporary, JSON.stringify({ work, claimed_at: this.now().toISOString() }))
+    writeFileSync(temporary, JSON.stringify({ work, claimed_at: heard.toISOString() }))
     renameSync(temporary, this.handoffPath)
     console.log("board-cli: the runner's code changed; handed the claim on and restarting")
     this.exit(RESTART_STATUS)
