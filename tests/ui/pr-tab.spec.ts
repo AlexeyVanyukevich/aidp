@@ -91,7 +91,9 @@ test('a withdrawn verdict shows as a badge, with the owner’s words above the t
     .getByRole('textbox', { name: 'Changes to ask for' })
     .fill('Drop AC2: the banner is gone.')
   await panel.getByRole('button', { name: 'Send answer' }).click()
-  await panel.getByRole('button', { name: 'Approve plan' }).click(RUN)
+  // Approving is a radio like any other, sent with Send answer.
+  await panel.getByRole('radio', { name: 'Approve plan' }).check()
+  await panel.getByRole('button', { name: 'Send answer' }).click(RUN)
   await expect(card.getByText(`${key} · Review`)).toBeVisible(RUN)
 
   await card.getByRole('tab', { name: 'PR', exact: true }).click()
