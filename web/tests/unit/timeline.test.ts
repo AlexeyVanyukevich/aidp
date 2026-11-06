@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { runLabel, stepLabel, timelineModel } from '../../src/card/timeline'
+import { phaseLabel, runLabel, stepLabel, timelineModel } from '../../src/card/timeline'
 import type { EventView, PhaseView } from '../../src/types'
 
 const phase = (id: string, name: string, attempt: number, started: string): PhaseView => ({
@@ -99,5 +99,22 @@ describe('stepLabel', () => {
     ['phase_start', { resumed: true }, 'Resumed'],
   ])('words a %s step', (type, payload, label) => {
     expect(stepLabel({ ...event('x', 'p', '2026-10-11T10:00:00Z'), type, payload })).toBe(label)
+  })
+})
+
+describe('the title run in the Timeline and the Cost tab', () => {
+  it.each([
+    [{ kind: 'title', number: 1 }, 'Title 1'],
+    [{ kind: 'spec', number: 2 }, 'Draft 2'],
+    [{ kind: 'delivery', number: 3 }, 'Run 3'],
+  ])('labels %j as %s', (run, label) => {
+    expect(runLabel(run)).toBe(label)
+  })
+
+  it.each([
+    ['title', 'Title'],
+    ['plan', 'plan'],
+  ])('names the %s phase %s', (name, label) => {
+    expect(phaseLabel(name)).toBe(label)
   })
 })

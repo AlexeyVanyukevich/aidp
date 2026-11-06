@@ -94,7 +94,13 @@ test('a repository, the board and a card work from the keyboard alone', async ({
   await expect(card.getByRole('tab', { name: 'Plan' })).toHaveAttribute('aria-selected', 'true')
   await page.keyboard.press('ArrowLeft')
   await expect(specTab).toBeFocused()
-  // The panel opens on the task's description, then the spec (slice 3 spec, §11).
+  // The panel opens on the task's title and its buttons, then the description, then the spec.
+  await page.keyboard.press('Tab')
+  await expect(card.getByRole('textbox', { name: 'Title', exact: true })).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(card.getByRole('button', { name: 'Save title' })).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(card.getByRole('button', { name: 'Rephrase title' })).toBeFocused()
   await page.keyboard.press('Tab')
   await expect(card.getByRole('textbox', { name: 'Description' })).toBeFocused()
   await page.keyboard.press('Tab')

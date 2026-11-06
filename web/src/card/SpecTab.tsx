@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { flushSync } from 'react-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Field, Markdown, Notice, Select, Textarea } from '@zellige/react'
+import { Button, Field, Input, Markdown, Notice, Select, Textarea } from '@zellige/react'
 import { api, ApiError } from '../api'
 import { invalidField, isConflict } from '../errors'
 import { Loaded } from '../Loaded'
@@ -23,6 +23,7 @@ import {
 
 const NO_DESCRIPTION = 'Write a description first; the spec-writer drafts from it.'
 const NO_NOTE = 'Say what to change.'
+const NO_TITLE = 'Enter a title.'
 
 export function SpecTab({ task, onFrozen }: { task: TaskView; onFrozen: () => void }) {
   const specs = useQuery({ queryKey: ['specs', task.id], queryFn: () => api.specs(task.id) })
@@ -57,17 +58,26 @@ function SpecEditor({
   const [draft, setDraft] = useState<string | undefined>()
   const [editing, setEditing] = useState(false)
   // Where focus goes once the control is on the page; kept until it is.
-  const pending = useRef<'edit' | 'write' | 'text' | undefined>(undefined)
-  const setFocus = (target: 'edit' | 'write' | 'text') => {
+  type Target = 'edit' | 'write' | 'text' | 'stop' | 'rephrase'
+  const pending = useRef<Target | undefined>(undefined)
+  const setFocus = (target: Target) => {
     pending.current = target
   }
   /** A ref that takes focus when its control appears, if that is where focus was sent. */
-  const focusOn = (target: 'edit' | 'write' | 'text') => (element: HTMLElement | null) => {
+  const focusOn = (target: Target) => (element: HTMLElement | null) => {
     if (element && pending.current === target) {
       pending.current = undefined
       element.focus()
     }
   }
+  // The Title field: the owner's own text, the suggestion as edited, and where focus goes.
+  const [title, setTitle] = useState<string | undefined>()
+  const [titleMissing, setTitleMissing] = useState(false)
+  const [edited, setEdited] = useState<{ of: string; text: string } | undefined>()
+  const [suggestedMissing, setSuggestedMissing] = useState(false)
+  const titleField = useRef<HTMLInputElement>(null)
+  const suggestedField = useRef<HTMLInputElement>(null)
+  const rephraseButton = useRef<HTMLButtonElement>(null)
   const [description, setDescription] = useState<string | undefined>()
   const [descriptionMissing, setDescriptionMissing] = useState(false)
   const [note, setNote] = useState('')
@@ -89,6 +99,28 @@ function SpecEditor({
     setDraft(undefined)
   }
   const describedAs = description ?? task.description_md
+
+  const suggestion = task.title_suggestion
+  const suggestionStatus = suggestion?.status ?? 'none'
+  // A suggestion that arrives while the card is open, and a run that fails, are announced; the
+  // state is adjusted while rendering, as React advises for a change in what arrived.
+  const [lastStatus, setLastStatus] = useState(suggestionStatus)
+  if (lastStatus !== suggestionStatus) {
+    setLastStatus(suggestionStatus)
+    if (lastStatus === 'working' && suggestion?.status === 'ready')
+      setMessage(`A title is suggested: ${suggestion.title}.`)
+    if (lastStatus === 'working' && suggestion?.status === 'failed')
+      setMessage(`The title suggestion did not finish: ${suggestion.reason}.`)
+  }
+  // Stop took focus with it when it went, and so does a run that finishes: back to Rephrase.
+  const wasWorking = useRef(false)
+  useEffect(() => {
+    if (wasWorking.current && suggestionStatus !== 'working') {
+      if (document.activeElement === document.body || document.activeElement === null)
+        rephraseButton.current?.focus()
+    }
+    wasWorking.current = suggestionStatus === 'working'
+  }, [suggestionStatus])
 
   const refresh = () =>
     Promise.all([
@@ -114,6 +146,100 @@ function SpecEditor({
   const markMissing = (which: 'description' | 'note') => {
     flushSync(() => (which === 'description' ? setDescriptionMissing : setNoteMissing)(true))
     ;(which === 'description' ? descriptionField : noteField).current?.focus()
+  }
+
+  const titleOf = title ?? task.title
+  const missingTitle = (which: 'title' | 'suggested') => {
+    flushSync(() => (which === 'title' ? setTitleMissing : setSuggestedMissing)(true))
+    ;(which === 'title' ? titleField : suggestedField).current?.focus()
+  }
+  const failTitle = (error: unknown) =>
+    setProblem({
+      text: isConflict(error)
+        ? 'This card changed meanwhile; its latest state is shown.'
+        : 'That did not work. Try again.',
+    })
+  const saveTitle = useMutation({
+    mutationFn: () => api.patchTask(task.id, { title: titleOf.trim() }),
+    onMutate: () => setProblem(undefined),
+    onSuccess: () => {
+      setTitle(undefined)
+      setMessage('Title saved.')
+    },
+    onError: failTitle,
+    onSettled: refresh,
+  })
+  // A title the owner has edited is saved first: the agent reads the owner's text.
+  const rephrase = useMutation({
+    mutationFn: async () => {
+      if (title !== undefined) await api.patchTask(task.id, { title: title.trim() })
+      return api.action(task.id, 'rephrase-title')
+    },
+    onMutate: () => setProblem(undefined),
+    onSuccess: () => {
+      setTitle(undefined)
+      setFocus('stop')
+      setMessage('Suggesting a title.')
+    },
+    onError: failTitle,
+    onSettled: refresh,
+  })
+  const stop = useMutation({
+    mutationFn: () => api.action(task.id, 'stop-title'),
+    onMutate: () => setProblem(undefined),
+    onSuccess: () => {
+      setFocus('rephrase')
+      setMessage('Suggestion stopped.')
+    },
+    onError: failTitle,
+    onSettled: refresh,
+  })
+  const accept = useMutation({
+    mutationFn: (text: string) => api.acceptTitle(task.id, text.trim()),
+    onMutate: () => setProblem(undefined),
+    onSuccess: () => {
+      setTitle(undefined)
+      setEdited(undefined)
+      setMessage('Title saved.')
+    },
+    onError: failTitle,
+    onSettled: refresh,
+  })
+  const discard = useMutation({
+    mutationFn: () => api.action(task.id, 'discard-title'),
+    onMutate: () => setProblem(undefined),
+    onSuccess: () => {
+      setEdited(undefined)
+      setMessage('Suggestion discarded.')
+    },
+    onError: failTitle,
+    onSettled: refresh,
+  })
+  const suggested =
+    suggestion?.status === 'ready'
+      ? edited?.of === `${suggestion.title}\n${suggestion.reason}`
+        ? edited.text
+        : suggestion.title
+      : ''
+  const pressSaveTitle = () => {
+    if (titleOf.trim() === '') missingTitle('title')
+    else saveTitle.mutate()
+  }
+  const pressRephrase = () => {
+    if (titleOf.trim() === '') missingTitle('title')
+    else rephrase.mutate()
+  }
+  // Focus moves to the Title field while the buttons that will go are still on the page.
+  const pressAccept = () => {
+    if (suggested.trim() === '') missingTitle('suggested')
+    else {
+      titleField.current?.focus()
+      accept.mutate(suggested)
+    }
+  }
+  const pressDiscard = () => {
+    titleField.current?.focus()
+    discard.mutate()
   }
 
   const save = useMutation({
@@ -211,6 +337,75 @@ function SpecEditor({
 
   return (
     <div className="spec-tab">
+      <Field label="Title" error={titleMissing ? NO_TITLE : undefined}>
+        <Input
+          ref={titleField}
+          value={titleOf}
+          readOnly={!controls.describe}
+          onChange={(e) => {
+            setTitle(e.target.value)
+            if (titleMissing) setTitleMissing(false)
+          }}
+        />
+      </Field>
+      {controls.describe && (
+        <div className="actions">
+          <Button busy={saveTitle.isPending} onClick={pressSaveTitle}>
+            Save title
+          </Button>
+          {suggestion?.status === 'working' ? (
+            <>
+              <span>Suggesting a title…</span>
+              <Button ref={focusOn('stop')} busy={stop.isPending} onClick={() => stop.mutate()}>
+                Stop
+              </Button>
+            </>
+          ) : (
+            <Button
+              ref={(element) => {
+                rephraseButton.current = element
+                focusOn('rephrase')(element)
+              }}
+              busy={rephrase.isPending}
+              onClick={pressRephrase}
+            >
+              Rephrase title
+            </Button>
+          )}
+        </div>
+      )}
+      {controls.describe && suggestion?.status === 'failed' && (
+        <p>The title suggestion did not finish: {suggestion.reason}.</p>
+      )}
+      {controls.describe && suggestion?.status === 'ready' && (
+        <>
+          <Field
+            label="Suggested title"
+            hint={suggestion.reason}
+            error={suggestedMissing ? NO_TITLE : undefined}
+          >
+            <Input
+              ref={suggestedField}
+              value={suggested}
+              onChange={(e) => {
+                setEdited({
+                  of: `${suggestion.title}\n${suggestion.reason}`,
+                  text: e.target.value,
+                })
+                if (suggestedMissing) setSuggestedMissing(false)
+              }}
+            />
+          </Field>
+          <div className="actions">
+            <Button variant="primary" busy={accept.isPending} onClick={pressAccept}>
+              Accept title
+            </Button>
+            <Button busy={discard.isPending} onClick={pressDiscard}>
+              Discard
+            </Button>
+          </div>
+        </>
+      )}
       <Field
         label="Description"
         hint="What the task is for. The spec-writer drafts from it."

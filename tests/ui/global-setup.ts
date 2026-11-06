@@ -89,9 +89,26 @@ const drafting = {
   builder: [BUILD],
   verifier: [[PASS]],
 }
+/** The title-writer's suggestions: the first, and the second a later Rephrase title brings. */
+const SUGGEST_FIRST = {
+  tool: 'suggest_title',
+  args: {
+    title: 'Back off failed webhook deliveries',
+    reason: 'Names the delivery retry in src/retry.ts',
+  },
+}
+const SUGGEST_SECOND = {
+  tool: 'suggest_title',
+  args: { title: 'Retry webhook deliveries with growing delays', reason: 'Names the delay list' },
+}
 const SCRIPT = {
   // Slice 2's and slice 3's journeys pick their script by the task's title.
   byTitle: {
+    // A title run reads the task's current title, so the typed variants carry the fragment too.
+    'Suggest one': { 'title-writer': [[SUGGEST_FIRST]] },
+    'Suggest slowly': { 'title-writer': [[{ sleep: 6_000 }, SUGGEST_FIRST]] },
+    'Suggest twice': { 'title-writer': [[SUGGEST_FIRST], [SUGGEST_SECOND]] },
+    'Suggest nothing': { 'title-writer': [[]] },
     'Draft a retry spec': drafting,
     'Answer by keyboard': drafting,
     'Redraft a spec': { 'spec-writer': [[SAVE]] },

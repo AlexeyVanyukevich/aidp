@@ -5,7 +5,7 @@ import { api } from '../api'
 import { Loaded } from '../Loaded'
 import type { EventView, RunView, TaskView } from '../types'
 import { formatDuration, formatTokens } from './format'
-import { keptPlanLine, runLabel, stepLabel, timelineModel, type Band } from './timeline'
+import { keptPlanLine, phaseLabel, runLabel, stepLabel, timelineModel, type Band } from './timeline'
 
 const tokensOf = (event: EventView) =>
   event.usage.input + event.usage.output + event.usage.cache_read + event.usage.cache_write
@@ -40,8 +40,8 @@ function BandView({ band }: { band: Band }) {
   return (
     <section aria-labelledby={id} className="band">
       <h3 id={id}>
-        {band.phase.name} · attempt {band.phase.attempt} · {band.phase.agent} · {band.phase.status}{' '}
-        · {formatTokens(band.tokens)} tokens
+        {phaseLabel(band.phase.name)} · attempt {band.phase.attempt} · {band.phase.agent} ·{' '}
+        {band.phase.status} · {formatTokens(band.tokens)} tokens
       </h3>
       {band.phase.summary_md && <p className="summary">{band.phase.summary_md}</p>}
       <ol>

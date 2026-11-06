@@ -42,7 +42,12 @@ function withPauses(steps: EventView[]): (EventView | Pause)[] {
 /** A step's line, in words: a failure says so rather than only turning red. */
 /** A run's name: drafts and delivery runs are numbered apart (slice 3 spec, §2). */
 export function runLabel(run: { kind: string; number: number }): string {
-  return `${run.kind === 'spec' ? 'Draft' : 'Run'} ${run.number}`
+  return `${run.kind === 'spec' ? 'Draft' : run.kind === 'title' ? 'Title' : 'Run'} ${run.number}`
+}
+
+/** A phase's name as the Timeline and the Cost tab show it: the title phase is capitalised. */
+export function phaseLabel(name: string): string {
+  return name === 'title' ? 'Title' : name
 }
 
 /** The Runner line of a run that holds a plan a Re-run copied into it; null for any other. */

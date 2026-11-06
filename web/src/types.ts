@@ -72,7 +72,13 @@ export interface TaskView {
   draft_failure: string | null
   /** On a Failed card: the run whose accepted plan a Re-run can keep; null when there is none. */
   plan_to_keep: { run: number } | null
+  /** The task's latest title run: working, a suggestion to decide, or its failure; else null. */
+  title_suggestion: TitleSuggestion | null
 }
+export type TitleSuggestion =
+  | { status: 'working' }
+  | { status: 'ready'; title: string; reason: string }
+  | { status: 'failed'; reason: string }
 export type ApprovalKind = 'question' | 'out_of_plan' | 'migration' | 'plan' | 'questions'
 export type ApprovalStatus = 'open' | 'answered' | 'expired' | 'withdrawn'
 export type Stage = 'prepare' | 'spec' | 'plan' | 'build' | 'tests' | 'verify' | 'push' | 'pr'
@@ -160,7 +166,7 @@ export interface PhaseView {
 }
 export interface ArtifactView {
   id: string
-  kind: 'plan' | 'verify_report' | 'pr'
+  kind: 'plan' | 'verify_report' | 'pr' | 'title'
   phase_id: string | null
   body_md: string
   uri: string | null
