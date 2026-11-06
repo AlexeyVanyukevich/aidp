@@ -350,3 +350,29 @@ describe('buildHandoff with approved migrations', () => {
     expect(text).toContain('<approved_migration path="a&quot;&lt;b&gt;.ts">')
   })
 })
+
+describe('buildHandoff for a title run', () => {
+  const TITLE = {
+    taskKey: 'PAY-7',
+    title: 'Fix the thing',
+    phase: 'title' as const,
+    attempt: 1,
+    budgetUsd: null,
+    summaries: [],
+  }
+
+  it('carries the key and the current title, and the return format', () => {
+    const text = buildHandoff(TITLE)
+    expect(text).toContain('<task id="PAY-7" phase="title" attempt="1">Fix the thing</task>')
+    expect(text).toContain(
+      '<return_format>Call suggest_title, then reply with one sentence.</return_format>',
+    )
+    expect(text).not.toContain('<description>')
+  })
+
+  it('carries the description when there is one', () => {
+    expect(buildHandoff({ ...TITLE, description: 'Drafts <vanish>' })).toContain(
+      '<description>\nDrafts &lt;vanish&gt;\n</description>',
+    )
+  })
+})

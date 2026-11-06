@@ -36,6 +36,7 @@ export function registerRunner(instance: FastifyInstance): void {
       work: await service.claim(
         request.body.runner_id,
         request.body.wait_ms ?? app.config.claimWaitMs,
+        request.body.kinds,
       ),
     }),
   )

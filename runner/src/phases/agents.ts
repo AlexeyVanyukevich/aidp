@@ -1,3 +1,5 @@
+import type { PhaseName } from '../contract.js'
+
 const BOARD = (tools: string[]) => tools.map((tool) => `mcp__board__${tool}`)
 
 export interface PhaseConfig {
@@ -8,7 +10,7 @@ export interface PhaseConfig {
   tools: string[]
 }
 
-export const PHASES: Record<'spec' | 'plan' | 'build' | 'verify', PhaseConfig> = {
+export const PHASES: Record<PhaseName, PhaseConfig> = {
   spec: {
     agent: 'spec-writer',
     model: 'opus',
@@ -60,6 +62,14 @@ export const PHASES: Record<'spec' | 'plan' | 'build' | 'verify', PhaseConfig> =
       'Agent',
       ...BOARD(['get_task', 'get_spec', 'save_report', 'log_step', 'request_approval']),
     ],
+  },
+  // Read-only, and never asks the owner: it has no request_approval.
+  title: {
+    agent: 'title-writer',
+    model: 'sonnet',
+    effort: 'medium',
+    permissionMode: 'default',
+    tools: ['Read', 'Grep', 'Glob', ...BOARD(['get_task', 'suggest_title', 'log_step'])],
   },
 }
 
@@ -166,6 +176,19 @@ export const AGENTS: Record<
       SUBAGENTS,
       'Save your verdicts with save_report, one per criterion. If it refuses the report, fix what it names and save again. Finish with one paragraph.',
       ASK,
+    ].join('\n\n'),
+  },
+  'title-writer': {
+    description: 'Suggests a clearer title for a task from the code it touches.',
+    model: 'sonnet',
+    tools: PHASES.title.tools,
+    prompt: [
+      'You suggest a clearer title for one task of a board. The handoff carries the task’s key, its current title and, when there is one, its description.',
+      'Read the code the task touches before you suggest. You change no file.',
+      'Name the thing the task affects in the code’s own terms: the module, function, endpoint or screen as the code calls it. A title is one line of at most 200 characters, in the imperative or as a noun phrase, without the task key.',
+      'Call suggest_title with the title and a reason: one line of at most 300 characters saying which code the title names. If it refuses, fix what it names and call it again.',
+      'When you are unsure, still suggest your best title. You cannot ask the owner anything.',
+      'Finish with one sentence.',
     ].join('\n\n'),
   },
   explorer: {

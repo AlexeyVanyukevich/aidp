@@ -1,9 +1,10 @@
+import type { PhaseName } from '../contract.js'
 import { fenceMigration } from '../migration-content.js'
 
 export interface HandoffInput {
   taskKey: string
   title: string
-  phase: 'spec' | 'plan' | 'build' | 'verify'
+  phase: PhaseName
   attempt: number
   /** The approved spec a delivery phase works to; the version a redraft starts from. */
   specVersion?: number
@@ -81,6 +82,7 @@ const RETURNS: Record<HandoffInput['phase'], string> = {
   build:
     '<build_report status="done|blocked" files="…" tests="…" confidence="high|medium|low"/> and one paragraph.',
   verify: 'Call save_report with a verdict on every criterion, then reply with one paragraph.',
+  title: 'Call suggest_title, then reply with one sentence.',
 }
 
 /** The platform design's handoff contract: the same tags for every phase. */

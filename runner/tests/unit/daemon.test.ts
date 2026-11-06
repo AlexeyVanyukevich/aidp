@@ -23,6 +23,8 @@ afterEach(() => vi.restoreAllMocks())
 function setUp(options: {
   fingerprints: string[]
   claims?: (Work | null)[]
+  /** What the title lane's claims return, in turn. */
+  titleClaims?: (Work | null)[]
   cancel?: string[]
   now?: Date
 }) {
@@ -32,14 +34,19 @@ function setUp(options: {
   vi.spyOn(console, 'error').mockImplementation((line: string) => void log.push(String(line)))
   const events: string[] = []
   const claims = [...(options.claims ?? [])]
+  const titleClaims = [...(options.titleClaims ?? [])]
+  /** The kinds each claim request asked for, in order. */
+  const asked: (readonly string[] | undefined)[] = []
   const reads = options.fingerprints
   let read = 0
   const api = {
     ...h.deps.api,
-    claim: async () => {
-      events.push('claim')
+    claim: async (_runnerId: string, _waitMs: number, kinds?: readonly string[]) => {
+      asked.push(kinds)
+      const title = kinds?.length === 1 && kinds[0] === 'title'
+      events.push(title ? 'claim:title' : 'claim')
       await new Promise((done) => setTimeout(done, 2))
-      return claims.shift() ?? null
+      return (title ? titleClaims : claims).shift() ?? null
     },
     heartbeat: async () => {
       events.push(`heartbeat (stages so far: ${h.calls.length})`)
@@ -65,7 +72,7 @@ function setUp(options: {
     settle: async () => void settles.push(read),
     handoffPath,
   })
-  return { h, daemon, log, events, exits, settles, handoffPath, reads: () => read }
+  return { h, daemon, log, events, exits, settles, handoffPath, asked, reads: () => read }
 }
 
 const never = new AbortController().signal
@@ -258,6 +265,73 @@ describe('takeOverClaim', () => {
     if (row.logged !== '')
       expect(t.log.some((l) => l.startsWith('board-cli: ') && l.includes(row.logged))).toBe(true)
     // In every row, the daemon then claims.
-    expect(t.events.at(-1)).toBe('claim')
+    expect(t.events.filter((e) => e !== 'claim:title').at(-1)).toBe('claim')
+  })
+})
+
+describe('the title lane', () => {
+  const TITLE_RUN = {
+    ...RUN,
+    id: '00000000-0000-4000-8000-0000000000a1',
+    kind: 'title' as const,
+    spec_version: null,
+    spec: null,
+    task: { ...RUN.task, description_md: '' },
+  }
+  const TITLE: Work = { kind: 'start', run: TITLE_RUN }
+  const runEnds = (t: ReturnType<typeof setUp>) =>
+    t.h.sent
+      .filter((e) => e.type === 'run_end')
+      .map((e) => ({ outcome: e.payload.outcome, reason: e.payload.reason }))
+
+  it('asks for title runs in one loop and for the other kinds in the other', async () => {
+    const t = setUp({ fingerprints: [START_CODE] })
+    const stop = new AbortController()
+    const run = t.daemon.loop(stop.signal)
+    await new Promise((done) => setTimeout(done, 20))
+    stop.abort()
+    await run
+    const kinds = new Set(t.asked.map((k) => JSON.stringify(k)))
+    expect(kinds).toEqual(
+      new Set([JSON.stringify(['spec', 'delivery']), JSON.stringify(['title'])]),
+    )
+  })
+
+  it('carries a title run out to a suggestion', async () => {
+    const t = setUp({ fingerprints: [START_CODE], titleClaims: [TITLE] })
+    expect(await t.daemon.runTitleOnce(never)).toBe('suggested')
+    expect(t.h.calls).toEqual(['start title-1', 'end title-1 ok'])
+    expect(runEnds(t)).toEqual([{ outcome: 'suggested', reason: undefined }])
+  })
+
+  it('does not hand a title claim on once the code moved: it ends "the runner stopped"', async () => {
+    const t = setUp({ fingerprints: [START_CODE, MOVED, MOVED, MOVED], titleClaims: [TITLE] })
+    expect(await t.daemon.runTitleOnce(never)).toBe('failed')
+    expect(existsSync(t.handoffPath)).toBe(false)
+    expect(t.h.calls).toEqual([])
+    expect(runEnds(t)).toEqual([{ outcome: 'failed', reason: 'the runner stopped' }])
+    expect(t.exits).toEqual([])
+  })
+
+  it('ends a title run in flight "the runner stopped" when the daemon stops', async () => {
+    const t = setUp({ fingerprints: [START_CODE], titleClaims: [TITLE] })
+    const stopping = new AbortController()
+    stopping.abort()
+    expect(await t.daemon.runTitleOnce(stopping.signal)).toBe('failed')
+    expect(runEnds(t)).toEqual([{ outcome: 'failed', reason: 'the runner stopped' }])
+  })
+
+  it('sends no claim from either loop once the code moved, and exits 75', async () => {
+    const t = setUp({ fingerprints: [START_CODE, MOVED, MOVED, MOVED] })
+    const stop = new AbortController()
+    await t.daemon.loop(stop.signal)
+    expect(t.events.filter((e) => e.startsWith('claim'))).toEqual([])
+    expect(t.exits).toEqual([75])
+  })
+
+  it('carries out a cleanup that returns after the code moved', async () => {
+    const t = setUp({ fingerprints: [START_CODE, MOVED, MOVED, MOVED], titleClaims: [cleanup] })
+    expect(await t.daemon.runTitleOnce(never)).toBe('cleaned')
+    expect(t.h.gitCalls).toEqual(['remove'])
   })
 })

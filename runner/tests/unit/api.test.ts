@@ -81,3 +81,23 @@ describe('the runner’s timing configuration', () => {
     expect(loadRunnerConfig({ ...base, [key]: '200' })[field]).toBe(200)
   })
 })
+
+describe('a claim limited to run kinds', () => {
+  it.each([
+    { name: 'without kinds', kinds: undefined, body: { runner_id: 'r1', wait_ms: 1 } },
+    {
+      name: 'for title',
+      kinds: ['title' as const],
+      body: { runner_id: 'r1', wait_ms: 1, kinds: ['title'] },
+    },
+  ])('sends the body $name', async ({ kinds, body }) => {
+    vi.useRealTimers()
+    let sent: unknown
+    const fetchImpl = (async (_url: unknown, init?: RequestInit) => {
+      sent = JSON.parse(String(init?.body))
+      return new Response(JSON.stringify({ work: null }), { status: 200 })
+    }) as typeof fetch
+    await new BoardApi('http://board', 'key', fetchImpl).claim('r1', 1, kinds)
+    expect(sent).toEqual(body)
+  })
+})

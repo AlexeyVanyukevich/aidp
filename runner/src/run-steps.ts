@@ -231,7 +231,12 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
   const removeWorktree = (caller: RemovalCaller, repo: string, path: string) =>
     removeCheckout(removals, deps.git, repo, caller, path)
 
+  /** A title run is never paused, blocked or resumed: it keeps no checkpoint, and fails instead. */
+  const isTitle = run.kind === 'title'
+  const STOPPED = 'the runner stopped'
+
   const checkpoint = async () => {
+    if (isTitle) return
     let head: string | null = null
     if (existsSync(io.worktree)) head = await deps.git.head(io.worktree).catch(() => null)
     const payload: Checkpoint = {
@@ -468,7 +473,10 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
 
   /** The daemon is stopping: between steps, the run is blocked where it stands. */
   const stopIfShuttingDown = async () => {
-    if (deps.shutdown?.aborted === true) await block('runner_stopped')
+    if (deps.shutdown?.aborted === true) {
+      if (isTitle) throw new End('failed', STOPPED)
+      await block('runner_stopped')
+    }
   }
 
   /**
@@ -528,8 +536,11 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
     state.phase = result.record
     await checkpoint()
     if (result.stopped === 'cancelled') throw new End('cancelled', 'cancelled by the owner')
-    if (result.stopped === 'shutdown') await block('runner_stopped')
-    if (result.stopped === 'paused') throw new Release()
+    if (result.stopped === 'shutdown') {
+      if (isTitle) throw new End('failed', STOPPED)
+      await block('runner_stopped')
+    }
+    if (result.stopped === 'paused' && !isTitle) throw new Release()
     if (result.codeMoved === true) throw new StartFailure(CODE_CHECK_COMMAND, CODE_CHECK_OUTPUT)
     return result
   }
@@ -566,8 +577,12 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
       outcome = done.outcome
       extra = done.extra
     } catch (error) {
-      if (error instanceof Release) {
+      if (error instanceof Release && !isTitle) {
         outcome = 'released'
+      } else if (isTitle && (error instanceof GitError || error instanceof StartFailure)) {
+        // A title run is never blocked: it fails, and the owner asks again.
+        outcome = 'failed'
+        extra = { reason: `the title run could not go on: ${error.output.slice(-500)}` }
       } else if (error instanceof GitError || error instanceof StartFailure) {
         // A git or gh step, or a Claude Code process that did not start, blocks the run where it
         // stands; Resume retries the step.

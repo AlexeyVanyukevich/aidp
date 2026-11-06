@@ -1,4 +1,4 @@
-import type { RunnerEvent, RunView, Work } from './contract.js'
+import type { RunKind, RunnerEvent, RunView, Work } from './contract.js'
 
 export class ApiError extends Error {
   constructor(
@@ -69,13 +69,14 @@ export class BoardApi {
     return response.status === 204 ? (undefined as T) : ((await response.json()) as T)
   }
 
-  async claim(runnerId: string, waitMs: number): Promise<Work | null> {
+  /** `kinds` limits the claim to those run kinds; absent claims any. */
+  async claim(runnerId: string, waitMs: number, kinds?: readonly RunKind[]): Promise<Work | null> {
     return (
       await this.call<{ work: Work | null }>(
         'POST',
         '/api/runner/claim',
         this.runnerKey,
-        { runner_id: runnerId, wait_ms: waitMs },
+        { runner_id: runnerId, wait_ms: waitMs, ...(kinds === undefined ? {} : { kinds }) },
         waitMs + CLAIM_MARGIN_MS,
       )
     ).work

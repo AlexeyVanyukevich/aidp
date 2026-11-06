@@ -4,7 +4,13 @@ import type { Bus } from '../../shared/bus.js'
 import { publish } from '../../shared/bus.js'
 import { ConflictError, UnauthorizedError } from '../../shared/errors.js'
 import { hashToken, newToken } from '../../shared/tokens.js'
-import type { Checkpoint, SpecCriterion } from '../../shared/vocabulary.js'
+import {
+  RUN_KINDS,
+  type Checkpoint,
+  type RunKind,
+  type SpecCriterion,
+  type TaskState,
+} from '../../shared/vocabulary.js'
 import { allowedFiles, approvedMigrations, type Answer } from '../approvals/approval-rules.js'
 import { openApproval } from '../approvals/approval.service.js'
 import { planAnswers, previousPlans } from '../tasks/plan-history.js'
@@ -16,7 +22,7 @@ import type { RunnerEvent } from './runner.schemas.js'
 export interface RunWork {
   id: string
   number: number
-  kind: 'spec' | 'delivery'
+  kind: RunKind
   /** A delivery run's approved version; a spec run's version it redrafts, or null. */
   spec_version: number | null
   /** What the owner asked a redraft to change. */
@@ -74,6 +80,13 @@ export type Work =
     }
   | { kind: 'cleanup'; run: { id: string; repo_path: string; worktree_path: string | null } }
 
+/** The card states a run may start from: a title run starts beside any of its two. */
+const START_STATES: Record<RunKind, readonly TaskState[]> = {
+  spec: ['spec_draft'],
+  delivery: ['ready'],
+  title: ['backlog', 'spec_review'],
+}
+
 const TOKEN_LIFETIME_MS = 12 * 3600_000
 const RETIRE_GRACE_MS = 5 * 60_000
 
@@ -84,25 +97,30 @@ export class RunnerService {
     private readonly clock: () => Date,
   ) {}
 
-  async claim(runnerId: string, waitMs: number): Promise<Work | null> {
-    const first = await this.tryClaim(runnerId)
+  async claim(
+    runnerId: string,
+    waitMs: number,
+    kinds: readonly RunKind[] = RUN_KINDS,
+  ): Promise<Work | null> {
+    const first = await this.tryClaim(runnerId, kinds)
     if (first !== null || waitMs === 0) return first
     await this.bus.next('run.queued', waitMs)
-    return this.tryClaim(runnerId)
+    return this.tryClaim(runnerId, kinds)
   }
 
   /**
-   * Takes the oldest queued work of any kind. A start whose card has moved on — out of Ready for
-   * a delivery run, out of Spec draft for a spec run — is skipped, and cancelled, rather than
-   * handed over.
+   * Takes the oldest queued work of the kinds asked for. A start whose card has moved on — out
+   * of Ready for a delivery run, out of Spec draft for a spec run, out of Backlog and Spec review
+   * for a title run — is skipped, and cancelled, rather than handed over.
    */
-  private async tryClaim(runnerId: string): Promise<Work | null> {
+  private async tryClaim(runnerId: string, kinds: readonly RunKind[]): Promise<Work | null> {
     for (let attempt = 0; attempt < 20; attempt++) {
       const outcome = await this.db.transaction().execute(async (trx) => {
         const run = await trx
           .selectFrom('runs')
           .select(['id', 'task_id', 'kind', 'pending', 'resume_message'])
           .where('queued_at', 'is not', null)
+          .where('kind', 'in', [...kinds])
           .orderBy('queued_at')
           .orderBy('created_at')
           .limit(1)
@@ -155,7 +173,7 @@ export class RunnerService {
           .forUpdate()
           .executeTakeFirstOrThrow()
         // A draft's card is already in Spec draft: claiming it moves nothing (slice 3 spec, §4).
-        if (task.state !== (run.kind === 'spec' ? 'spec_draft' : 'ready')) {
+        if (!START_STATES[run.kind].includes(task.state)) {
           await trx
             .updateTable('runs')
             .set({ status: 'cancelled', ended_at: now, queued_at: null })
@@ -355,7 +373,7 @@ export class RunnerService {
     return {
       id: row.id,
       number: row.run_number,
-      kind: row.kind as 'spec' | 'delivery',
+      kind: row.kind,
       spec_version: row.spec_version,
       note: row.note,
       task: {
@@ -405,7 +423,7 @@ export class RunnerService {
       .execute()
     const rows = await this.db
       .selectFrom('runs')
-      .select(['id', 'status', 'runner_id', 'cancel_requested'])
+      .select(['id', 'kind', 'status', 'runner_id', 'cancel_requested'])
       .where('id', 'in', runIds)
       .execute()
     const mine = (row: (typeof rows)[number]) => row.runner_id === runnerId
@@ -416,7 +434,10 @@ export class RunnerService {
             row.cancel_requested ||
             !mine(row) ||
             row.status === 'blocked' ||
-            row.status === 'cancelled',
+            row.status === 'cancelled' ||
+            // A title run is never paused or blocked: once it is not running (the sweeper may
+            // have failed it), its process is stopped.
+            (row.kind === 'title' && row.status !== 'running'),
         )
         .map((row) => row.id),
       pause: rows
@@ -496,6 +517,38 @@ export class RunnerService {
         await publish(trx, { topic: 'run.event', runId: context.runId, taskId: context.taskId })
       return { accepted }
     })
+  }
+
+  /** A title run ends alone: its card is not moved, whatever the outcome (R7). */
+  private async endTitleRun(
+    trx: Transaction<Database>,
+    runId: string,
+    effect: Extract<Effect, { kind: 'run_end' }>,
+  ): Promise<void> {
+    const stored =
+      effect.outcome !== 'suggested' ||
+      (await trx
+        .selectFrom('artifacts')
+        .select('id')
+        .where('run_id', '=', runId)
+        .where('kind', '=', 'title')
+        .executeTakeFirst()) !== undefined
+    const status =
+      effect.outcome === 'cancelled'
+        ? 'cancelled'
+        : effect.outcome === 'suggested' && stored
+          ? 'succeeded'
+          : 'failed'
+    await trx
+      .updateTable('runs')
+      .set({
+        status,
+        ended_at: effect.at,
+        failure_reason: stored ? effect.reason : 'the title agent suggested no title',
+        worktree_path: effect.worktreePath,
+      })
+      .where('id', '=', runId)
+      .execute()
   }
 
   private async apply(
@@ -607,6 +660,15 @@ export class RunnerService {
         )
         return
       case 'run_end': {
+        const kind = await trx
+          .selectFrom('runs')
+          .select('kind')
+          .where('id', '=', context.runId)
+          .executeTakeFirstOrThrow()
+        if (kind.kind === 'title') {
+          await this.endTitleRun(trx, context.runId, effect)
+          return
+        }
         // A draft that ended well but saved nothing failed: there is nothing to review.
         const saved =
           effect.outcome !== 'drafted' ||
@@ -615,7 +677,9 @@ export class RunnerService {
             .select('id')
             .where('run_id', '=', context.runId)
             .executeTakeFirst()) !== undefined
-        const outcome = saved ? effect.outcome : 'failed'
+        // `suggested` belongs to a title run; on any other run it is a failure.
+        const reported = effect.outcome === 'suggested' ? 'failed' : effect.outcome
+        const outcome = saved ? reported : 'failed'
         await trx
           .updateTable('runs')
           .set({

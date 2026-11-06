@@ -1231,3 +1231,112 @@ describe('a base that moves during the run', () => {
     ).toContain('refs/heads/board/PAY-1-r1')
   })
 })
+
+// A title run: a read-only phase beside whatever else the runner carries, and never a move.
+const SUGGEST = {
+  tool: 'suggest_title',
+  args: { title: 'Back off webhook retries', reason: 'names the retry delays in src/retry.ts' },
+}
+
+describe('a title run end to end', () => {
+  interface TitleTask {
+    state: string
+    title: string
+    title_suggestion: { status: string; title?: string; reason?: string } | null
+  }
+  const titleTask = (id: string) => api<TitleTask>('GET', `/api/tasks/${id}`)
+  const backlogTask = async () =>
+    (await api<{ id: string }>('POST', '/api/projects/PAY/tasks', { title: 'Retries' })).id
+  const titleRunOf = async (taskId: string) => (await runs(taskId))[0]!
+
+  it('suggests a title, leaves the card where it was, and removes the worktree', async () => {
+    const taskId = await backlogTask()
+    await api('POST', `/api/tasks/${taskId}/actions/rephrase-title`)
+    const f = fleet({ 'title-writer': [[SUGGEST]] })
+    expect(await f.daemon().runTitleOnce()).toBe('suggested')
+
+    expect(await titleTask(taskId)).toMatchObject({
+      state: 'backlog',
+      title: 'Retries',
+      title_suggestion: {
+        status: 'ready',
+        title: 'Back off webhook retries',
+        reason: 'names the retry delays in src/retry.ts',
+      },
+    })
+    const run = await titleRunOf(taskId)
+    expect(run).toMatchObject({ status: 'succeeded' })
+    expect(run.phases.map((p) => `${p.name}:${p.status}`)).toEqual(['title:succeeded'])
+    expect(existsSync(join(f.home, 'worktrees', run.id))).toBe(false)
+    const [call] = f.calls().filter((c) => c.agent === 'title-writer')
+    expect(call!.prompt).toContain('<task id="PAY-1" phase="title"')
+    expect(call!.prompt).toContain('Call suggest_title, then reply with one sentence.')
+  })
+
+  it('fails a run whose agent suggested nothing', async () => {
+    const taskId = await backlogTask()
+    await api('POST', `/api/tasks/${taskId}/actions/rephrase-title`)
+    await fleet({ 'title-writer': [[]] })
+      .daemon()
+      .runTitleOnce()
+    expect(await titleRunOf(taskId)).toMatchObject({
+      status: 'failed',
+      failure_reason: 'the title agent suggested no title',
+    })
+    expect(await titleTask(taskId)).toMatchObject({
+      state: 'backlog',
+      title_suggestion: { status: 'failed', reason: 'the title agent suggested no title' },
+    })
+  })
+
+  it('stops within a heartbeat when the owner presses Stop', async () => {
+    const taskId = await backlogTask()
+    await api('POST', `/api/tasks/${taskId}/actions/rephrase-title`)
+    const running = fleet({ 'title-writer': [[{ sleep: 30_000 }]] })
+      .daemon()
+      .runTitleOnce()
+    await until(async () => (await titleRunOf(taskId)).current_phase === 'title', 'the Title phase')
+    await api('POST', `/api/tasks/${taskId}/actions/stop-title`)
+    expect(await running).toBe('cancelled')
+    expect(await titleRunOf(taskId)).toMatchObject({ status: 'cancelled' })
+    expect(await titleTask(taskId)).toMatchObject({ state: 'backlog', title_suggestion: null })
+  })
+
+  it('starts while another task’s delivery run is in progress', async () => {
+    const deliveryTask = await approvedTask()
+    const taskId = await backlogTask()
+    const f = fleet({
+      planner: [[{ tool: 'save_plan', args: PLAN }]],
+      builder: [[{ sleep: 4_000 }, ...builds('export const delays = [1, 2, 4]\n')]],
+      verifier: [[report('pass')]],
+      'title-writer': [[SUGGEST]],
+    })
+    const delivery = f.daemon().runOnce()
+    await until(async () => (await runs(deliveryTask))[0]?.current_phase === 'build', 'Build')
+    await api('POST', `/api/tasks/${taskId}/actions/rephrase-title`)
+    expect(await f.daemon().runTitleOnce()).toBe('suggested')
+    // The title run finished while Build was still asleep.
+    expect((await runs(deliveryTask))[0]).toMatchObject({
+      status: 'running',
+      current_phase: 'build',
+    })
+    expect(await delivery).toBe('review')
+  })
+
+  it('fails a run whose daemon is stopped, and moves nothing', async () => {
+    const taskId = await backlogTask()
+    await api('POST', `/api/tasks/${taskId}/actions/rephrase-title`)
+    const f = fleet({ 'title-writer': [[{ sleep: 60_000 }]] })
+    const child = f.child()
+    await until(async () => (await titleRunOf(taskId)).current_phase === 'title', 'the Title phase')
+    await new Promise((done) => setTimeout(done, 1_000))
+    child.kill('SIGTERM')
+    await child.exited()
+    expect(await titleRunOf(taskId)).toMatchObject({
+      status: 'failed',
+      failure_reason: 'the runner stopped',
+    })
+    expect((await titleTask(taskId)).state).toBe('backlog')
+    f.stopAll()
+  })
+})

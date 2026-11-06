@@ -175,3 +175,33 @@ describe('the withdrawal wording', () => {
     for (const phrase of absent) expect(prompt).not.toContain(phrase.toLowerCase())
   })
 })
+
+describe('the title phase', () => {
+  it('runs title-writer on Sonnet at medium effort with exactly its tools', () => {
+    expect(PHASES.title).toMatchObject({ agent: 'title-writer', model: 'sonnet', effort: 'medium' })
+    expect([...PHASES.title.tools].sort()).toEqual(
+      [
+        'Read',
+        'Grep',
+        'Glob',
+        'mcp__board__get_task',
+        'mcp__board__suggest_title',
+        'mcp__board__log_step',
+      ].sort(),
+    )
+    expect(AGENTS['title-writer']?.tools).toEqual(PHASES.title.tools)
+    expect(AGENTS['title-writer']?.model).toBe('sonnet')
+  })
+
+  it('has no way to edit, run a command, delegate or ask', () => {
+    for (const tool of ['Edit', 'Write', 'Bash', 'Agent', 'mcp__board__request_approval'])
+      expect(PHASES.title.tools).not.toContain(tool)
+  })
+
+  it('tells the agent to read the code, name it in its own terms, and suggest when unsure', () => {
+    const prompt = AGENTS['title-writer']!.prompt
+    expect(prompt).toContain('Read the code the task touches')
+    expect(prompt).toContain('code’s own terms')
+    expect(prompt).toContain('still suggest your best title')
+  })
+})

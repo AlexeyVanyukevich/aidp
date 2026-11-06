@@ -1,7 +1,14 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { buildTestApp, closeTestDb, getTestDb, resetDb, TEST_RUNNER_KEY } from './helpers.js'
-import { GOOD_SPEC, seedProject, seedQueuedRun, seedRunningRun, seedTask } from './fixtures.js'
+import {
+  GOOD_SPEC,
+  seedProject,
+  seedQueuedRun,
+  seedRunningRun,
+  seedTask,
+  seedTitleRun,
+} from './fixtures.js'
 import { openApproval } from '../../src/modules/approvals/approval.service.js'
 import { publish } from '../../src/shared/bus.js'
 
@@ -1327,5 +1334,112 @@ describe('the links a claim carries', () => {
   it('hands an empty list when the project links to nothing', async () => {
     await seedQueuedRun(db())
     expect((await claim()).json().work.run.links).toEqual([])
+  })
+})
+
+describe('the title lane', () => {
+  const claimKinds = (kinds: string[]) =>
+    app.inject({
+      method: 'POST',
+      url: '/api/runner/claim',
+      headers: auth,
+      payload: { runner_id: 'r1', wait_ms: 0, kinds },
+    })
+
+  async function titleRun(state: 'backlog' | 'spec_review' | 'ready' = 'backlog', key = 'TIT') {
+    const project = await seedProject(getTestDb(), { key })
+    const task = await seedTask(getTestDb(), project.id, { state })
+    const runId = await seedTitleRun(getTestDb(), task.id)
+    return { taskId: task.id, runId }
+  }
+
+  it('hands a title run only to a claim for title, and starts it without moving the card', async () => {
+    const { taskId, runId } = await titleRun()
+    expect((await claimKinds(['spec', 'delivery'])).json().work).toBeNull()
+    const work = (await claimKinds(['title'])).json().work
+    expect(work).toMatchObject({ kind: 'start', run: { id: runId, kind: 'title', spec: null } })
+    expect(await state(taskId)).toBe('backlog')
+    const row = await getTestDb()
+      .selectFrom('runs')
+      .select(['status', 'runner_id'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow()
+    expect(row).toEqual({ status: 'running', runner_id: 'r1' })
+  })
+
+  it('leaves a delivery run to the main lane', async () => {
+    await seedQueuedRun(getTestDb())
+    expect((await claimKinds(['title'])).json().work).toBeNull()
+    expect((await claimKinds(['spec', 'delivery'])).json().work).toMatchObject({
+      run: { kind: 'delivery' },
+    })
+  })
+
+  it('claims a title run while another task’s delivery run is carried', async () => {
+    await seedQueuedRun(getTestDb())
+    await claim()
+    const { runId } = await titleRun()
+    expect((await claimKinds(['title'])).json().work.run.id).toBe(runId)
+  })
+
+  it('cancels a title run whose card left Backlog and Spec review', async () => {
+    const { runId } = await titleRun('ready')
+    expect((await claimKinds(['title'])).json().work).toBeNull()
+    const row = await getTestDb()
+      .selectFrom('runs')
+      .select('status')
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow()
+    expect(row.status).toBe('cancelled')
+  })
+
+  it('asks the runner to stop a title run the sweeper failed, and an ordinary one it does not', async () => {
+    const { runId } = await titleRun()
+    await claimKinds(['title'])
+    const beat = async () =>
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/runner/heartbeat',
+          headers: auth,
+          payload: { runner_id: 'r1', run_ids: [runId] },
+        })
+      ).json()
+    expect((await beat()).cancel).toEqual([])
+    await getTestDb()
+      .updateTable('runs')
+      .set({ status: 'failed', failure_reason: 'the runner was lost' })
+      .where('id', '=', runId)
+      .execute()
+    expect((await beat()).cancel).toEqual([runId])
+  })
+
+  it('ends a title run without moving the card', async () => {
+    const { taskId, runId } = await titleRun()
+    await claimKinds(['title'])
+    const token = (
+      await app.inject({ method: 'POST', url: `/api/runner/runs/${runId}/tokens`, headers: auth })
+    ).json().token as string
+    const end = (outcome: string, reason?: string) =>
+      send(token, [event(runId, 'run_end', { outcome, ...(reason ? { reason } : {}) })])
+    const status = async () =>
+      await getTestDb()
+        .selectFrom('runs')
+        .select(['status', 'failure_reason'])
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow()
+
+    expect((await end('suggested')).statusCode).toBe(200)
+    expect(await status()).toEqual({
+      status: 'failed',
+      failure_reason: 'the title agent suggested no title',
+    })
+    await getTestDb()
+      .insertInto('artifacts')
+      .values({ run_id: runId, kind: 'title', body_md: 'T', data: JSON.stringify({ title: 'T' }) })
+      .execute()
+    await end('suggested')
+    expect((await status()).status).toBe('succeeded')
+    expect(await state(taskId)).toBe('backlog')
   })
 })

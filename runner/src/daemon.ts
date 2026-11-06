@@ -2,12 +2,13 @@ import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'nod
 import { join } from 'node:path'
 import { BoardApi } from './api.js'
 import { ConfigurationError, loadRunnerConfig, type RunnerConfig } from './config.js'
-import type { Work } from './contract.js'
+import type { RunKind, Work } from './contract.js'
 import { carryOut, cleanUp, type Outcome, type Phases } from './delivery.js'
 import { draftSpec } from './drafting.js'
 import { realExec } from './exec.js'
 import { checkExecutable } from './executable.js'
 import { runnerCode } from './fingerprint.js'
+import { suggestTitle } from './titling.js'
 import { Git } from './git.js'
 import { continuePhase, endPhase, restartPhase, startPhase } from './phases/phase.js'
 import { EventSink } from './sink.js'
@@ -19,6 +20,10 @@ export const RESTART_STATUS = 75
 const SETTLE_MS = 2_000
 /** A claim older than this is the sweeper's: the run is blocked as `runner_lost`. */
 const HANDOFF_FRESH_MS = 60_000
+
+/** The main loop claims these; the title loop claims `title` and nothing else. */
+const MAIN_KINDS: readonly RunKind[] = ['spec', 'delivery']
+const TITLE_KINDS: readonly RunKind[] = ['title']
 
 const PHASES: Phases = {
   start: startPhase,
@@ -35,6 +40,13 @@ export class Daemon {
   private readonly handoffPath: string
   /** Set once the daemon has asked to exit: nothing more is claimed. */
   private exiting = false
+  /** Set once either loop has seen the code move: neither sends a new claim request. */
+  private moved = false
+  /** Aborted when the daemon exits: a title run in flight ends failed, "the runner stopped". */
+  private readonly titleStop = new AbortController()
+  private codeCheck: Promise<boolean> | null = null
+  /** The title loop, running, so an exit can wait for it. */
+  private titleLane: Promise<void> = Promise.resolve()
 
   constructor(
     private readonly config: RunnerConfig,
@@ -65,23 +77,61 @@ export class Daemon {
    */
   async runOnce(
     shutdown?: AbortSignal,
-  ): Promise<Outcome | 'drafted' | 'cleaned' | 'handed' | false> {
-    const work = await this.api.claim(this.config.runnerId, this.config.claimWaitMs)
+  ): Promise<Outcome | 'drafted' | 'suggested' | 'cleaned' | 'handed' | false> {
+    const work = await this.api.claim(this.config.runnerId, this.config.claimWaitMs, MAIN_KINDS)
     if (work === null) return false
     if (work.kind === 'cleanup') {
-      // Never handed on: it runs no hook, so the old code carries it out.
-      await cleanUp(work, {
-        git: this.git,
-        config: this.config,
-        ...(this.overrides.clock === undefined ? {} : { clock: this.overrides.clock }),
-      })
+      await this.cleanUp(work)
       return 'cleaned'
     }
-    if (await this.movedCode()) {
+    if (this.moved || (await this.sawMovedCode())) {
+      await this.quiesceTitleLane()
       this.handOff(work)
       return 'handed'
     }
     return this.carryWork(work, shutdown)
+  }
+
+  /**
+   * The title lane's turn: claims a title run, or the cleanup of one, and carries it out beside
+   * whatever the main loop is doing. A title claim is never handed on: once the code has moved,
+   * or the daemon is exiting, it ends failed, "the runner stopped".
+   */
+  async runTitleOnce(
+    shutdown?: AbortSignal,
+  ): Promise<'suggested' | 'failed' | 'cancelled' | 'released' | 'cleaned' | false> {
+    const work = await this.api.claim(this.config.runnerId, this.config.claimWaitMs, TITLE_KINDS)
+    if (work === null) return false
+    if (work.kind === 'cleanup') {
+      await this.cleanUp(work)
+      return 'cleaned'
+    }
+    if (work.kind !== 'start') throw new Error('a title run is never resumed')
+    const stopping = new AbortController()
+    if (this.moved || (await this.sawMovedCode())) stopping.abort()
+    const signals = [this.titleStop.signal, stopping.signal, ...(shutdown ? [shutdown] : [])]
+    const outcome = await this.carryWork(work, AbortSignal.any(signals))
+    return outcome as 'suggested' | 'failed' | 'cancelled' | 'released'
+  }
+
+  /** Never handed on: a cleanup runs no hook, so the old code carries it out. */
+  private async cleanUp(work: Extract<Work, { kind: 'cleanup' }>): Promise<void> {
+    await cleanUp(work, {
+      git: this.git,
+      config: this.config,
+      ...(this.overrides.clock === undefined ? {} : { clock: this.overrides.clock }),
+    })
+  }
+
+  /** `movedCode`, remembered: the first loop to see it stops both from claiming. */
+  private async sawMovedCode(): Promise<boolean> {
+    if (this.moved) return true
+    // Both loops ask at once: they share the one check, and so its one settle wait.
+    this.codeCheck ??= this.movedCode().finally(() => {
+      this.codeCheck = null
+    })
+    if (await this.codeCheck) this.moved = true
+    return this.moved
   }
 
   /**
@@ -179,7 +229,7 @@ export class Daemon {
   private async carryWork(
     work: Extract<Work, { kind: 'start' | 'resume' }>,
     shutdown?: AbortSignal,
-  ): Promise<Outcome | 'drafted'> {
+  ): Promise<Outcome | 'drafted' | 'suggested'> {
     const runId = work.run.id
     const controller = new AbortController()
     let pauseAsked = false
@@ -216,6 +266,10 @@ export class Daemon {
         ...(this.overrides.clock === undefined ? {} : { clock: this.overrides.clock }),
       }
       // A draft or a delivery: the same machinery, different stages (slice 3 spec, §5).
+      if (work.run.kind === 'title') {
+        if (work.kind !== 'start') throw new Error('a title run is never resumed')
+        return await suggestTitle(work, deps)
+      }
       return work.run.kind === 'spec'
         ? await draftSpec(work, deps)
         : await carryOut(work, { ...deps, runTests: deps.runTests })
@@ -224,17 +278,59 @@ export class Daemon {
     }
   }
 
-  /** Until `stop`: a stop mid-run blocks that run, which Resume continues (spec §8). */
+  /**
+   * Until `stop`: two claim loops. The main one claims spec and delivery runs; a stop mid-run
+   * blocks that run, which Resume continues (spec §8). The title one claims title runs, beside
+   * the run the main loop carries; a stop mid-run fails a title run.
+   */
   async loop(stop: AbortSignal): Promise<void> {
     await this.takeOverClaim(stop)
+    this.titleLane = this.titleLoop(stop)
+    await this.mainLoop(stop)
+    await this.titleLane
+  }
+
+  private async mainLoop(stop: AbortSignal): Promise<void> {
     while (!stop.aborted && !this.exiting) {
-      if (await this.movedCode()) {
+      if (await this.sawMovedCode()) {
         console.log("board-cli: the runner's code changed; restarting")
+        await this.quiesceTitleLane()
         this.exit(RESTART_STATUS)
         return
       }
       try {
         await this.runOnce(stop)
+      } catch (error) {
+        console.error(
+          `board-cli: ${error instanceof Error ? error.message : String(error)}; retrying in ${BACKOFF_MS / 1000}s`,
+        )
+        await new Promise((done) => setTimeout(done, BACKOFF_MS))
+      }
+    }
+  }
+
+  /**
+   * Before the daemon exits with the main loop idle or its claim handed on: a title run in
+   * flight is stopped, and so ends failed, "the runner stopped"; an open title claim is waited
+   * for, at most the claim wait.
+   */
+  private async quiesceTitleLane(): Promise<void> {
+    this.titleStop.abort()
+    let timer: NodeJS.Timeout | undefined
+    await Promise.race([
+      this.titleLane,
+      new Promise<void>((done) => {
+        timer = setTimeout(done, this.config.claimWaitMs + this.config.stopGraceMs)
+      }),
+    ])
+    clearTimeout(timer)
+  }
+
+  private async titleLoop(stop: AbortSignal): Promise<void> {
+    while (!stop.aborted && !this.exiting && !this.moved && !this.titleStop.signal.aborted) {
+      if (await this.sawMovedCode()) return
+      try {
+        await this.runTitleOnce(stop)
       } catch (error) {
         console.error(
           `board-cli: ${error instanceof Error ? error.message : String(error)}; retrying in ${BACKOFF_MS / 1000}s`,

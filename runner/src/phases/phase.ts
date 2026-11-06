@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { BoardApi } from '../api.js'
-import type { SessionTotals } from '../contract.js'
+import type { PhaseName, SessionTotals } from '../contract.js'
 import { newEvent, type EventSink } from '../sink.js'
 import { PHASES } from './agents.js'
 import { writeFileSync } from 'node:fs'
@@ -19,7 +19,7 @@ import {
 
 export interface PhaseInput {
   runId: string
-  phase: 'spec' | 'plan' | 'build' | 'verify'
+  phase: PhaseName
   attempt: number
   handoff: string
   worktree: string
@@ -50,7 +50,7 @@ export interface PhaseDeps {
 export interface PhaseRecord {
   runId: string
   phaseId: string
-  phase: 'spec' | 'plan' | 'build' | 'verify'
+  phase: PhaseName
   attempt: number
   sessionId: string
   baseline: Record<string, SessionTotals>
