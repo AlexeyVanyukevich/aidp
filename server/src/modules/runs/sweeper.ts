@@ -1,6 +1,7 @@
 import type { Kysely, Transaction } from 'kysely'
 import type { Database } from '../../db/schema.js'
 import type { Block, Stage } from '../../shared/vocabulary.js'
+import { publish } from '../../shared/bus.js'
 import { moveTask } from '../tasks/task.moves.js'
 import {
   APPROVAL_TTL_MS,
@@ -73,9 +74,13 @@ export class Sweeper {
         .where('id', '=', runId)
         .where('status', '=', 'running')
         .where('last_heartbeat_at', '<', new Date(now.getTime() - LOST_AFTER_MS))
-        .returning('task_id')
+        .returning(['task_id', 'kind'])
         .executeTakeFirst()
       if (run === undefined) return
+      if (run.kind === 'title') {
+        await this.loseTitle(trx, runId, now)
+        return
+      }
       const block: Block = { cause: 'runner_lost', stage: await stageOf(trx, runId) }
       await trx
         .updateTable('runs')
@@ -98,6 +103,28 @@ export class Sweeper {
       if (task.state === 'running' || task.state === 'spec_draft')
         await moveTask(trx, run.task_id, 'block')
     })
+  }
+
+  /** A title run is never blocked or resumed: it fails, and its card stays where it is. */
+  private async loseTitle(trx: Transaction<Database>, runId: string, now: Date): Promise<void> {
+    await trx
+      .updateTable('runs')
+      .set({
+        status: 'failed',
+        ended_at: now,
+        failure_reason: 'the runner was lost',
+        pending: 'cleanup',
+        queued_at: now,
+      })
+      .where('id', '=', runId)
+      .execute()
+    await trx
+      .updateTable('phases')
+      .set({ status: 'failed', interrupted: true, ended_at: now })
+      .where('run_id', '=', runId)
+      .where('status', '=', 'running')
+      .execute()
+    await publish(trx, { topic: 'run.queued', runId })
   }
 
   private async expire(approvalId: string, now: Date): Promise<void> {

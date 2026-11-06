@@ -37,6 +37,17 @@ export const ClaimBody = Type.Object(
   {
     runner_id: NonBlankString({ maxLength: 100 }),
     wait_ms: Type.Optional(Type.Integer({ minimum: 0, maximum: 60_000 })),
+    /** The run kinds to claim; absent means every kind. A runner's title lane claims `title` only. */
+    kinds: Type.Optional(
+      Type.Array(
+        Type.Union([Type.Literal('spec'), Type.Literal('delivery'), Type.Literal('title')]),
+        {
+          minItems: 1,
+          maxItems: 3,
+          uniqueItems: true,
+        },
+      ),
+    ),
   },
   { additionalProperties: false },
 )

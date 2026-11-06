@@ -2,7 +2,10 @@
  * The runner's copy of the server's wire shapes. The scenario tests run the runner against the
  * real server; they are what catches the two drifting apart. Change both in one commit.
  */
-export type PhaseName = 'spec' | 'plan' | 'build' | 'verify'
+export type PhaseName = 'spec' | 'plan' | 'build' | 'verify' | 'title'
+
+/** A run's kind: a title run suggests a title for the task and makes no move. */
+export type RunKind = 'spec' | 'delivery' | 'title'
 export type EventType =
   | 'phase_start'
   | 'phase_end'
@@ -85,7 +88,7 @@ export interface LinkedProject {
 export interface RunWork {
   id: string
   number: number
-  kind: 'spec' | 'delivery'
+  kind: RunKind
   /** A delivery run's approved version; a spec run's version it redrafts, or null. */
   spec_version: number | null
   /** What the owner asked a redraft to change. */
@@ -158,7 +161,7 @@ export interface ReportData {
 
 export interface ArtifactView {
   id: string
-  kind: 'plan' | 'verify_report' | 'pr'
+  kind: 'plan' | 'verify_report' | 'pr' | 'title'
   phase_id: string | null
   body_md: string
   uri: string | null

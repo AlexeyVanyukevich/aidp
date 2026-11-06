@@ -12,6 +12,7 @@ import { parseSpec } from '../specs/spec-parser.js'
 import { SpecRepository } from '../specs/spec.repository.js'
 import { acceptedPlanOf, planAnswers } from '../tasks/plan-history.js'
 import { loadPlanHistory } from '../tasks/plan-history.queries.js'
+import { checkSuggestion, suggestionRefusal } from './title-rules.js'
 import {
   checkPlan,
   checkReport,
@@ -375,6 +376,46 @@ export function registerBoardTools(server: McpServer, ctx: ToolContext): void {
       return (
         (await attach(ctx, 'verify_report', renderReport(report), report)) ?? reply('Report saved.')
       )
+    },
+  )
+
+  server.registerTool(
+    'suggest_title',
+    {
+      description:
+        'Suggest a clearer title for the task: one line of at most 200 characters, naming what the task affects in the code’s own terms, and a reason of one line, at most 300 characters, saying which code the title names. Every call of this run rewrites its one suggestion. The title is not applied: the owner accepts, edits or discards it.',
+      inputSchema: { title: z.string(), reason: z.string() },
+    },
+    async (input) => {
+      if ((await runKind(ctx)) !== 'title')
+        return reply('suggest_title belongs to a title run; this run is not one.', true)
+      const phase = await runningPhase(ctx)
+      if (phase === undefined)
+        return reply('No phase of this run is running; nothing was stored.', true)
+      const findings = checkSuggestion(input)
+      if (findings.length > 0) return reply(suggestionRefusal(findings), true)
+      const data = JSON.stringify({ title: input.title, reason: input.reason, decision: null })
+      const stored = await ctx.db
+        .updateTable('artifacts')
+        .set({ body_md: input.title, data, phase_id: phase.id })
+        .where('run_id', '=', ctx.runId)
+        .where('kind', '=', 'title')
+        .returning('id')
+        .executeTakeFirst()
+      if (stored === undefined)
+        await ctx.db
+          .insertInto('artifacts')
+          .values({
+            run_id: ctx.runId,
+            phase_id: phase.id,
+            kind: 'title',
+            body_md: input.title,
+            uri: null,
+            data,
+          })
+          .execute()
+      await publish(ctx.db, { topic: 'run.event', runId: ctx.runId, taskId: ctx.taskId })
+      return reply(`Suggested: ${input.title}`)
     },
   )
 

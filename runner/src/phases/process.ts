@@ -3,7 +3,7 @@ import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from 
 import { basename, join } from 'node:path'
 import { createInterface } from 'node:readline'
 import type { Readable } from 'node:stream'
-import type { SessionTotals } from '../contract.js'
+import type { PhaseName, SessionTotals } from '../contract.js'
 import { newEvent, type EventSink } from '../sink.js'
 import { StreamNormalizer } from '../stream/normalize.js'
 import { childEnv } from '../child-env.js'
@@ -14,7 +14,7 @@ import { CODE_MOVED_MARKER, PAUSED_MARKER } from './run-dir.js'
 export interface ProcessInput {
   runId: string
   phaseId: string
-  phase: 'spec' | 'plan' | 'build' | 'verify'
+  phase: PhaseName
   attempt: number
   /** The handoff when starting a session; the owner's answer, or a nudge, when resuming one. */
   prompt: string

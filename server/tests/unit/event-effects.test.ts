@@ -206,6 +206,13 @@ describe('effectOf', () => {
     })
   })
 
+  it('reads a title run’s end with a suggestion', () => {
+    expect(effectOf(event('run_end', { outcome: 'suggested' }, { phase_id: null }))).toMatchObject({
+      kind: 'run_end',
+      outcome: 'suggested',
+    })
+  })
+
   it.each(['message', 'tool_call', 'subagent_start', 'error'] as const)(
     'has no effect for %s',
     (type) => {

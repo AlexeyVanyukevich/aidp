@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { buildTestApp, closeTestDb, getTestDb, resetDb } from './helpers.js'
-import { seedRunningRun } from './fixtures.js'
+import { seedProject, seedRunningRun, seedTask, seedTitleRun } from './fixtures.js'
 import { openApproval } from '../../src/modules/approvals/approval.service.js'
 import { Sweeper } from '../../src/modules/runs/sweeper.js'
 
@@ -136,5 +136,46 @@ describe('the sweeper', () => {
     later(MIN)
     await sweep.tick()
     expect((await run(runId)).status).toBe('blocked')
+  })
+})
+
+describe('the sweeper and a title run', () => {
+  it('fails a lost title run, leaves its card and records no block', async () => {
+    const project = await seedProject(db())
+    const task = await seedTask(db(), project.id, { state: 'spec_draft' })
+    const runId = await seedTitleRun(db(), task.id, { status: 'running' })
+    const phaseId = crypto.randomUUID()
+    await db()
+      .insertInto('phases')
+      .values({
+        id: phaseId,
+        run_id: runId,
+        name: 'title',
+        attempt: 1,
+        agent: 'title-writer',
+        model: 'sonnet',
+        status: 'running',
+        started_at: now,
+      })
+      .execute()
+    await db().updateTable('runs').set({ last_heartbeat_at: now }).where('id', '=', runId).execute()
+    const sweep = sweeper()
+    await sweep.tick()
+    later(MIN + 31_000)
+    await sweep.tick()
+
+    expect(await run(runId)).toMatchObject({
+      status: 'failed',
+      failure_reason: 'the runner was lost',
+      block: null,
+      pending: 'cleanup',
+    })
+    const phase = await db()
+      .selectFrom('phases')
+      .select('status')
+      .where('id', '=', phaseId)
+      .executeTakeFirstOrThrow()
+    expect(phase.status).toBe('failed')
+    expect(await state(task.id)).toBe('spec_draft')
   })
 })

@@ -6,7 +6,7 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { buildTestApp, closeTestDb, getTestDb, resetDb, TEST_RUNNER_KEY } from './helpers.js'
 import { LIMITS } from '../../src/modules/approvals/approval-rules.js'
 import { renderPlan } from '../../src/modules/mcp/plan-check.js'
-import { GOOD_SPEC, seedProject, seedQueuedRun, seedTask } from './fixtures.js'
+import { GOOD_SPEC, seedProject, seedQueuedRun, seedTask, seedTitleRun } from './fixtures.js'
 
 let app: FastifyInstance
 let base: string
@@ -88,7 +88,7 @@ describe('the board MCP server', () => {
     expect(response.status).toBe(401)
   })
 
-  it('offers the seven tools', async () => {
+  it('offers the eight tools', async () => {
     const { client } = await session()
     const { tools } = await client.listTools()
     expect(tools.map((t) => t.name).sort()).toEqual([
@@ -99,6 +99,7 @@ describe('the board MCP server', () => {
       'save_plan',
       'save_report',
       'save_spec',
+      'suggest_title',
     ])
   })
 
@@ -784,5 +785,80 @@ describe('request_approval with a batch', () => {
     })
     expect(result.isError).toBe(true)
     expect(text(result)).toContain('questions[0].recommendation: unknown option')
+  })
+})
+
+async function titleSession() {
+  const project = await seedProject(getTestDb())
+  const task = await seedTask(getTestDb(), project.id)
+  const runId = await seedTitleRun(getTestDb(), task.id)
+  await app.inject({
+    method: 'POST',
+    url: '/api/runner/claim',
+    headers: auth,
+    payload: { runner_id: 'r1', kinds: ['title'] },
+  })
+  const token = (
+    await app.inject({ method: 'POST', url: `/api/runner/runs/${runId}/tokens`, headers: auth })
+  ).json().token as string
+  await getTestDb()
+    .insertInto('phases')
+    .values({
+      id: crypto.randomUUID(),
+      run_id: runId,
+      name: 'title',
+      attempt: 1,
+      agent: 'title-writer',
+      model: 'sonnet',
+      status: 'running',
+      started_at: new Date(),
+    })
+    .execute()
+  const client = new Client({ name: 'test', version: '0.0.0' })
+  await client.connect(
+    new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
+      requestInit: { headers: { authorization: `Bearer ${token}` } },
+    }) as Transport,
+  )
+  return { taskId: task.id, runId, client }
+}
+const suggest = (client: Client, title: string, reason = 'names drop_draft') =>
+  client.callTool({ name: 'suggest_title', arguments: { title, reason } })
+const titleArtifacts = (runId: string) =>
+  getTestDb().selectFrom('artifacts').selectAll().where('run_id', '=', runId).execute()
+
+describe('suggest_title', () => {
+  it('stores one artifact and rewrites it on a second call, changing nothing else', async () => {
+    const { client, runId, taskId } = await titleSession()
+    const first = await suggest(client, 'First')
+    expect(text(first)).toBe('Suggested: First')
+    expect(text(await suggest(client, 'Second', 'other reason'))).toBe('Suggested: Second')
+    const artifacts = await titleArtifacts(runId)
+    expect(artifacts).toHaveLength(1)
+    expect(artifacts[0]).toMatchObject({
+      kind: 'title',
+      data: { title: 'Second', reason: 'other reason', decision: null },
+    })
+    const task = await getTestDb()
+      .selectFrom('tasks')
+      .select(['title', 'state'])
+      .where('id', '=', taskId)
+      .executeTakeFirstOrThrow()
+    expect(task).toEqual({ title: 'Retry webhooks', state: 'backlog' })
+  })
+
+  it('is refused for a delivery run', async () => {
+    const { client, runId } = await session()
+    const result = await suggest(client, 'T')
+    expect(result.isError).toBe(true)
+    expect(await titleArtifacts(runId)).toEqual([])
+  })
+
+  it('refuses a blank title and names the field, storing nothing', async () => {
+    const { client, runId } = await titleSession()
+    const result = await suggest(client, '  ')
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('title: must not be blank')
+    expect(await titleArtifacts(runId)).toEqual([])
   })
 })
