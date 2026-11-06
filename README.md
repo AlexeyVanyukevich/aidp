@@ -49,6 +49,12 @@ On a card, write the task's description and press **Draft spec**: the spec-write
 the code, asks its questions in the card's Approvals tab, and leaves a spec in Spec review. Or
 write the spec yourself in the Spec tab. Either way, Approve starts the run.
 
+The runner restarts itself after a pull that changes its code (`.ts` files under `runner/src`
+and `runner/bin/board-cli`), once no run is in hand; a phase in flight is blocked as "runner code
+check", and Resume continues it. Editing the runner's code in the main checkout has the same
+effect. After this change first lands, restart the runner by hand once: a daemon from before it
+never sets `BOARD_RUNNER_CODE`, so the guard refuses every call.
+
 Stopping the runner's daemon mid-run — SIGINT or SIGTERM, as Ctrl-C at its terminal sends —
 blocks the run it was carrying out rather than failing it: start the runner again and press
 Resume on the card. The timings that govern
