@@ -150,6 +150,22 @@ describe('the board-cli wrapper running the daemon', () => {
     expect(count()).toBe(before)
   })
 
+  it('passes a SIGTERM sent to the wrapper alone on to the daemon, which ends the wrapper', async () => {
+    const { wrapper, count } = scripted(
+      [0],
+      (path) =>
+        `trap 'echo stopped > "${join(path, '../../../stopped')}"; exit 0' TERM; sleep 30 & wait`,
+    )
+    const child = spawn(wrapper, ['daemon'], { stdio: 'ignore' })
+    const ended = new Promise<number | null>((done) => child.on('close', (code) => done(code)))
+    for (let i = 0; i < 200 && count() < 1; i++) await new Promise((r) => setTimeout(r, 25))
+    await new Promise((r) => setTimeout(r, 200))
+    child.kill('SIGTERM')
+    expect(await ended).toBe(0)
+    expect(count()).toBe(1)
+    expect(existsSync(join(wrapper, '../../../stopped'))).toBe(true)
+  })
+
   it('AC17: still starts the stand-in a second time when the first call rewrites the wrapper', () => {
     const { wrapper, count } = scripted(
       [75, 0],

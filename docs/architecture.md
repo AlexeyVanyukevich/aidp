@@ -815,13 +815,13 @@ computes it once at start and gives it to every phase process as `BOARD_RUNNER_C
   discards it with a log line. A file that cannot be read or parsed, one holding other work, or
   a claim 60 s old or older is discarded with a log line naming the reason; the sweeper then
   blocks the run as `runner_lost` and Resume continues it. The daemon then claims as usual.
-- **The wrapper's loop.** `bin/board-cli daemon` runs the daemon in a loop in the foreground.
+- **The wrapper's loop.** `bin/board-cli daemon` runs the daemon in a loop, as a child it waits on.
   Exit 75 starts it again at once; exit 0 ends the wrapper with 0. Any other exit ends the wrapper
   with that status if the wrapper has not yet restarted the daemon. Once it has restarted it
   (after a 75), the wrapper logs `board-cli: the runner's code did not start (exit N); retrying in
 10 s` and retries every later failure, not only the first, since a pull caught half done fails
-  until it finishes. SIGINT or SIGTERM sent to the process group ends the loop, during the daemon
-  or during the wait. The script's whole body is one function and its last line calls it and
+  until it finishes. SIGINT or SIGTERM sent to the wrapper alone or to its process group reaches the
+  daemon as SIGTERM, so it blocks its run, and ends the loop, during the daemon or during the wait. The script's whole body is one function and its last line calls it and
   exits, so a pull that rewrites the file while the loop runs leaves the shell nothing to read.
   `guard` keeps its mapping of any non-zero exit to 2.
 

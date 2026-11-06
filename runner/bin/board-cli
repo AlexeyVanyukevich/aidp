@@ -18,14 +18,27 @@ main() {
     exec "$TSX" "$DIR/src/cli.ts" "$@"
   fi
   # The daemon exits 75 when its code changed and it has no run in hand: start it again on the
-  # new code. SIGINT and SIGTERM sent to the process group end the shell, which has no trap, and
-  # with it the loop. A first start that fails ends the wrapper; once the daemon has restarted, a
-  # failure is most likely a pull caught half done, so it is retried.
+  # new code. A first start that fails ends the wrapper; once the daemon has restarted, a failure
+  # is most likely a pull caught half done, so it is retried. The daemon, and the wait between
+  # tries, run in the background so that SIGINT or SIGTERM, sent to this shell alone or to its
+  # whole process group, reaches the child as SIGTERM (the daemon then stops its run and blocks
+  # it) and ends the loop: nothing starts after it.
   wait_seconds="${BOARD_CLI_RETRY_SECONDS:-10}"
   restarted=0
+  stopping=0
+  child=0
+  trap 'stopping=1; kill -TERM "$child" 2>/dev/null' INT TERM
   while :; do
-    "$TSX" "$DIR/src/cli.ts" "$@"
+    "$TSX" "$DIR/src/cli.ts" "$@" &
+    child=$!
+    wait "$child"
     status=$?
+    # A trapped signal ends `wait` early, with the child still running.
+    while kill -0 "$child" 2>/dev/null; do
+      wait "$child"
+      status=$?
+    done
+    [ "$stopping" -eq 1 ] && return "$status"
     if [ "$status" -eq 75 ]; then
       restarted=1
     elif [ "$status" -eq 0 ]; then
@@ -34,7 +47,11 @@ main() {
       return "$status"
     else
       echo "board-cli: the runner's code did not start (exit $status); retrying in $wait_seconds s" >&2
-      sleep "$wait_seconds"
+      sleep "$wait_seconds" &
+      child=$!
+      wait "$child"
+      while kill -0 "$child" 2>/dev/null; do wait "$child"; done
+      [ "$stopping" -eq 1 ] && return 143
     fi
   done
 }
