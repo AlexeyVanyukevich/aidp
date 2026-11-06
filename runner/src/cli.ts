@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { BoardApi } from './api.js'
 import { realExec } from './exec.js'
 import { formatViolations, readApprovedCopies, violationsOf } from './files-gate.js'
+import { runnerCode } from './fingerprint.js'
 import { Git } from './git.js'
 import { decide, denyOutput } from './hooks/guard.js'
 import { hookToEvent, pausedBy } from './hooks/hook-event.js'
@@ -140,6 +141,16 @@ async function guard(): Promise<void> {
 
 async function check(): Promise<void> {
   const input = await readStdin()
+  // The runner's code at this location against the code the runner started this phase with.
+  const code = process.env.BOARD_RUNNER_CODE
+  if (code === undefined || code === '' || code !== runnerCode()) {
+    process.stdout.write(
+      denyOutput(
+        "The runner's code changed since the runner started this phase, so no tool call is allowed. End your turn, and say so in your last message; the owner resumes the run once the runner has restarted.",
+      ),
+    )
+    return
+  }
   const runDir = env('BOARD_RUN_DIR')
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd()
   const basePath = join(runDir, 'base-branch.txt')
