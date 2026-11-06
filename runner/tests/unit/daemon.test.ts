@@ -8,6 +8,8 @@ import { NOW, RUN, START, checkpoint, harness, resume, withPlan } from './run-ha
 
 const START_CODE = 'start-code'
 const MOVED = 'moved-code'
+/** A read that throws, as one does when a pull removes a file between the listing and the read. */
+const UNREADABLE = 'unreadable'
 
 const cleanup: Work = {
   kind: 'cleanup',
@@ -55,7 +57,9 @@ function setUp(options: {
     clock: () => options.now ?? NOW,
     fingerprint: () => {
       read += 1
-      return reads[Math.min(read - 1, reads.length - 1)] ?? START_CODE
+      const value = reads[Math.min(read - 1, reads.length - 1)] ?? START_CODE
+      if (value === UNREADABLE) throw new Error('ENOENT: no such file or directory')
+      return value
     },
     exit: (status) => void exits.push(status),
     settle: async () => void settles.push(read),
@@ -95,6 +99,22 @@ describe('the moved-code check before a claim', () => {
     {
       name: 'a new value, then another',
       reads: [START_CODE, MOVED, 'again', START_CODE],
+      readsAfterStart: 2,
+      settled: true,
+      claimed: true,
+      exit: null,
+    },
+    {
+      name: 'a read that fails, then the start fingerprint',
+      reads: [START_CODE, UNREADABLE, START_CODE],
+      readsAfterStart: 2,
+      settled: true,
+      claimed: true,
+      exit: null,
+    },
+    {
+      name: 'two reads that fail',
+      reads: [START_CODE, UNREADABLE, UNREADABLE, START_CODE],
       readsAfterStart: 2,
       settled: true,
       claimed: true,

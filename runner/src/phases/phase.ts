@@ -91,7 +91,14 @@ async function step(
   input: Pick<PhaseInput, 'worktree' | 'runDir' | 'budgetUsd'>,
   deps: PhaseDeps,
 ): Promise<StepResult> {
-  const moved = () => (deps.currentCode ?? runnerCode)() !== deps.runnerCode
+  const moved = () => {
+    try {
+      return (deps.currentCode ?? runnerCode)() !== deps.runnerCode
+    } catch {
+      // A pull caught removing a file: blocked as moved code, so Resume continues the run.
+      return true
+    }
+  }
   const mark = () => writeFileSync(join(input.runDir, CODE_MOVED_MARKER), '')
   if (moved()) {
     mark()

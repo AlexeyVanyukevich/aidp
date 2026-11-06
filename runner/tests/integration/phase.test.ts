@@ -264,26 +264,41 @@ describe('a phase when the runner code moves', () => {
       claudeBin: claude,
       boardUrl: 'http://127.0.0.1:1',
       runnerCode: 'start',
-      currentCode: () => reads.shift() ?? reads.at(-1) ?? 'start',
+      currentCode: () => {
+        const value = reads.shift() ?? reads.at(-1) ?? 'start'
+        if (value === UNREADABLE) throw new Error('ENOENT: no such file or directory')
+        return value
+      },
     })
     return { runDir, input, deps, spawned }
   }
 
-  it('starts no process when the code moved before it, and writes the marker', async () => {
+  // A read that fails, as one does when a pull removes a file mid-read, counts as moved code: the
+  // run is blocked, so Resume continues it, rather than failed.
+  const UNREADABLE = 'unreadable'
+  const READS = [
+    { name: 'the code moved', read: 'moved' },
+    { name: 'the fingerprint could not be read', read: UNREADABLE },
+  ]
+
+  it.each(READS)('starts no process and writes the marker when, before it, $name', async (row) => {
     const { runDir, input, deps, spawned } = setUp()
-    const failure = await startPhase(input, deps(['moved'])).catch((e: unknown) => e)
+    const failure = await startPhase(input, deps([row.read])).catch((e: unknown) => e)
     expect(failure).toBeInstanceOf(StartFailure)
     expect(failure).toMatchObject({ command: 'runner code check' })
     expect(existsSync(spawned)).toBe(false)
     expect(existsSync(join(runDir, CODE_MOVED_MARKER))).toBe(true)
   })
 
-  it('sets codeMoved and writes the marker when the code moved while the process ran', async () => {
-    const { runDir, input, deps } = setUp()
-    const result = await startPhase(input, deps(['start', 'moved']))
-    expect(result.codeMoved).toBe(true)
-    expect(existsSync(join(runDir, CODE_MOVED_MARKER))).toBe(true)
-  })
+  it.each(READS)(
+    'sets codeMoved and writes the marker when, after the process, $name',
+    async (row) => {
+      const { runDir, input, deps } = setUp()
+      const result = await startPhase(input, deps(['start', row.read]))
+      expect(result.codeMoved).toBe(true)
+      expect(existsSync(join(runDir, CODE_MOVED_MARKER))).toBe(true)
+    },
+  )
 
   it('leaves codeMoved unset when the code did not move', async () => {
     const { runDir, input, deps } = setUp()
