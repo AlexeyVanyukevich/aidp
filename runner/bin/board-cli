@@ -2,10 +2,40 @@
 # The runner is a tool on this machine, never deployed: it runs from source through tsx. Hooks
 # call this file by its absolute path, from inside a worktree of another repository, so nothing
 # here may depend on the working directory.
-DIR="$(cd "$(dirname "$0")/.." && pwd)"
-if [ "$1" = guard ]; then
-  # Claude Code lets a call through on any exit but 2, so a guard that fails must exit 2.
-  "$DIR/../node_modules/.bin/tsx" "$DIR/src/cli.ts" "$@" || exit 2
-  exit 0
-fi
-exec "$DIR/../node_modules/.bin/tsx" "$DIR/src/cli.ts" "$@"
+#
+# The whole body is one function, and the last line calls it and exits, both on that line: the
+# shell reads a script as it runs it, so a pull that rewrites this file under the running loop
+# must find nothing left for the shell to read.
+main() {
+  DIR="$(cd "$(dirname "$0")/.." && pwd)"
+  TSX="$DIR/../node_modules/.bin/tsx"
+  if [ "$1" = guard ]; then
+    # Claude Code lets a call through on any exit but 2, so a guard that fails must exit 2.
+    "$TSX" "$DIR/src/cli.ts" "$@" || exit 2
+    return 0
+  fi
+  if [ "$1" != daemon ]; then
+    exec "$TSX" "$DIR/src/cli.ts" "$@"
+  fi
+  # The daemon exits 75 when its code changed and it has no run in hand: start it again on the
+  # new code. SIGINT and SIGTERM sent to the process group end the shell, which has no trap, and
+  # with it the loop. A first start that fails ends the wrapper; once the daemon has restarted, a
+  # failure is most likely a pull caught half done, so it is retried.
+  wait_seconds="${BOARD_CLI_RETRY_SECONDS:-10}"
+  restarted=0
+  while :; do
+    "$TSX" "$DIR/src/cli.ts" "$@"
+    status=$?
+    if [ "$status" -eq 75 ]; then
+      restarted=1
+    elif [ "$status" -eq 0 ]; then
+      return 0
+    elif [ "$restarted" -eq 0 ]; then
+      return "$status"
+    else
+      echo "board-cli: the runner's code did not start (exit $status); retrying in $wait_seconds s" >&2
+      sleep "$wait_seconds"
+    fi
+  done
+}
+main "$@"; exit $?
