@@ -801,7 +801,10 @@ computes it once at start and gives it to every phase process as `BOARD_RUNNER_C
   deleted once the process is spawned, a new session included.
 - **The idle self-restart.** Before each claim the daemon reads the fingerprint. A read equal to
   its start value ends the check. Only a differing read is followed by a wait of 2 s and a second
-  read; the code has moved when both agree. A daemon whose code moved claims nothing, logs a
+  read; the code has moved when both agree. A read that fails, as one does when a pull removes a
+  file between listing and reading it, counts as differing and never agrees, so the daemon goes
+  on; around a phase process, such a read counts as moved code and blocks the run as below. A
+  daemon whose code moved claims nothing, logs a
   `board-cli: ` line, and exits with status 75. A daemon whose code has not moved never exits for
   this reason.
 - **The handoff.** Right after a claim returns a start or a resume, the daemon makes the same

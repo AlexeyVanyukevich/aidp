@@ -86,15 +86,25 @@ export class Daemon {
   /**
    * Whether the runner's code has moved since this daemon started. One read equal to the start
    * fingerprint ends the check; a read that differs is read again after a wait, and counts only
-   * if the second read agrees (a pull or an edit still in progress does not).
+   * if the second read agrees (a pull or an edit still in progress does not). A read that fails,
+   * as one does when a pull removes a file mid-read, differs and never agrees.
    */
   async movedCode(): Promise<boolean> {
-    const first = this.fingerprint()
+    const first = this.readCode()
     if (first === this.startCode) return false
     await (
       this.overrides.settle ?? (() => new Promise<void>((done) => setTimeout(done, SETTLE_MS)))
     )()
-    return this.fingerprint() === first
+    const second = this.readCode()
+    return first !== null && second === first
+  }
+
+  private readCode(): string | null {
+    try {
+      return this.fingerprint()
+    } catch {
+      return null
+    }
   }
 
   private exit(status: number): void {
