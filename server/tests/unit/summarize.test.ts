@@ -167,4 +167,11 @@ describe('phases a stopped process interrupted', () => {
     }).byPhase
     expect(line?.cut).toBe(expected)
   })
+
+  it('names the run a phase belongs to', () => {
+    const run = { kind: 'delivery', number: 2 }
+    const phases: CostPhase[] = [{ id: 'h', name: 'help', attempt: 1, reportedCost: null, run }]
+    const result = summarizeCosts({ events: [], phases, prices: PRICES })
+    expect(result.byPhase[0]?.run).toEqual(run)
+  })
 })

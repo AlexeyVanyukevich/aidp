@@ -45,6 +45,8 @@ export class CostService {
         'phases.attempt',
         'phases.reported_cost',
         'phases.interrupted',
+        'runs.kind as run_kind',
+        'runs.number as run_number',
       ])
       .where('runs.task_id', '=', taskId)
       .orderBy('phases.started_at')
@@ -69,6 +71,7 @@ export class CostService {
         attempt: p.attempt,
         reportedCost: p.reported_cost,
         interrupted: p.interrupted,
+        run: { kind: p.run_kind, number: p.run_number },
       })),
       prices: await loadPrices(this.db),
     })
