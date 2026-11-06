@@ -143,7 +143,10 @@ Once either loop sees the runner's code move, neither sends a new claim request;
 for each open claim request (at most the claim wait), hands on a main-lane start or resume,
 carries out a cleanup, and ends a title claim failed with "the runner stopped" (a title claim is
 never handed on), stops a title run in flight the same way, and exits 75. While the main loop
-carries a run, a title lane that saw moved code claims nothing until the restart.
+carries a run, a title lane that saw moved code claims nothing until the restart. The two lanes
+share one `Git`, which runs the steps that change a repository's remote refs or worktree list
+(fetch, worktree add, prune and remove, branch delete) one at a time per repository, since two
+fetches of one base collide on its ref lock; steps in different repositories still run at once.
 
 The runner checks out a detached worktree of `origin/<base_branch>` and runs one phase, `title`,
 with the agent `title-writer` on Sonnet at medium effort. Its tools are Read, Grep, Glob and the

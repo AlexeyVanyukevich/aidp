@@ -12,10 +12,29 @@ export class GitError extends Error {
 }
 
 export class Git {
+  /**
+   * The last step queued on each repository. The daemon's two lanes share one `Git`, and a
+   * repository's remote refs and worktree list take one change at a time: two fetches of one
+   * base collide on its ref lock.
+   */
+  private readonly queues = new Map<string, Promise<unknown>>()
+
   constructor(
     private readonly exec: Exec,
     private readonly ghBin: string,
   ) {}
+
+  /** Runs `step` once every step queued before it on `repo` has settled, whatever its outcome. */
+  private exclusive<T>(repo: string, step: () => Promise<T>): Promise<T> {
+    const key = resolve(repo)
+    const result = (this.queues.get(key) ?? Promise.resolve()).then(step)
+    const settled = result.catch(() => undefined)
+    this.queues.set(key, settled)
+    void settled.then(() => {
+      if (this.queues.get(key) === settled) this.queues.delete(key)
+    })
+    return result
+  }
 
   private async run(
     cmd: string,
@@ -32,16 +51,20 @@ export class Git {
   }
 
   /** A new branch from the remote's base, so the run never starts from local, unpushed work. */
-  async prepareWorktree(repo: string, base: string, branch: string, dir: string): Promise<void> {
-    await this.run('git', ['-C', repo, 'fetch', 'origin', base])
-    await this.pruneWorktrees(repo)
-    await this.run('git', ['-C', repo, 'worktree', 'add', '-b', branch, dir, `origin/${base}`])
+  prepareWorktree(repo: string, base: string, branch: string, dir: string): Promise<void> {
+    return this.exclusive(repo, async () => {
+      await this.run('git', ['-C', repo, 'fetch', 'origin', base])
+      await this.prune(repo)
+      await this.run('git', ['-C', repo, 'worktree', 'add', '-b', branch, dir, `origin/${base}`])
+    })
   }
 
   /** A worktree on a branch that already exists, to bring a lost run's worktree back. */
-  async addWorktreeOnBranch(repo: string, branch: string, dir: string): Promise<void> {
-    await this.pruneWorktrees(repo)
-    await this.run('git', ['-C', repo, 'worktree', 'add', dir, branch])
+  addWorktreeOnBranch(repo: string, branch: string, dir: string): Promise<void> {
+    return this.exclusive(repo, async () => {
+      await this.prune(repo)
+      await this.run('git', ['-C', repo, 'worktree', 'add', dir, branch])
+    })
   }
 
   /** Whether the project's repository holds a local branch of this name. */
@@ -55,10 +78,12 @@ export class Git {
   }
 
   /** A spec run's checkout: the remote's base, detached, since a draft pushes nothing. */
-  async prepareDetachedWorktree(repo: string, base: string, dir: string): Promise<void> {
-    await this.run('git', ['-C', repo, 'fetch', 'origin', base])
-    await this.pruneWorktrees(repo)
-    await this.run('git', ['-C', repo, 'worktree', 'add', '--detach', dir, `origin/${base}`])
+  prepareDetachedWorktree(repo: string, base: string, dir: string): Promise<void> {
+    return this.exclusive(repo, async () => {
+      await this.run('git', ['-C', repo, 'fetch', 'origin', base])
+      await this.prune(repo)
+      await this.run('git', ['-C', repo, 'worktree', 'add', '--detach', dir, `origin/${base}`])
+    })
   }
 
   async newCommits(dir: string, base: string): Promise<number> {
@@ -117,7 +142,7 @@ export class Git {
 
   /** The remote's current base, fetched into `origin/<base>` of the project's repository. */
   async fetchBase(repo: string, base: string): Promise<void> {
-    await this.run('git', ['-C', repo, 'fetch', 'origin', base])
+    await this.exclusive(repo, () => this.run('git', ['-C', repo, 'fetch', 'origin', base]))
   }
 
   /**
@@ -320,7 +345,7 @@ export class Git {
 
   /** A run's own branch, so a resumed `prepare` can create it afresh. */
   async deleteBranch(repo: string, branch: string): Promise<void> {
-    await this.run('git', ['-C', repo, 'branch', '-D', branch])
+    await this.exclusive(repo, () => this.run('git', ['-C', repo, 'branch', '-D', branch]))
   }
 
   /** The open pull request for `branch`, if a run that stopped after `gh pr create` left one. */
@@ -349,11 +374,18 @@ export class Git {
   }
 
   async removeWorktree(repo: string, dir: string): Promise<void> {
-    await this.run('git', ['-C', repo, 'worktree', 'remove', '--force', dir])
+    await this.exclusive(repo, () =>
+      this.run('git', ['-C', repo, 'worktree', 'remove', '--force', dir]),
+    )
   }
 
   /** Forgets worktrees whose directory is gone, so one can be made again at the same path. */
   async pruneWorktrees(repo: string): Promise<void> {
+    await this.exclusive(repo, () => this.prune(repo))
+  }
+
+  /** The prune itself, for steps that already hold the repository. */
+  private async prune(repo: string): Promise<void> {
     await this.run('git', ['-C', repo, 'worktree', 'prune'])
   }
 }
