@@ -5,7 +5,6 @@ import { publish } from '../../shared/bus.js'
 import { ConflictError, UnauthorizedError } from '../../shared/errors.js'
 import { hashToken, newToken } from '../../shared/tokens.js'
 import {
-  RUN_KINDS,
   type Checkpoint,
   type RunKind,
   type SpecCriterion,
@@ -87,6 +86,12 @@ const START_STATES: Record<RunKind, readonly TaskState[]> = {
   title: ['backlog', 'spec_review'],
 }
 
+/**
+ * What a claim naming no kinds takes: the main lane's. A title run goes only to a claim that
+ * asks for it, so a daemon from before the title lane never carries one out as a delivery.
+ */
+const UNNAMED_KINDS: readonly RunKind[] = ['spec', 'delivery']
+
 const TOKEN_LIFETIME_MS = 12 * 3600_000
 const RETIRE_GRACE_MS = 5 * 60_000
 
@@ -100,7 +105,7 @@ export class RunnerService {
   async claim(
     runnerId: string,
     waitMs: number,
-    kinds: readonly RunKind[] = RUN_KINDS,
+    kinds: readonly RunKind[] = UNNAMED_KINDS,
   ): Promise<Work | null> {
     const first = await this.tryClaim(runnerId, kinds)
     if (first !== null || waitMs === 0) return first
