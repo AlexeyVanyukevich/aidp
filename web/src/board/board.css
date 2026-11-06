@@ -19,6 +19,7 @@
 .board-head h1 + a {
   grid-row: 1;
   align-self: end;
+  justify-self: start;
 }
 .new-task {
   display: grid;
