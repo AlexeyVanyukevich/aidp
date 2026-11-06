@@ -9,7 +9,7 @@ import { StreamNormalizer } from '../stream/normalize.js'
 import { childEnv } from '../child-env.js'
 import { PHASES } from './agents.js'
 import { addDirsOf, buildClaudeArgs } from './claude-args.js'
-import { PAUSED_MARKER } from './run-dir.js'
+import { CODE_MOVED_MARKER, PAUSED_MARKER } from './run-dir.js'
 
 export interface ProcessInput {
   runId: string
@@ -40,6 +40,8 @@ export interface ProcessDeps extends ProcessTiming {
   sink: EventSink
   claudeBin: string
   boardUrl: string
+  /** The runner's code fingerprint at its start: the guard compares it with its own. */
+  runnerCode: string
   /** The owner cancelled the run. */
   signal?: AbortSignal
   /** The daemon is stopping. */
@@ -96,6 +98,18 @@ async function endLeftover(input: ProcessInput, deps: ProcessDeps): Promise<void
   if (alive(pid)) process.kill(pid, 'SIGKILL')
 }
 
+/** What a resume tells the session after the runner restarted on its new code. */
+export const CODE_RESTARTED =
+  'The runner restarted on its new code since your last turn; tool calls work again.'
+
+/** The command and output of the block the moved-code check makes. */
+export const CODE_CHECK_COMMAND = 'runner code check'
+export const CODE_CHECK_OUTPUT = [
+  "The runner's code changed since the runner started.",
+  'The runner restarts itself once it has no run in hand.',
+  'Resume then continues the run.',
+].join('\n')
+
 /** The Claude Code process could not be started: the binary as the command, the hint as output. */
 export class StartFailure extends Error {
   constructor(
@@ -149,8 +163,10 @@ export async function runProcess(input: ProcessInput, deps: ProcessDeps): Promis
     agent: config.agent,
     baseline: input.baseline,
   })
+  const markerPath = join(input.runDir, CODE_MOVED_MARKER)
+  const restarted = input.resume && existsSync(markerPath)
   const args = buildClaudeArgs({
-    prompt: input.prompt,
+    prompt: restarted ? `${CODE_RESTARTED}\n\n${input.prompt}` : input.prompt,
     sessionId: input.sessionId,
     resume: input.resume,
     role: config.agent,
@@ -179,6 +195,7 @@ export async function runProcess(input: ProcessInput, deps: ProcessDeps): Promis
         BOARD_AGENT: config.agent,
         BOARD_RUN_DIR: input.runDir,
         BOARD_WORKTREE: input.worktree,
+        BOARD_RUNNER_CODE: deps.runnerCode,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
       // Its own process group: Ctrl-C at the daemon's terminal reaches the daemon, which stops
@@ -188,6 +205,7 @@ export async function runProcess(input: ProcessInput, deps: ProcessDeps): Promis
   } catch (error) {
     throw new StartFailure(deps.claudeBin, syncOutput(error))
   }
+  rmSync(markerPath, { force: true })
   // Attached before anything yields: a spawn failure is emitted on the next tick, and an
   // 'error' with no listener is an uncaught exception that would end the daemon. The first of
   // 'error' (before a pid) and 'close' settles the wait; the 'close' that follows a start

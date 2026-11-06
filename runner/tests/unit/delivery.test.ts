@@ -443,6 +443,38 @@ describe('blocks', () => {
     })
   })
 
+  // Spec R5, R6: the code moved under a phase. The phase's result is kept, then the run blocks.
+  describe('when the runner code moved during a phase', () => {
+    it('blocks the run as a failed runner code check, keeping the session', async () => {
+      const h = harness({ acts: { 'build-1': ['moved'] } })
+      expect(await carryOut(START as Extract<Work, { kind: 'start' }>, h.deps)).toBe('released')
+      expect(h.of('error').at(-1)).toMatchObject({
+        payload: {
+          blocks: true,
+          cause: 'step_failed',
+          stage: 'build',
+          command: 'runner code check',
+          output: expect.stringContaining('Resume then continues the run'),
+        },
+      })
+      expect(h.checkpoints().at(-1)).toMatchObject({
+        stage: 'build',
+        session: { id: expect.any(String) },
+      })
+    })
+
+    it.each<[string, 'moved-paused' | 'moved-cancelled' | 'moved-shutdown', string]>([
+      ['paused', 'moved-paused', 'released'],
+      ['cancelled', 'moved-cancelled', 'cancelled'],
+      ['shut down', 'moved-shutdown', 'released'],
+    ])('handles a phase that was %s as before', async (_name, act, outcome) => {
+      const h = harness({ acts: { 'build-1': [act] } })
+      expect(await carryOut(START as Extract<Work, { kind: 'start' }>, h.deps)).toBe(outcome)
+      const last = h.of('error').at(-1)
+      expect(last?.payload?.command).not.toBe('runner code check')
+    })
+  })
+
   describe('a resume whose worktree is gone', () => {
     const SETUP = 'npm ci'
     const WITH_SETUP: RunWork = { ...RUN, project: { ...RUN.project, setup_command: SETUP } }

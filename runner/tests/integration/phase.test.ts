@@ -1,8 +1,9 @@
-import { mkdtempSync, readFileSync, writeFileSync, chmodSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { BoardApi } from '../../src/api.js'
+import { runnerCode } from '../../src/fingerprint.js'
 import type { RunnerEvent } from '../../src/contract.js'
 import {
   continuePhase,
@@ -13,7 +14,7 @@ import {
   type PhaseRecord,
 } from '../../src/phases/phase.js'
 import { StartFailure } from '../../src/phases/process.js'
-import { prepareRunDir } from '../../src/phases/run-dir.js'
+import { CODE_MOVED_MARKER, prepareRunDir } from '../../src/phases/run-dir.js'
 import { EventSink } from '../../src/sink.js'
 
 const FIXTURE = join(import.meta.dirname, '../fixtures/stream/plain.ndjson')
@@ -65,6 +66,7 @@ async function phase(extra = '') {
       sink: new EventSink(api, join(runDir, 'events.ndjson'), () => token),
       claudeBin: fakeClaude(extra),
       boardUrl: 'http://127.0.0.1:1',
+      runnerCode: runnerCode(),
     },
   )
   return { result, events, runDir }
@@ -185,6 +187,7 @@ describe('the sink’s token', () => {
         sink: new EventSink(api, join(runDir, 'events.ndjson'), () => 'T'),
         claudeBin: claude,
         boardUrl: 'http://127.0.0.1:1',
+        runnerCode: runnerCode(),
       },
       { worktree: tmpdir(), runDir, budgetUsd: null },
     )
@@ -225,9 +228,67 @@ describe('startPhase with a binary that does not exist', () => {
           sink: new EventSink(api, join(runDir, 'events.ndjson'), () => 't'),
           claudeBin: missing,
           boardUrl: 'http://127.0.0.1:1',
+          runnerCode: runnerCode(),
         },
       ),
     ).rejects.toBeInstanceOf(StartFailure)
     expect(retired).toEqual(['issued-token'])
+  })
+})
+
+// R5, R6: the real step() against the fake claude, with the fingerprint moving.
+describe('a phase when the runner code moves', () => {
+  function setUp() {
+    const runDir = mkdtempSync(join(tmpdir(), 'rundir-'))
+    prepareRunDir(runDir)
+    const { api, events } = recordingApi()
+    const spawned = join(runDir, 'spawned')
+    const claude = join(mkdtempSync(join(tmpdir(), 'claude-')), 'claude')
+    writeFileSync(
+      claude,
+      `#!/bin/sh\ntouch "${spawned}"\nexec "${TSX}" "${REPLAY}" "${FIXTURE}" "$@"\n`,
+    )
+    chmodSync(claude, 0o755)
+    const input = {
+      runId: '00000000-0000-4000-8000-000000000001',
+      phase: 'plan' as const,
+      attempt: 1,
+      handoff: '<task/>',
+      worktree: tmpdir(),
+      runDir,
+      budgetUsd: null,
+    }
+    const deps = (reads: string[]): PhaseDeps => ({
+      api,
+      sink: new EventSink(api, join(runDir, 'events.ndjson'), () => 't'),
+      claudeBin: claude,
+      boardUrl: 'http://127.0.0.1:1',
+      runnerCode: 'start',
+      currentCode: () => reads.shift() ?? reads.at(-1) ?? 'start',
+    })
+    return { runDir, input, deps, spawned }
+  }
+
+  it('starts no process when the code moved before it, and writes the marker', async () => {
+    const { runDir, input, deps, spawned } = setUp()
+    const failure = await startPhase(input, deps(['moved'])).catch((e: unknown) => e)
+    expect(failure).toBeInstanceOf(StartFailure)
+    expect(failure).toMatchObject({ command: 'runner code check' })
+    expect(existsSync(spawned)).toBe(false)
+    expect(existsSync(join(runDir, CODE_MOVED_MARKER))).toBe(true)
+  })
+
+  it('sets codeMoved and writes the marker when the code moved while the process ran', async () => {
+    const { runDir, input, deps } = setUp()
+    const result = await startPhase(input, deps(['start', 'moved']))
+    expect(result.codeMoved).toBe(true)
+    expect(existsSync(join(runDir, CODE_MOVED_MARKER))).toBe(true)
+  })
+
+  it('leaves codeMoved unset when the code did not move', async () => {
+    const { runDir, input, deps } = setUp()
+    const result = await startPhase(input, deps(['start']))
+    expect(result.codeMoved).toBeUndefined()
+    expect(existsSync(join(runDir, CODE_MOVED_MARKER))).toBe(false)
   })
 })

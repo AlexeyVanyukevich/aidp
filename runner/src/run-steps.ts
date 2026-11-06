@@ -6,7 +6,7 @@ import type { Checkpoint, PhaseName, Stage, Work } from './contract.js'
 import type { RunnerConfig } from './config.js'
 import { GitError, type Git } from './git.js'
 import { prepareLinked, removeLinked, restoreLinked } from './linked.js'
-import { StartFailure } from './phases/process.js'
+import { CODE_CHECK_COMMAND, CODE_CHECK_OUTPUT, StartFailure } from './phases/process.js'
 import type { PhaseDeps, PhaseInput, PhaseRecord, StepResult } from './phases/phase.js'
 import {
   readBase,
@@ -57,6 +57,9 @@ export interface RunDeps {
   /** Runs a project command; the real one when absent. */
   runTests?: typeof runTestCommand
   config: RunnerConfig
+  /** The runner's code fingerprint at its start, and the source of its current one. */
+  runnerCode: string
+  currentCode?: () => string
   /** The owner cancelled the run. */
   signal: AbortSignal
   /** The daemon is stopping: the run is blocked, to be resumed (slice 2 spec, §8). */
@@ -177,6 +180,8 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
     sink: deps.sink,
     claudeBin: deps.config.claudeBin,
     boardUrl: deps.config.boardUrl,
+    runnerCode: deps.runnerCode,
+    ...(deps.currentCode === undefined ? {} : { currentCode: deps.currentCode }),
     signal: deps.signal,
     ...(deps.shutdown === undefined ? {} : { shutdown: deps.shutdown }),
     ...(deps.pauseRequested === undefined ? {} : { pauseRequested: deps.pauseRequested }),
@@ -525,6 +530,7 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
     if (result.stopped === 'cancelled') throw new End('cancelled', 'cancelled by the owner')
     if (result.stopped === 'shutdown') await block('runner_stopped')
     if (result.stopped === 'paused') throw new Release()
+    if (result.codeMoved === true) throw new StartFailure(CODE_CHECK_COMMAND, CODE_CHECK_OUTPUT)
     return result
   }
 

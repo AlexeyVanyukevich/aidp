@@ -3,7 +3,19 @@ import type { BoardApi } from '../api.js'
 import type { SessionTotals } from '../contract.js'
 import { newEvent, type EventSink } from '../sink.js'
 import { PHASES } from './agents.js'
-import { runProcess, type ProcessResult, type ProcessTiming, type Stopped } from './process.js'
+import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { runnerCode } from '../fingerprint.js'
+import { CODE_MOVED_MARKER } from './run-dir.js'
+import {
+  CODE_CHECK_COMMAND,
+  CODE_CHECK_OUTPUT,
+  runProcess,
+  StartFailure,
+  type ProcessResult,
+  type ProcessTiming,
+  type Stopped,
+} from './process.js'
 
 export interface PhaseInput {
   runId: string
@@ -20,6 +32,10 @@ export interface PhaseDeps {
   sink: EventSink
   claudeBin: string
   boardUrl: string
+  /** The runner's code fingerprint at its start. */
+  runnerCode: string
+  /** The fingerprint now; the real one when absent. */
+  currentCode?: () => string
   signal?: AbortSignal
   shutdown?: AbortSignal
   pauseRequested?: () => boolean
@@ -58,6 +74,8 @@ export interface StepResult {
   stopped: Stopped
   /** `claude --resume` found no session (spec §3, facts 10 and 12). */
   sessionGone: boolean
+  /** The process ended of its own accord and the runner's code had moved by then. */
+  codeMoved?: boolean
 }
 
 const DEFAULT_TIMING: ProcessTiming = {
@@ -73,6 +91,12 @@ async function step(
   input: Pick<PhaseInput, 'worktree' | 'runDir' | 'budgetUsd'>,
   deps: PhaseDeps,
 ): Promise<StepResult> {
+  const moved = () => (deps.currentCode ?? runnerCode)() !== deps.runnerCode
+  const mark = () => writeFileSync(join(input.runDir, CODE_MOVED_MARKER), '')
+  if (moved()) {
+    mark()
+    throw new StartFailure(CODE_CHECK_COMMAND, CODE_CHECK_OUTPUT)
+  }
   const token = await deps.api.issueToken(record.runId)
   let result: ProcessResult
   try {
@@ -95,6 +119,7 @@ async function step(
         sink: deps.sink,
         claudeBin: deps.claudeBin,
         boardUrl: deps.boardUrl,
+        runnerCode: deps.runnerCode,
         ...(deps.signal === undefined ? {} : { signal: deps.signal }),
         ...(deps.shutdown === undefined ? {} : { shutdown: deps.shutdown }),
         ...(deps.pauseRequested === undefined ? {} : { pauseRequested: deps.pauseRequested }),
@@ -117,7 +142,15 @@ async function step(
     summary: normalizer.result?.text ?? record.summary,
   }
   const ok = result.exitCode === 0 && normalizer.result !== null && !normalizer.result.isError
-  return { record: next, ok, stopped: result.stopped, sessionGone: normalizer.sessionGone }
+  const codeMoved = result.stopped === 'no' && moved()
+  if (codeMoved) mark()
+  return {
+    record: next,
+    ok,
+    stopped: result.stopped,
+    sessionGone: normalizer.sessionGone,
+    ...(codeMoved ? { codeMoved } : {}),
+  }
 }
 
 /** Starts a phase on a new session: its `phase_start`, then its first process. */

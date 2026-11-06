@@ -37,7 +37,17 @@ export const START: Extract<Work, { kind: 'start' }> = { kind: 'start', run: RUN
 export const BRANCH = 'board/PAY-1-r2'
 
 /** What one process of a phase does. */
-export type Act = 'ok' | 'paused' | 'cancelled' | 'shutdown' | 'fails' | 'gone'
+export type Act =
+  | 'ok'
+  | 'paused'
+  | 'cancelled'
+  | 'shutdown'
+  | 'fails'
+  | 'gone'
+  | 'moved'
+  | 'moved-paused'
+  | 'moved-cancelled'
+  | 'moved-shutdown'
 export type Verdict = 'pass' | 'fail' | 'owner-pass' | 'owner-fail' | 'withdrawn-pass' | 'no-report'
 export interface Script {
   /** Per phase and attempt, what each of its processes does in turn: `{ 'build-1': ['paused', 'ok'] }`. */
@@ -221,8 +231,11 @@ export function harness(script: Script) {
     return {
       record: { ...record, summary: `${key} done` },
       ok: what === 'ok' || what === 'paused',
-      stopped: what === 'paused' || what === 'cancelled' || what === 'shutdown' ? what : 'no',
+      stopped: /^(moved-)?(paused|cancelled|shutdown)$/.test(what)
+        ? (what.replace('moved-', '') as 'paused' | 'cancelled' | 'shutdown')
+        : 'no',
       sessionGone: what === 'gone',
+      ...(what.startsWith('moved') ? { codeMoved: true } : {}),
     }
   }
   const handoffs: Record<string, string> = {}
@@ -400,6 +413,7 @@ export function harness(script: Script) {
       stopGraceMs: 1000,
       markerPollMs: 50,
     },
+    runnerCode: 'start-code',
     signal: new AbortController().signal,
     shutdown: shutdown.signal,
     clock: () => NOW,
