@@ -1,11 +1,12 @@
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { BoardApi } from './api.js'
-import { loadRunnerConfig, type RunnerConfig } from './config.js'
+import { ConfigurationError, loadRunnerConfig, type RunnerConfig } from './config.js'
 import type { Work } from './contract.js'
 import { carryOut, cleanUp, type Outcome, type Phases } from './delivery.js'
 import { draftSpec } from './drafting.js'
 import { realExec } from './exec.js'
+import { checkExecutable } from './executable.js'
 import { runnerCode } from './fingerprint.js'
 import { Git } from './git.js'
 import { continuePhase, endPhase, restartPhase, startPhase } from './phases/phase.js'
@@ -245,7 +246,16 @@ export class Daemon {
 }
 
 export async function main(): Promise<void> {
-  const config = loadRunnerConfig(process.env)
+  let config: RunnerConfig
+  try {
+    config = loadRunnerConfig(process.env)
+    checkExecutable('CLAUDE_BIN', config.claudeBin, process.env.PATH)
+    checkExecutable('GH_BIN', config.ghBin, process.env.PATH)
+  } catch (error) {
+    if (!(error instanceof ConfigurationError)) throw error
+    console.error(`board-cli: ${error.message}`)
+    process.exit(1)
+  }
   const stop = new AbortController()
   for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => stop.abort())
   console.log(`board-cli: runner ${config.runnerId} claiming from ${config.boardUrl}`)

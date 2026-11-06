@@ -20,19 +20,27 @@ export interface RunnerConfig {
   markerPollMs: number
 }
 
+/** A refusal of the start configuration: the daemon reports it in one line and exits 1. */
+export class ConfigurationError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'ConfigurationError'
+  }
+}
+
 function positiveInt(env: NodeJS.ProcessEnv, key: string, fallback: number): number {
   const raw = env[key]?.trim()
   if (raw === undefined || raw === '') return fallback
   const value = Number(raw)
   if (!Number.isInteger(value) || value <= 0)
-    throw new Error(`Invalid configuration: ${key} must be a positive integer`)
+    throw new ConfigurationError(`Invalid configuration: ${key} must be a positive integer`)
   return value
 }
 
 export function loadRunnerConfig(env: NodeJS.ProcessEnv): RunnerConfig {
   const runnerKey = env.RUNNER_KEY?.trim()
   if (runnerKey === undefined || runnerKey === '')
-    throw new Error('Invalid configuration: RUNNER_KEY is required')
+    throw new ConfigurationError('Invalid configuration: RUNNER_KEY is required')
   return {
     boardUrl: (env.BOARD_URL?.trim() || 'http://127.0.0.1:4100').replace(/\/+$/, ''),
     runnerKey,
