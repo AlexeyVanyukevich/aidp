@@ -126,6 +126,58 @@ The runner ends a spec run whose phase succeeded with `run_end` `drafted`; the s
 card to Spec review if the run saved a version, and otherwise fails the run with "the
 spec-writer saved no spec". The card's view carries a failed draft's reason until the next run.
 
+## A title run
+
+**Rephrase title** on the Spec tab queues a run of kind `title` for a card in Backlog or Spec
+review; the card does not move, and neither does any other run's state, phase or numbering:
+every lookup of "the task's latest run" (`moveFacts`, the card's approval, block and draft
+failure, Cancel run, the board card's phase and PR) ignores `title` runs. Title runs are numbered
+among themselves ("Title 1" in the Timeline, whose phase band and Cost row read "Title") and are
+priced like any phase.
+
+A title run has a claim lane of its own. `POST /api/runner/claim` takes an optional `kinds` list;
+the daemon's main loop claims `spec` and `delivery`, and a second loop claims `title` only, so a
+title run starts while another task's run is in progress. A queued title run whose card has left
+Backlog and Spec review is cancelled at claim. Cleanup rows go to the lane of their run's kind.
+Once either loop sees the runner's code move, neither sends a new claim request; the daemon waits
+for each open claim request (at most the claim wait), hands on a main-lane start or resume,
+carries out a cleanup, and ends a title claim failed with "the runner stopped" (a title claim is
+never handed on), stops a title run in flight the same way, and exits 75. While the main loop
+carries a run, a title lane that saw moved code claims nothing until the restart.
+
+The runner checks out a detached worktree of `origin/<base_branch>` and runs one phase, `title`,
+with the agent `title-writer` on Sonnet at medium effort. Its tools are Read, Grep, Glob and the
+board's `get_task`, `suggest_title` and `log_step`: no edit, Bash, Agent or `request_approval`, so
+it never asks the owner. `suggest_title` takes a one-line `title` (1–200 characters) and a
+one-line `reason` (at most 300), is refused outside a running title run, and stores one artifact
+of kind `title` with `data` `{ title, reason, decision: null }` that later calls in the run
+rewrite. It changes no task field.
+
+A title run is never paused, blocked or resumed. The runner ends it `suggested` when the phase
+succeeded; the server then marks the run succeeded if an artifact was stored, and otherwise failed
+with "the title agent suggested no title". A failed phase fails it with "the title phase failed",
+a cancel ends it cancelled, a stopped daemon fails it with "the runner stopped", and the sweeper
+fails a run with no heartbeat for 90 seconds with "the runner was lost". None of these moves the
+card. A failed run's runner learns of it in its heartbeat's cancel list and stops its process.
+
+The task view carries `title_suggestion`, read from the latest title run: `working` while one is
+queued or running, `ready` with the title and reason while its artifact is undecided, `failed`
+with the reason, otherwise `null`. Four actions serve it, each answering 409 outside Backlog and
+Spec review (stop-title excepted): `rephrase-title` (also 409 while a title run is queued or
+running), `stop-title` (cancels a queued run at once, or asks the runner to stop a running one),
+`accept-title` with `{ title }`, which sets the title to that text and the artifact's `decision` to
+`accepted` in one transaction, and `discard-title`, which sets `discarded`. `PATCH /api/tasks/:id`
+changes `title` only in those two states.
+
+The Spec tab opens with a Title field above Description, with Save title and Rephrase title; in
+other states the field is read-only. While a run works, Rephrase title gives way to "Suggesting a
+title…" and Stop; a ready suggestion shows an editable "Suggested title" field with its reason as
+the hint, Accept title and Discard. An edited, unsaved title is saved first. The status region
+announces "Suggesting a title.", "A title is suggested: …", "Title saved.", "Suggestion stopped.",
+"Suggestion discarded." and a failure; Rephrase title moves focus to Stop, Stop and a finished run
+return it to Rephrase title, and Accept title and Discard move it to the Title field. An empty
+title shows "Enter a title.", is marked invalid and takes focus.
+
 ## A delivery run
 
 The runner creates a worktree under `~/.aidp/worktrees/<run>` on `board/<KEY>-r<n>` from
