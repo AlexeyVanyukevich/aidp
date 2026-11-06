@@ -1,10 +1,10 @@
 import { spawn } from 'node:child_process'
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import { CLI_PATH } from '../../src/self.js'
 
 const FAKE_GH = join(CLI_PATH, '../../tests/fake/fake-gh')
@@ -56,14 +56,15 @@ describe('the start check', () => {
         res.end()
       })
       await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
+      onTestFinished(() => void server.close())
       const home = mkdtempSync(join(tmpdir(), 'start-check-'))
+      onTestFinished(() => rmSync(home, { recursive: true, force: true }))
       const handoff = join(home, 'handoff.json')
       const content = JSON.stringify({
         work: { kind: 'start' },
         claimed_at: new Date().toISOString(),
       })
       if (row.handoff === true) writeFileSync(handoff, content)
-      chmodSync(FAKE_GH, 0o755)
       const env: Record<string, string | undefined> = {
         ...process.env,
         RUNNER_KEY: 'k'.repeat(32),
@@ -76,7 +77,19 @@ describe('the start check', () => {
       for (const key of Object.keys(env)) if (env[key] === undefined) delete env[key]
       const result = await new Promise<{ status: number | null; stdout: string; stderr: string }>(
         (done) => {
-          const child = spawn(CLI_PATH, ['daemon'], { env: env as NodeJS.ProcessEnv })
+          // Its own process group, so that a daemon which got past the check, and is now retrying
+          // the recording server's 500s, dies with the test instead of outliving it.
+          const child = spawn(CLI_PATH, ['daemon'], {
+            env: env as NodeJS.ProcessEnv,
+            detached: true,
+          })
+          onTestFinished(() => {
+            try {
+              process.kill(-child.pid!, 'SIGKILL')
+            } catch {
+              // Already gone.
+            }
+          })
           let stdout = ''
           let stderr = ''
           child.stdout.on('data', (d: Buffer) => (stdout += d.toString()))
@@ -84,7 +97,6 @@ describe('the start check', () => {
           child.on('close', (status) => done({ status, stdout, stderr }))
         },
       )
-      server.close()
       expect(result.status).toBe(1)
       const lines = result.stderr.split('\n').filter((l) => l !== '')
       expect(lines).toHaveLength(1)
