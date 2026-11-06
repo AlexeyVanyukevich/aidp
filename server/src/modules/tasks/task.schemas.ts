@@ -35,3 +35,9 @@ export const RedraftBody = Type.Object(
   { note: Type.String({ maxLength: 4_000 }) },
   { additionalProperties: false },
 )
+
+/** Blank text passes here and is refused by the action, which names the field. */
+export const AcceptTitleBody = Type.Object(
+  { title: Type.String({ maxLength: 200 }) },
+  { additionalProperties: false },
+)

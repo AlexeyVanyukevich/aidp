@@ -1,6 +1,11 @@
 import { sql, type Kysely } from 'kysely'
 import type { Database } from '../../db/schema.js'
 import { planToKeepFor } from './plan-history.queries.js'
+import {
+  readTitleSuggestion,
+  type TitleSuggestion,
+  type TitleRunFacts,
+} from './title-suggestion.js'
 import type { ApprovalKind, ApprovalStatus, Block, TaskState } from '../../shared/vocabulary.js'
 
 export interface TaskView {
@@ -25,6 +30,8 @@ export interface TaskView {
   draft_failure: string | null
   /** On a Failed card: the run whose accepted plan a Re-run can keep; null when there is none. */
   plan_to_keep: { run: number } | null
+  /** The task's latest title run, read for the card; null when there is nothing to show. */
+  title_suggestion: TitleSuggestion | null
 }
 
 export interface TaskCard {
@@ -41,6 +48,44 @@ export interface TaskCard {
   pr_url: string | null
   /** An open question, or an expired one, waits on this card. */
   question_waiting: boolean
+}
+
+/** The task's latest title run, with the suggestion its artifact holds. */
+export async function latestTitleRun(
+  db: Kysely<Database>,
+  taskId: string,
+): Promise<(TitleRunFacts & { id: string; artifact_id: string | null }) | undefined> {
+  const run = await db
+    .selectFrom('runs')
+    .select(['id', 'status', 'failure_reason'])
+    .where('task_id', '=', taskId)
+    .where('kind', '=', 'title')
+    .orderBy('created_at', 'desc')
+    .orderBy('number', 'desc')
+    .executeTakeFirst()
+  if (run === undefined) return undefined
+  const artifact = await db
+    .selectFrom('artifacts')
+    .select(['id', 'data'])
+    .where('run_id', '=', run.id)
+    .where('kind', '=', 'title')
+    .orderBy('created_at', 'desc')
+    .executeTakeFirst()
+  const data = artifact?.data as {
+    title?: string
+    reason?: string
+    decision?: string | null
+  } | null
+  return {
+    id: run.id,
+    status: run.status,
+    failure_reason: run.failure_reason,
+    artifact_id: artifact?.id ?? null,
+    suggestion:
+      data === null || data === undefined || typeof data.title !== 'string'
+        ? null
+        : { title: data.title, reason: data.reason ?? '', decision: data.decision ?? null },
+  }
 }
 
 export class TaskRepository {
@@ -70,6 +115,7 @@ export class TaskRepository {
       .selectFrom('runs')
       .select(['id', 'kind', 'status', 'block', 'failure_reason'])
       .where('task_id', '=', id)
+      .where('kind', '!=', 'title')
       .orderBy('created_at', 'desc')
       .executeTakeFirst()
     const tested = await this.db
@@ -90,6 +136,7 @@ export class TaskRepository {
             .where('status', 'in', ['open', 'expired'])
             .orderBy('created_at', 'desc')
             .executeTakeFirst()
+    const title = await latestTitleRun(this.db, id)
     const kept = row.state === 'failed' ? await planToKeepFor(this.db, id) : undefined
     return {
       id: row.id,
@@ -115,6 +162,7 @@ export class TaskRepository {
       block: row.state === 'blocked' ? (run?.block ?? null) : null,
       draft_failure: run?.kind === 'spec' && run.status === 'failed' ? run.failure_reason : null,
       plan_to_keep: kept === undefined ? null : { run: kept.runNumber },
+      title_suggestion: readTitleSuggestion(title),
     }
   }
 

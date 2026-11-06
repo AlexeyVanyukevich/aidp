@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { buildTestApp, closeTestDb, getTestDb, resetDb } from './helpers.js'
-import { seedQueuedRun } from './fixtures.js'
+import { seedQueuedRun, seedTitleRun } from './fixtures.js'
 
 let app: FastifyInstance
 let ids: { taskId: string; runId: string }
@@ -172,6 +172,17 @@ describe('reading a run', () => {
       pr_url: null,
     })
     expect(board.tasks[0].cost_usd).toBeCloseTo(1.5, 10)
+  })
+
+  it('keeps the card’s phase when a title run follows', async () => {
+    await seedTitleRun(getTestDb(), ids.taskId, { status: 'succeeded' })
+    await getTestDb()
+      .updateTable('runs')
+      .set({ current_phase: 'title' })
+      .where('kind', '=', 'title')
+      .execute()
+    const board = (await app.inject({ method: 'GET', url: '/api/projects/PAY/tasks' })).json()
+    expect(board.tasks[0]).toMatchObject({ state: 'running', phase: 'build', attempt: 1 })
   })
 
   it('names on the card only the models that used tokens', async () => {

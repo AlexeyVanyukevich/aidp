@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { buildTestApp, closeTestDb, getTestDb, resetDb } from './helpers.js'
-import { GOOD_SPEC, seedProject, seedTask } from './fixtures.js'
+import { GOOD_SPEC, seedProject, seedTask, seedTitleRun } from './fixtures.js'
 import { moveTask } from '../../src/modules/tasks/task.moves.js'
 
 let app: FastifyInstance
@@ -74,6 +74,40 @@ describe('PATCH /api/tasks/:id', () => {
       payload: { title: 'Renamed', description_md: 'More' },
     })
     expect(response.json()).toMatchObject({ title: 'Renamed', description_md: 'More' })
+  })
+
+  it('changes the title in Spec review and refuses it in Running', async () => {
+    const review = await seedTask(getTestDb(), projectId, { number: 5, state: 'spec_review' })
+    const running = await seedTask(getTestDb(), projectId, { number: 6, state: 'running' })
+    const patch = (id: string) =>
+      app.inject({ method: 'PATCH', url: `/api/tasks/${id}`, payload: { title: 'Changed' } })
+    expect((await patch(review.id)).json().title).toBe('Changed')
+    const refused = await patch(running.id)
+    expect(refused.statusCode).toBe(409)
+    expect(refused.json().error).toBe('conflict')
+    const row = await getTestDb()
+      .selectFrom('tasks')
+      .select('title')
+      .where('id', '=', running.id)
+      .executeTakeFirstOrThrow()
+    expect(row.title).toBe('Retry webhooks')
+  })
+
+  it('keeps a failed draft’s reason when a title run follows it', async () => {
+    const { id } = await seedTask(getTestDb(), projectId, { number: 7, state: 'spec_review' })
+    await getTestDb()
+      .insertInto('runs')
+      .values({
+        task_id: id,
+        kind: 'spec',
+        number: 1,
+        status: 'failed',
+        failure_reason: 'the draft failed',
+      })
+      .execute()
+    await seedTitleRun(getTestDb(), id, { status: 'succeeded', failure_reason: 'unrelated' })
+    const response = await app.inject({ method: 'GET', url: `/api/tasks/${id}` })
+    expect(response.json().draft_failure).toBe('the draft failed')
   })
 
   it('reorders a card within its column', async () => {
