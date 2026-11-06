@@ -435,3 +435,53 @@ describe('the project-test-commands migration', () => {
     ).rejects.toThrow(/project_test_commands_(default|name)/)
   })
 })
+
+describe('the title-runs migration', () => {
+  afterEach(async () => {
+    expect((await migrator().migrateToLatest()).error).toBeUndefined()
+  })
+
+  async function insertTitleRows() {
+    const { id: projectId } = await project()
+    const db = getTestDb()
+    const { rows } = await sql<{ id: string }>`
+      insert into tasks (project_id, number, title, state, position, updated_at)
+      values (${projectId}, 1, 'A', 'backlog', 1, now()) returning id`.execute(db)
+    const taskId = rows[0]!.id
+    const made = await sql<{ id: string }>`
+      insert into runs (task_id, kind, number, status, current_phase)
+      values (${taskId}, 'title', 1, 'running', 'title') returning id`.execute(db)
+    const runId = made.rows[0]!.id
+    await sql`insert into phases (id, run_id, name, attempt, agent, model, status, started_at)
+      values (gen_random_uuid(), ${runId}, 'title', 1, 'title-writer', 'sonnet', 'running', now())`.execute(
+      db,
+    )
+    await sql`insert into artifacts (run_id, kind, body_md)
+      values (${runId}, 'title', '')`.execute(db)
+    return taskId
+  }
+
+  it('accepts a title run, phase and artifact, and removes them on the way down', async () => {
+    const taskId = await insertTitleRows()
+    const db = getTestDb()
+    expect((await migrator().migrateTo('007_project_test_commands')).error).toBeUndefined()
+    for (const table of ['runs', 'phases', 'artifacts']) {
+      const { rows } = await sql<{ n: number }>`
+        select count(*)::int as n from ${sql.table(table)}`.execute(db)
+      expect(rows[0]!.n).toBe(0)
+    }
+    // The earlier checks stand again.
+    await expect(
+      sql`insert into runs (task_id, kind, number, status) values (${taskId}, 'title', 1, 'queued')`.execute(
+        db,
+      ),
+    ).rejects.toThrow(/runs_kind_known/)
+    await expect(
+      sql`insert into runs (task_id, kind, number, status, spec_version)
+        values (${taskId}, 'spec', 1, 'running', null)`.execute(db),
+    ).resolves.toBeDefined()
+    await expect(
+      sql`update runs set current_phase = 'title' where task_id = ${taskId}`.execute(db),
+    ).rejects.toThrow(/runs_phase_known/)
+  })
+})

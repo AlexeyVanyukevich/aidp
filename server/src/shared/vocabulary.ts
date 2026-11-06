@@ -23,7 +23,11 @@ export const RUN_STATUSES = [
 ] as const
 export type RunStatus = (typeof RUN_STATUSES)[number]
 
-export const PHASE_NAMES = ['spec', 'plan', 'build', 'verify'] as const
+/** A run's kind: a spec run drafts, a delivery run delivers, a title run suggests a title. */
+export const RUN_KINDS = ['spec', 'delivery', 'title'] as const
+export type RunKind = (typeof RUN_KINDS)[number]
+
+export const PHASE_NAMES = ['spec', 'plan', 'build', 'verify', 'title'] as const
 export type PhaseName = (typeof PHASE_NAMES)[number]
 
 /** A paused phase waits for an answer or a Resume; the same session carries on after it. */
@@ -105,7 +109,7 @@ export const EVENT_TYPES = [
 ] as const
 export type EventType = (typeof EVENT_TYPES)[number]
 
-export const ARTIFACT_KINDS = ['plan', 'verify_report', 'pr'] as const
+export const ARTIFACT_KINDS = ['plan', 'verify_report', 'pr', 'title'] as const
 export type ArtifactKind = (typeof ARTIFACT_KINDS)[number]
 
 /** One acceptance criterion as the spec parser reads it and approval freezes it. */

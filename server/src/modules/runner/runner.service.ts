@@ -355,7 +355,7 @@ export class RunnerService {
     return {
       id: row.id,
       number: row.run_number,
-      kind: row.kind,
+      kind: row.kind as 'spec' | 'delivery',
       spec_version: row.spec_version,
       note: row.note,
       task: {
