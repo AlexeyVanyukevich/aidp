@@ -634,6 +634,17 @@ process that fails to start blocks the run the same way (`step_failed`), with th
 command and Node's message, its code and a hint as the output (`CLAUDE_BIN`, the runner's `PATH`
 or the run's worktree, whichever the failure points at). Resume runs the process again: a phase
 that never started gets a new session in the same phase row, and a resumed one continues its own.
+
+**The start check.** Before it claims anything, the daemon checks that `CLAUDE_BIN` and `GH_BIN`
+each name an executable. It accepts an absolute path to an existing regular file, symlinks
+followed, that the daemon's user may execute, or a bare name (no `/`) that an absolute entry of
+the runner's `PATH` holds as one; empty and relative `PATH` entries are skipped, a relative path
+with a slash is refused, and the binary is never run. A refusal, like every configuration
+error, is one `board-cli: ` line on stderr with no stack trace and exit status 1, before the
+`claiming from` line: no handed-on claim is taken over and no request reaches the board. The
+wrapper returns 1 on a first start and retries every `BOARD_CLI_RETRY_SECONDS` (10 s) after a
+restart. A binary removed after start is not caught here: it is found at spawn and blocks the run
+as `step_failed`, as above.
 An `'error'` after the process started is logged to the phase's stderr log, and the `'close'` that
 follows a start failure is ignored. Resume continues from the checkpoint with "You were
 interrupted. Continue from where you stopped."; a stage with no session reruns its step. A session

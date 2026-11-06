@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { homedir, hostname } from 'node:os'
 import { join } from 'node:path'
-import { loadRunnerConfig } from '../../src/config.js'
+import { ConfigurationError, loadRunnerConfig } from '../../src/config.js'
 
 const BASE = { RUNNER_KEY: 'k'.repeat(32) }
 
@@ -30,9 +30,14 @@ describe('loadRunnerConfig', () => {
   })
 
   it.each([
-    ['no runner key', {}, /RUNNER_KEY/],
-    ['a test timeout of zero', { ...BASE, TEST_TIMEOUT_MS: '0' }, /TEST_TIMEOUT_MS/],
+    ['no runner key', {}, 'Invalid configuration: RUNNER_KEY is required'],
+    [
+      'a test timeout of zero',
+      { ...BASE, TEST_TIMEOUT_MS: '0' },
+      'Invalid configuration: TEST_TIMEOUT_MS must be a positive integer',
+    ],
   ])('refuses %s', (_name, env, message) => {
+    expect(() => loadRunnerConfig(env)).toThrow(ConfigurationError)
     expect(() => loadRunnerConfig(env)).toThrow(message)
   })
 })
