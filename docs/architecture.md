@@ -135,8 +135,9 @@ failure, Cancel run, the board card's phase and PR) ignores `title` runs. Title 
 among themselves ("Title 1" in the Timeline, whose phase band and Cost row read "Title") and are
 priced like any phase.
 
-A title run has a claim lane of its own. `POST /api/runner/claim` takes an optional `kinds` list;
-the daemon's main loop claims `spec` and `delivery`, and a second loop claims `title` only, so a
+A title run has a claim lane of its own. `POST /api/runner/claim` takes an optional `kinds` list,
+which defaults to `spec` and `delivery`, so a title run goes only to a claim that names it; the
+daemon's main loop claims `spec` and `delivery`, and a second loop claims `title` only, so a
 title run starts while another task's run is in progress. A queued title run whose card has left
 Backlog and Spec review is cancelled at claim. Cleanup rows go to the lane of their run's kind.
 Once either loop sees the runner's code move, neither sends a new claim request; the daemon waits

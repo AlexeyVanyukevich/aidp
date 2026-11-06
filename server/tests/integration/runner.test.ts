@@ -1375,6 +1375,18 @@ describe('the title lane', () => {
     })
   })
 
+  it('leaves a title run queued for a claim that names no kinds, as a daemon from before the lane sends', async () => {
+    const { runId } = await titleRun()
+    expect((await claim()).json().work).toBeNull()
+    const row = await getTestDb()
+      .selectFrom('runs')
+      .select(['status', 'runner_id'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow()
+    expect(row).toEqual({ status: 'queued', runner_id: null })
+    expect((await claimKinds(['title'])).json().work.run.id).toBe(runId)
+  })
+
   it('claims a title run while another task’s delivery run is carried', async () => {
     await seedQueuedRun(getTestDb())
     await claim()

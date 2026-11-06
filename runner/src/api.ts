@@ -69,7 +69,7 @@ export class BoardApi {
     return response.status === 204 ? (undefined as T) : ((await response.json()) as T)
   }
 
-  /** `kinds` limits the claim to those run kinds; absent claims any. */
+  /** `kinds` limits the claim to those run kinds; absent, the board offers `spec` and `delivery`. */
   async claim(runnerId: string, waitMs: number, kinds?: readonly RunKind[]): Promise<Work | null> {
     return (
       await this.call<{ work: Work | null }>(
