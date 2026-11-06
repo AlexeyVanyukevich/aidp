@@ -45,9 +45,9 @@ export function runLabel(run: { kind: string; number: number }): string {
   return `${run.kind === 'spec' ? 'Draft' : run.kind === 'title' ? 'Title' : 'Run'} ${run.number}`
 }
 
-/** A phase's name as the Timeline and the Cost tab show it: the title phase is capitalised. */
+/** A phase's name as the Timeline and the Cost tab show it: the title and Help phases are capitalised. */
 export function phaseLabel(name: string): string {
-  return name === 'title' ? 'Title' : name
+  return name === 'title' ? 'Title' : name === 'help' ? 'Help' : name
 }
 
 /** The Runner line of a run that holds a plan a Re-run copied into it; null for any other. */

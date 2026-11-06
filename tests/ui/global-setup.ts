@@ -48,6 +48,22 @@ const asking = (question: string, options: { id: string; label: string; impact?:
   ],
   verifier: [[PASS]],
 })
+/** What the fake helper saves, in the order its calls come. */
+const SUGGEST = (args: Record<string, unknown>) => [{ tool: 'save_help_result', args }]
+const EXPLAIN = [
+  {
+    tool: 'save_help_result',
+    args: {
+      asked: 'Which colour the retry banner should be.',
+      matters: 'It is the first thing a customer sees when a delivery fails.',
+      leads_to: 'Red is loud; blue matches the logo.',
+    },
+  },
+]
+const colours = asking('Which colour should the retry banner be?', [
+  { id: 'red', label: 'red' },
+  { id: 'blue', label: 'blue', impact: 'Matches the logo' },
+])
 /** The spec the spec-writer saves: the same that the other journeys approve. */
 const DRAFTED = `## Goal
 Failed deliveries back off.
@@ -110,6 +126,41 @@ const SCRIPT = {
     'Suggest twice': { 'title-writer': [[SUGGEST_FIRST], [SUGGEST_SECOND]] },
     'Suggest nothing': { 'title-writer': [[]] },
     'Draft a retry spec': drafting,
+    'Help with colours': {
+      ...colours,
+      helper: [
+        SUGGEST({
+          option_id: 'blue',
+          text: 'Go with blue.',
+          reasoning: 'Matches the logo.',
+          unsure: 'Whether print differs.',
+        }),
+        EXPLAIN,
+        SUGGEST({
+          option_id: 'blue',
+          text: 'Go with blue, but check print.',
+          reasoning: 'Second opinion.',
+          unsure: 'Whether print differs.',
+        }),
+      ],
+    },
+    'Help that fails': { ...colours, helper: [[]] },
+    'Help with a batch': {
+      ...drafting,
+      helper: [
+        SUGGEST({
+          text: 'Only server errors.',
+          reasoning: 'Client errors will not change on retry.',
+          unsure: 'Whether 429 counts.',
+        }),
+        SUGGEST({
+          option_id: 'five',
+          text: 'Five, to be safe.',
+          reasoning: 'Deliveries are cheap.',
+          unsure: 'The load on the receiver.',
+        }),
+      ],
+    },
     'Answer by keyboard': drafting,
     'Redraft a spec': { 'spec-writer': [[SAVE]] },
     'Ask about colours': asking('Which colour should the retry banner be?', [

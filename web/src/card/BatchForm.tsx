@@ -1,13 +1,16 @@
 import { useId, useRef, useState, type FormEvent } from 'react'
 import { flushSync } from 'react-dom'
 import { Button, Field, Markdown, Radio, RadioGroup, Textarea } from '@zellige/react'
-import type { BatchAnswer, BatchQuestion } from '../types'
+import { HelpPanel } from './HelpPanel'
+import type { BatchAnswer, BatchQuestion, HelpMode, HelpView } from '../types'
 import {
   answerFieldHint,
   answerFieldLabel,
   batchAnswer,
   optionName,
+  questionHelp,
   unanswered,
+  applySuggestion,
   type Choices,
 } from './approvals'
 
@@ -21,10 +24,16 @@ const MISSING = 'Choose an option or write an answer.'
  */
 export function BatchForm({
   questions,
+  approvalId,
+  helps,
+  onAsk,
   sending,
   onSend,
 }: {
   questions: BatchQuestion[]
+  approvalId: string
+  helps: HelpView[]
+  onAsk: (mode: HelpMode, index: number | null) => void
   sending: boolean
   onSend: (body: BatchAnswer) => void
 }) {
@@ -84,6 +93,18 @@ export function BatchForm({
                 <Markdown source={question.context_md} headingLevel={5} />
               </div>
             )}
+            <HelpPanel
+              help={questionHelp(helps, approvalId, index)}
+              options={question.options}
+              level={5}
+              onAsk={(mode) => onAsk(mode, index)}
+              onUse={(result) =>
+                setChoices((now) => {
+                  const next = applySuggestion(now[question.id] ?? { text: '' }, result)
+                  return { ...now, [question.id]: next }
+                })
+              }
+            />
             {hasOptions ? (
               <RadioGroup
                 label={question.question}

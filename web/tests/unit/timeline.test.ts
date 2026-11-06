@@ -113,6 +113,7 @@ describe('the title run in the Timeline and the Cost tab', () => {
 
   it.each([
     ['title', 'Title'],
+    ['help', 'Help'],
     ['plan', 'plan'],
   ])('names the %s phase %s', (name, label) => {
     expect(phaseLabel(name)).toBe(label)
