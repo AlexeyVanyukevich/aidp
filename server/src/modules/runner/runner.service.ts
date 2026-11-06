@@ -549,6 +549,13 @@ export class RunnerService {
       })
       .where('id', '=', runId)
       .execute()
+    // The card shows the suggestion, or its failure: it reads the task afresh.
+    const run = await trx
+      .selectFrom('runs')
+      .select('task_id')
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow()
+    await publish(trx, { topic: 'task.updated', taskId: run.task_id })
   }
 
   private async apply(
