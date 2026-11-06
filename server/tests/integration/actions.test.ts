@@ -1,7 +1,14 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { buildTestApp, closeTestDb, getTestDb, resetDb } from './helpers.js'
-import { GOOD_SPEC, seedProject, seedQueuedRun, seedRunningRun, seedTask } from './fixtures.js'
+import {
+  GOOD_SPEC,
+  seedProject,
+  seedQueuedRun,
+  seedRunningRun,
+  seedTask,
+  seedTitleRun,
+} from './fixtures.js'
 import { openApproval } from '../../src/modules/approvals/approval.service.js'
 import type { BlockCause } from '../../src/shared/vocabulary.js'
 
@@ -586,5 +593,138 @@ describe('what a card says about its draft', () => {
         ),
       )
     expect((await card(seeded.taskId)).approval).toMatchObject({ kind: 'questions', questions: 3 })
+  })
+})
+
+const post = (taskId: string, action: string, payload?: unknown) =>
+  app.inject({
+    method: 'POST',
+    url: `/api/tasks/${taskId}/actions/${action}`,
+    payload: payload as never,
+  })
+const titleRuns = (taskId: string) =>
+  getTestDb()
+    .selectFrom('runs')
+    .selectAll()
+    .where('task_id', '=', taskId)
+    .where('kind', '=', 'title')
+    .execute()
+const task = (taskId: string) =>
+  getTestDb().selectFrom('tasks').selectAll().where('id', '=', taskId).executeTakeFirstOrThrow()
+
+describe('Rephrase title', () => {
+  it.each(['backlog', 'spec_review'] as const)(
+    'queues a title run in %s and leaves the card',
+    async (state) => {
+      const { id } = await seedTask(getTestDb(), (await seedProject(getTestDb())).id, { state })
+      const response = await post(id, 'rephrase-title')
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toMatchObject({ state, title_suggestion: { status: 'working' } })
+      expect(await titleRuns(id)).toMatchObject([{ status: 'queued', number: 1 }])
+      expect((await post(id, 'rephrase-title')).statusCode).toBe(409)
+      expect(await titleRuns(id)).toHaveLength(1)
+    },
+  )
+
+  it('answers 409 in Ready and creates no run', async () => {
+    const { taskId } = await seedQueuedRun(getTestDb())
+    expect((await post(taskId, 'rephrase-title')).statusCode).toBe(409)
+    expect(await titleRuns(taskId)).toEqual([])
+  })
+
+  it('numbers a second suggestion among the title runs', async () => {
+    const { id } = await seedTask(getTestDb(), (await seedProject(getTestDb())).id)
+    await seedTitleRun(getTestDb(), id, { status: 'cancelled' })
+    await post(id, 'rephrase-title')
+    expect((await titleRuns(id)).map((r) => r.number).sort()).toEqual([1, 2])
+  })
+})
+
+describe('Stop title', () => {
+  it('cancels a queued run at once', async () => {
+    const { id } = await seedTask(getTestDb(), (await seedProject(getTestDb())).id)
+    await post(id, 'rephrase-title')
+    const response = await post(id, 'stop-title')
+    expect(response.json()).toMatchObject({ state: 'backlog', title_suggestion: null })
+    expect(await titleRuns(id)).toMatchObject([{ status: 'cancelled' }])
+  })
+
+  it('asks the runner to stop a running one', async () => {
+    const { id } = await seedTask(getTestDb(), (await seedProject(getTestDb())).id)
+    await seedTitleRun(getTestDb(), id, { status: 'running' })
+    expect((await post(id, 'stop-title')).statusCode).toBe(200)
+    expect(await titleRuns(id)).toMatchObject([{ status: 'running', cancel_requested: true }])
+  })
+
+  it('answers 409 with none', async () => {
+    const { id } = await seedTask(getTestDb(), (await seedProject(getTestDb())).id)
+    expect((await post(id, 'stop-title')).statusCode).toBe(409)
+  })
+})
+
+describe('Accept and discard title', () => {
+  async function ready() {
+    const { id } = await seedTask(getTestDb(), (await seedProject(getTestDb())).id)
+    const runId = await seedTitleRun(getTestDb(), id, {
+      status: 'succeeded',
+      suggestion: { title: "Rename drop_draft's destination", reason: 'names drop_draft' },
+    })
+    return { id, runId }
+  }
+  const decision = async (runId: string) =>
+    (
+      await getTestDb()
+        .selectFrom('artifacts')
+        .select('data')
+        .where('run_id', '=', runId)
+        .executeTakeFirstOrThrow()
+    ).data as { decision: string | null }
+
+  it('sets the edited text as the title', async () => {
+    const { id, runId } = await ready()
+    const response = await post(id, 'accept-title', { title: 'Rename drop_draft destination' })
+    expect(response.json()).toMatchObject({
+      title: 'Rename drop_draft destination',
+      title_suggestion: null,
+    })
+    expect((await decision(runId)).decision).toBe('accepted')
+  })
+
+  it('discards and leaves the title', async () => {
+    const { id, runId } = await ready()
+    const response = await post(id, 'discard-title')
+    expect(response.json()).toMatchObject({ title: 'Retry webhooks', title_suggestion: null })
+    expect((await decision(runId)).decision).toBe('discarded')
+    expect((await post(id, 'discard-title')).statusCode).toBe(409)
+  })
+
+  it('answers 409 with no ready suggestion', async () => {
+    const { id } = await seedTask(getTestDb(), (await seedProject(getTestDb())).id)
+    expect((await post(id, 'accept-title', { title: 'X' })).statusCode).toBe(409)
+    expect((await post(id, 'discard-title')).statusCode).toBe(409)
+  })
+
+  it('answers 409 outside Backlog and Spec review', async () => {
+    const { id } = await ready()
+    await getTestDb().updateTable('tasks').set({ state: 'ready' }).where('id', '=', id).execute()
+    expect((await post(id, 'accept-title', { title: 'X' })).statusCode).toBe(409)
+    expect((await task(id)).title).toBe('Retry webhooks')
+  })
+
+  it('refuses a blank title naming the field', async () => {
+    const { id } = await ready()
+    const response = await post(id, 'accept-title', { title: '  ' })
+    expect(response.statusCode).toBe(400)
+    expect(response.json().details).toMatchObject({ field: 'title' })
+  })
+})
+
+describe('Cancel with a title run', () => {
+  it('chooses the delivery run, not the later title run', async () => {
+    const { taskId, runId } = await seedQueuedRun(getTestDb())
+    await seedTitleRun(getTestDb(), taskId, { status: 'queued' })
+    await act(taskId, 'cancel')
+    expect(await run(runId)).toMatchObject({ status: 'cancelled' })
+    expect(await titleRuns(taskId)).toMatchObject([{ status: 'queued' }])
   })
 })

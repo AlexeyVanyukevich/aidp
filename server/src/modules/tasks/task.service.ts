@@ -9,8 +9,8 @@ import type { RunRepository } from '../runs/run.repository.js'
 import { moveTask } from './task.moves.js'
 import type { TaskCard, TaskRepository, TaskView } from './task.repository.js'
 
-/** Where the description may change: before a draft, and between drafts (slice 3 spec, §8). */
-const DESCRIBABLE: readonly TaskState[] = ['backlog', 'spec_review']
+/** Where the description and the title may change: before a draft, and between drafts (slice 3 spec, §8). */
+export const DESCRIBABLE: readonly TaskState[] = ['backlog', 'spec_review']
 
 export class TaskService {
   constructor(
@@ -85,6 +85,8 @@ export class TaskService {
     // A draft reads the description it started with; later runs read the approved spec.
     if (fields.description_md !== undefined && !DESCRIBABLE.includes(task.state))
       throw new ConflictError(`The description is fixed in ${task.state}`, { state: task.state })
+    if (fields.title !== undefined && !DESCRIBABLE.includes(task.state))
+      throw new ConflictError(`The title is fixed in ${task.state}`, { state: task.state })
     if (fields.test_command_id !== undefined) {
       if (task.state === 'done')
         throw new ConflictError('The test command of a finished task is fixed', {

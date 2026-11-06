@@ -1,10 +1,12 @@
 import type { Kysely, Transaction } from 'kysely'
 import type { Database } from '../../db/schema.js'
 import { publish } from '../../shared/bus.js'
-import { ConflictError, ValidationError } from '../../shared/errors.js'
+import { ConflictError, NotFoundError, ValidationError } from '../../shared/errors.js'
 import { queueDeliveryRun, queueSpecRun } from '../specs/spec.service.js'
 import { planToKeepFor } from './plan-history.queries.js'
 import { moveFacts, moveTask } from './task.moves.js'
+import { latestTitleRun } from './task.repository.js'
+import { DESCRIBABLE } from './task.service.js'
 
 export const ACTIONS = ['cancel', 'rerun', 'resume', 'draft-spec'] as const
 export type Action = (typeof ACTIONS)[number]
@@ -23,6 +25,7 @@ async function cancel(trx: Transaction<Database>, taskId: string, now: Date): Pr
     .selectFrom('runs')
     .select(['id', 'kind', 'status', 'pending'])
     .where('task_id', '=', taskId)
+    .where('kind', '!=', 'title')
     .where('status', 'in', ['queued', 'running', 'paused', 'blocked'])
     .orderBy('created_at', 'desc')
     .executeTakeFirst()
@@ -106,6 +109,7 @@ export async function performAction(
         .selectFrom('runs')
         .select(['id', 'block', 'checkpoint'])
         .where('task_id', '=', taskId)
+        .where('kind', '!=', 'title')
         .where('status', '=', 'blocked')
         .orderBy('created_at', 'desc')
         .executeTakeFirst()
@@ -186,5 +190,121 @@ export async function redraft(
       .executeTakeFirst()
     if (latest === undefined) throw new ConflictError('This task has no spec to redraft')
     await queueSpecRun(trx, taskId, { baseVersion: latest.version, note: note.trim() }, now)
+  })
+}
+
+/**
+ * The title actions leave the card where it is: they lock the task row, so a move or a second
+ * action waits, and refuse a card outside Backlog and Spec review.
+ */
+async function lockForTitle(trx: Transaction<Database>, taskId: string): Promise<void> {
+  const task = await trx
+    .selectFrom('tasks')
+    .select('state')
+    .where('id', '=', taskId)
+    .forUpdate()
+    .executeTakeFirst()
+  if (task === undefined) throw new NotFoundError('No such task')
+  if (!DESCRIBABLE.includes(task.state))
+    throw new ConflictError(`The title is fixed in ${task.state}`, { state: task.state })
+}
+
+/** Rephrase title: a title run, queued; the card does not move. */
+export async function rephraseTitle(
+  db: Kysely<Database>,
+  taskId: string,
+  now: Date,
+): Promise<void> {
+  await db.transaction().execute(async (trx) => {
+    await lockForTitle(trx, taskId)
+    const runs = await trx
+      .selectFrom('runs')
+      .select(['status'])
+      .where('task_id', '=', taskId)
+      .where('kind', '=', 'title')
+      .execute()
+    if (runs.some((run) => run.status === 'queued' || run.status === 'running'))
+      throw new ConflictError('A title is already being suggested', { reason: 'title_working' })
+    const run = await trx
+      .insertInto('runs')
+      .values({
+        task_id: taskId,
+        kind: 'title',
+        number: runs.length + 1,
+        status: 'queued',
+        queued_at: now,
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow()
+    await publish(trx, { topic: 'run.queued', runId: run.id })
+    await publish(trx, { topic: 'task.updated', taskId })
+  })
+}
+
+/** Stop: a queued title run ends at once; a running one is stopped by its runner. */
+export async function stopTitle(db: Kysely<Database>, taskId: string, now: Date): Promise<void> {
+  await db.transaction().execute(async (trx) => {
+    const task = await trx
+      .selectFrom('tasks')
+      .select('id')
+      .where('id', '=', taskId)
+      .forUpdate()
+      .executeTakeFirst()
+    if (task === undefined) throw new NotFoundError('No such task')
+    const run = await trx
+      .selectFrom('runs')
+      .select(['id', 'status'])
+      .where('task_id', '=', taskId)
+      .where('kind', '=', 'title')
+      .where('status', 'in', ['queued', 'running'])
+      .orderBy('created_at', 'desc')
+      .executeTakeFirst()
+    if (run === undefined) throw new ConflictError('No title is being suggested')
+    const reason = 'cancelled by the owner'
+    await trx
+      .updateTable('runs')
+      .set(
+        run.status === 'queued'
+          ? { status: 'cancelled', ended_at: now, queued_at: null, failure_reason: reason }
+          : { cancel_requested: true, failure_reason: reason },
+      )
+      .where('id', '=', run.id)
+      .execute()
+    await publish(trx, { topic: 'task.updated', taskId })
+  })
+}
+
+/** Accept: the title becomes the given text (the suggestion as edited); the suggestion is decided. */
+export async function decideTitle(
+  db: Kysely<Database>,
+  taskId: string,
+  decision: { accept: string } | 'discard',
+): Promise<void> {
+  if (decision !== 'discard' && blank(decision.accept))
+    throw new ValidationError('Enter a title', { field: 'title' })
+  await db.transaction().execute(async (trx) => {
+    await lockForTitle(trx, taskId)
+    const run = await latestTitleRun(trx, taskId)
+    if (
+      run === undefined ||
+      run.status !== 'succeeded' ||
+      run.artifact_id === null ||
+      run.suggestion === null ||
+      run.suggestion.decision !== null
+    )
+      throw new ConflictError('There is no suggested title to decide', { reason: 'no_suggestion' })
+    const decided = decision === 'discard' ? 'discarded' : 'accepted'
+    await trx
+      .updateTable('artifacts')
+      .set({ data: JSON.stringify({ ...run.suggestion, decision: decided }) })
+      .where('id', '=', run.artifact_id)
+      .execute()
+    if (decision !== 'discard')
+      await trx
+        .updateTable('tasks')
+        .set({ title: decision.accept.trim(), updated_at: new Date() })
+        .where('id', '=', taskId)
+        .execute()
+    await publish(trx, { topic: 'task.updated', taskId })
   })
 }

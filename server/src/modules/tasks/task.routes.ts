@@ -6,9 +6,17 @@ import { Uuid } from '../../shared/schemas.js'
 import { CostService } from '../costs/cost.service.js'
 import { ProjectRepository } from '../projects/project.repository.js'
 import { RunRepository } from '../runs/run.repository.js'
-import { ACTIONS, performAction, redraft } from './task.actions.js'
+import {
+  ACTIONS,
+  decideTitle,
+  performAction,
+  redraft,
+  rephraseTitle,
+  stopTitle,
+} from './task.actions.js'
 import { TaskRepository } from './task.repository.js'
 import {
+  AcceptTitleBody,
   CreateTaskBody,
   PatchTaskBody,
   ProjectKeyParams,
@@ -82,6 +90,40 @@ export function registerTasks(instance: FastifyInstance): void {
     { schema: { params: TaskParams, body: RedraftBody } },
     async (request) => {
       await redraft(app.db, request.params.id, request.body.note, app.clock())
+      return service.get(request.params.id)
+    },
+  )
+
+  // The title actions: static paths, which win over `:action`. None moves the card.
+  app.post(
+    '/api/tasks/:id/actions/rephrase-title',
+    { schema: { params: TaskParams } },
+    async (request) => {
+      await rephraseTitle(app.db, request.params.id, app.clock())
+      return service.get(request.params.id)
+    },
+  )
+  app.post(
+    '/api/tasks/:id/actions/stop-title',
+    { schema: { params: TaskParams } },
+    async (request) => {
+      await stopTitle(app.db, request.params.id, app.clock())
+      return service.get(request.params.id)
+    },
+  )
+  app.post(
+    '/api/tasks/:id/actions/accept-title',
+    { schema: { params: TaskParams, body: AcceptTitleBody } },
+    async (request) => {
+      await decideTitle(app.db, request.params.id, { accept: request.body.title })
+      return service.get(request.params.id)
+    },
+  )
+  app.post(
+    '/api/tasks/:id/actions/discard-title',
+    { schema: { params: TaskParams } },
+    async (request) => {
+      await decideTitle(app.db, request.params.id, 'discard')
       return service.get(request.params.id)
     },
   )

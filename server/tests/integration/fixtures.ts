@@ -164,3 +164,45 @@ export async function seedRunningRun(
     .execute()
   return { ...seeded, phaseId, sessionId }
 }
+
+/** A title run of the task, in the status given, with the suggestion it stored if any. */
+export async function seedTitleRun(
+  db: Kysely<Database>,
+  taskId: string,
+  options: {
+    status?: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
+    suggestion?: { title: string; reason: string; decision?: string | null }
+    failure_reason?: string
+  } = {},
+): Promise<string> {
+  const { count } = await db
+    .selectFrom('runs')
+    .select((eb) => eb.fn.countAll<number>().as('count'))
+    .where('task_id', '=', taskId)
+    .where('kind', '=', 'title')
+    .executeTakeFirstOrThrow()
+  const status = options.status ?? 'queued'
+  const run = await db
+    .insertInto('runs')
+    .values({
+      task_id: taskId,
+      kind: 'title',
+      number: Number(count) + 1,
+      status,
+      queued_at: status === 'queued' ? new Date() : null,
+      failure_reason: options.failure_reason ?? null,
+    })
+    .returning('id')
+    .executeTakeFirstOrThrow()
+  if (options.suggestion !== undefined)
+    await db
+      .insertInto('artifacts')
+      .values({
+        run_id: run.id,
+        kind: 'title',
+        body_md: '',
+        data: JSON.stringify({ decision: null, ...options.suggestion }),
+      })
+      .execute()
+  return run.id
+}
