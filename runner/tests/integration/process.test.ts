@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { BoardApi } from '../../src/api.js'
 import { PHASES } from '../../src/phases/agents.js'
 import { runProcess, StartFailure, type ProcessInput } from '../../src/phases/process.js'
-import { prepareRunDir } from '../../src/phases/run-dir.js'
+import { CODE_MOVED_MARKER, prepareRunDir } from '../../src/phases/run-dir.js'
 import { EventSink } from '../../src/sink.js'
 
 // A pass-through: the real spawn, unless a test sets an override (reset after each test).
@@ -60,6 +60,7 @@ function setUp(body: string) {
     sink: new EventSink(api, join(runDir, 'events.ndjson'), () => 't'),
     claudeBin: standIn(body),
     boardUrl: 'http://127.0.0.1:1',
+    runnerCode: 'start-code',
     ...TIMING,
   }
   return { runDir, input, deps, pidFile: join(runDir, 'build-1.pid') }
@@ -107,6 +108,7 @@ describe('runProcess', () => {
         BOARD_AGENT: PHASES[input.phase].agent,
         BOARD_RUN_DIR: runDir,
         BOARD_WORKTREE: input.worktree,
+        BOARD_RUNNER_CODE: 'start-code',
       }
       for (const [key, value] of Object.entries(expected)) {
         expect(lines).toContain(`${key}=${value}`)
@@ -115,6 +117,54 @@ describe('runProcess', () => {
       for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key]
       Object.assign(process.env, saved)
     }
+  })
+
+  // R10: what the session is told on a resume after the runner restarted on its new code.
+  describe('the code-moved marker', () => {
+    const LINE = 'The runner restarted on its new code since your last turn; tool calls work again.'
+    const rows: {
+      name: string
+      resume: boolean
+      marker: boolean
+      prompt: string
+      expected: string
+    }[] = [
+      {
+        name: 'a resume with the marker',
+        resume: true,
+        marker: true,
+        prompt: 'INTERRUPTED',
+        expected: `${LINE}\n\nINTERRUPTED`,
+      },
+      {
+        name: 'a resume with the marker and a note',
+        resume: true,
+        marker: true,
+        prompt: 'NOTE\n\nINTERRUPTED',
+        expected: `${LINE}\n\nNOTE\n\nINTERRUPTED`,
+      },
+      {
+        name: 'a resume without the marker',
+        resume: true,
+        marker: false,
+        prompt: 'INTERRUPTED',
+        expected: 'INTERRUPTED',
+      },
+      {
+        name: 'a new session with the marker',
+        resume: false,
+        marker: true,
+        prompt: '<task/>',
+        expected: '<task/>',
+      },
+    ]
+    it.each(rows)('$name', async ({ resume, marker, prompt, expected }) => {
+      const { runDir, input, deps } = setUp('printf %s "$2" > "$BOARD_RUN_DIR/prompt.txt"')
+      if (marker) writeFileSync(join(runDir, CODE_MOVED_MARKER), '')
+      await runProcess({ ...input, resume, prompt }, deps)
+      expect(readFileSync(join(runDir, 'prompt.txt'), 'utf8')).toBe(expected)
+      expect(existsSync(join(runDir, CODE_MOVED_MARKER))).toBe(false)
+    })
   })
 
   it('keeps a pid file while the process runs, and removes it after', async () => {

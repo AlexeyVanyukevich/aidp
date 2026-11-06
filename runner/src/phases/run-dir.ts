@@ -82,6 +82,9 @@ export function writeBaseBranch(dir: string, branch: string): void {
 /** Written by the event hook when the board pauses the run; the guard refuses everything after. */
 export const PAUSED_MARKER = 'paused'
 
+/** Written when the runner's code moved under a phase; the next resume says so to the session. */
+export const CODE_MOVED_MARKER = 'code-moved'
+
 /** The runner's record of paths its own commands wrote; the gate does not count them. */
 const EXCLUDED = 'excluded-paths.json'
 /** What the gate found, worded for the next Build; the checkpoint carries only the marker. */

@@ -4,6 +4,7 @@ import { loadRunnerConfig, type RunnerConfig } from './config.js'
 import { carryOut, cleanUp, type Outcome, type Phases } from './delivery.js'
 import { draftSpec } from './drafting.js'
 import { realExec } from './exec.js'
+import { runnerCode } from './fingerprint.js'
 import { Git } from './git.js'
 import { continuePhase, endPhase, restartPhase, startPhase } from './phases/phase.js'
 import { EventSink } from './sink.js'
@@ -21,6 +22,8 @@ const PHASES: Phases = {
 export class Daemon {
   private readonly api: BoardApi
   private readonly git: Git
+  private readonly fingerprint: () => string
+  private readonly startCode: string
 
   constructor(
     private readonly config: RunnerConfig,
@@ -30,8 +33,11 @@ export class Daemon {
       phases: Phases
       runTests: typeof runTestCommand
       clock: () => Date
+      fingerprint: () => string
     }> = {},
   ) {
+    this.fingerprint = overrides.fingerprint ?? runnerCode
+    this.startCode = this.fingerprint()
     this.api = overrides.api ?? new BoardApi(config.boardUrl, config.runnerKey)
     this.git = overrides.git ?? new Git(realExec, config.ghBin)
   }
@@ -80,6 +86,8 @@ export class Daemon {
         phases: this.overrides.phases ?? PHASES,
         runTests: this.overrides.runTests ?? runTestCommand,
         config: this.config,
+        runnerCode: this.startCode,
+        currentCode: this.fingerprint,
         signal: controller.signal,
         ...(shutdown === undefined ? {} : { shutdown }),
         pauseRequested: () => pauseAsked,
