@@ -149,6 +149,13 @@ share one `Git`, which runs the steps that change a repository's remote refs or 
 (fetch, worktree add, prune and remove, branch delete) one at a time per repository, since two
 fetches of one base collide on its ref lock; steps in different repositories still run at once.
 
+A help lane carries helps beside both. Once the code has moved, the guard refuses every tool call,
+the result-saving one included, so a running help could not finish: the daemon stops each running
+help's process at once and reports it failed, "runner restarted", which closes its Help phase
+failed and interrupted. A help claimed after the move is given back with
+`POST /api/runner/helps/:id/release`, which queues it again for the new daemon's claim. Helps are
+never handed on through `handoff.json`, so they cannot lose or delay a handed-on start or resume.
+
 The runner checks out a detached worktree of `origin/<base_branch>` and runs one phase, `title`,
 with the agent `title-writer` on Sonnet at medium effort. Its tools are Read, Grep, Glob and the
 board's `get_task`, `suggest_title` and `log_step`: no edit, Bash, Agent or `request_approval`, so
@@ -364,6 +371,27 @@ with up to five options and a recommendation; the server numbers them `q1` … `
 lead line when the agent gave none. It is answered whole: every question needs an option, words,
 or both, or the answer is refused naming `answers[<i>]`. The resume message lists each question
 with its answer. The header counts a batch's questions, not the batch.
+
+**Helps.** While a request is current — open, or expired on a Blocked card — each of its
+questions, for all five kinds, offers **Suggest an answer** and **Explain simply**. A press
+records a row in `helps` (mode, status `queued`) and moves nothing else: the run, the asking
+phase and the card stay as they were, and `resume_message` is untouched. A press while a help of
+that mode is queued or running starts nothing more. The runner carries up to three helps beside
+the run it is carrying: `POST /api/runner/helps/claim` takes the oldest queued one, whether or not
+the run slot is busy, and each help process sends its own heartbeat. A help is its own Claude Code
+session, on Opus at high effort, in the asking run's worktree, with its own run directory and a
+token limited to the run (`run_tokens.help_id`) that reaches only the helper's tools: Read, Grep,
+Glob, `get_task`, `get_spec`, `get_question`, `get_phase_record` and `save_help_result`. The guard
+refuses everything else. `save_help_result` refuses an option the question does not offer, a
+suggestion with neither option nor words, and an explanation carrying an option, naming the field;
+a saved result moves the help to `succeeded` and the card shows it without a reload. A help that
+ends without a result, or whose process sends no heartbeat for 90 seconds (the sweeper), is
+`failed`, and the sweeper also closes its Help phase. Answering, Cancel and withdrawal mark the
+request's queued and running helps `stopped`; the next heartbeat ends the process, and a save from
+it is refused. Nothing a help produced reaches the asking agent except through the answer the
+owner sends. Each help is a phase named `help` on the asking run: its usage is priced into the
+task's cost, and it is never the run's current phase, a checkpoint's phase, or in a handoff's
+summaries. Approving a plan with words is refused, naming `text`.
 
 **The plan gate.** A plan not marked `confidence: high` stops at the end of the planner's process:
 the runner raises a `plan` approval with the plan as its context, inside the still-open Plan
@@ -933,13 +961,21 @@ it; the card announces its own changes of state, the board nothing the runner do
 writes link changes into its status region. Route changes
 focus the new page's `h1`; closing a card returns focus to its link.
 
-The Approvals tab, which a card waiting on a question opens on, holds the question, its options as
-a `fieldset` named by the question — the recommended one's name ends "(recommended)", an option's
-impact is its description — and a field for an answer in words. Answering, Resume and Cancel move
-focus to the card's state line before their controls go; an empty answer marks its field invalid
-and focuses it. A request's context is rendered Markdown, headings starting at `h4` (`h5` for a batch
-question's); a plan's checks read as a table. A migration's stays plain code. The header's count of waiting
-questions is text, not announced.
+The Approvals tab, which a card waiting on a question opens on, holds the question and one form: its
+options as the kit's `RadioGroup` named by the question — the recommended one's name ends
+"(recommended)", an option's impact is its description — a field for an answer in words, and one
+Send answer. Choosing sends nothing. Send answer sends the option, the words or both; with neither it
+marks the words field invalid and focuses it. Answering, Resume and Cancel move focus to the card's
+state line before their controls go. A request's context is rendered Markdown, headings starting at
+`h4` (`h5` for a batch question's); a plan's checks read as a table. A migration's stays plain code.
+The header's count of waiting questions is text, not announced.
+
+Each question carries the buttons Suggest an answer and Explain simply (busy while their help runs,
+still focusable), and under them a section "Suggested answer" (option label, words, reasoning, what
+the helper is unsure of, and **Use this answer**, which selects the option and fills the words and
+sends nothing) and "In plain words". A result that arrives, or a help that fails with its reason, is
+written into the card's status region as "Suggested answer ready for question 2 of 3", "Explanation
+ready for the open question" or the failure, whichever tab is showing.
 
 A batch is one form: per question a `section` under an `h4`, "Question <i> of <n>", holding the
 kit's `RadioGroup` named by the question when it has options, and a field "Your answer to
@@ -963,4 +999,4 @@ Spec draft (which says so), the spec is only read. An empty description or note 
 invalid and focuses it. The card announces a draft ready to review with its
 version, read afresh, and a draft that did not finish with its reason, which also stands under
 its state line. `tests/ui/` scans every state it reaches with axe-core and drives the board, the
-card, an answer and a batch by keyboard alone.
+card, an answer, a help and a batch by keyboard alone.
