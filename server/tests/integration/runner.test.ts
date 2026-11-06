@@ -804,6 +804,14 @@ describe('the heartbeat’s answer', () => {
   })
 })
 
+const claimHelp = () =>
+  app.inject({
+    method: 'POST',
+    url: '/api/runner/helps/claim',
+    headers: auth,
+    payload: { runner_id: 'r1', wait_ms: 0 },
+  })
+
 describe('events that pause, block and resume', () => {
   const S1 = '00000000-0000-4000-8000-0000000000c1'
   const S2 = '00000000-0000-4000-8000-0000000000c2'
@@ -870,6 +878,66 @@ describe('events that pause, block and resume', () => {
       event(runId, 'phase_end', { status: 'succeeded', interrupted: true }, { phase_id: phaseId }),
     ])
     expect((await phase(phaseId)).interrupted).toBe(true)
+  })
+
+  it('keeps a Help phase and a help token’s checkpoint and block off the run', async () => {
+    const { runId, taskId, token, phaseId } = await running()
+    const approvalId = crypto.randomUUID()
+    await db()
+      .transaction()
+      .execute((trx) =>
+        openApproval(
+          trx,
+          {
+            id: approvalId,
+            runId,
+            taskId,
+            phaseId,
+            kind: 'question',
+            question: 'Which?',
+            options: [{ id: 'a', label: 'A' }],
+          },
+          now,
+          { recordEvent: true },
+        ),
+      )
+    const asked = await app.inject({
+      method: 'POST',
+      url: `/api/approvals/${approvalId}/helps`,
+      payload: { mode: 'suggest' },
+    })
+    const helpId = asked.json().id as string
+    await claimHelp()
+    const helpToken = (
+      await app.inject({
+        method: 'POST',
+        url: `/api/runner/helps/${helpId}/tokens`,
+        headers: auth,
+      })
+    ).json().token as string
+
+    const helpPhase = crypto.randomUUID()
+    await send(token, [
+      event(
+        runId,
+        'phase_start',
+        { name: 'help', attempt: 1, session_id: S2 },
+        { phase_id: helpPhase, agent: 'helper', model: 'opus' },
+      ),
+    ])
+    expect(await phase(helpPhase)).toMatchObject({ name: 'help', status: 'running' })
+    expect((await runRow(runId)).current_phase).toBe('build')
+
+    const before = await runRow(runId)
+    await send(helpToken, [
+      event(runId, 'checkpoint', CHECKPOINT(helpPhase, S2)),
+      event(runId, 'error', { blocks: true, cause: 'step_failed', stage: 'help' }),
+    ])
+    const after = await runRow(runId)
+    expect(after.checkpoint).toEqual(before.checkpoint)
+    expect(after.status).toBe(before.status)
+    expect(after.block).toBeNull()
+    expect(await state(taskId)).toBe('needs_approval')
   })
 
   it('opens the plan gate’s approval once, however often the event arrives', async () => {
