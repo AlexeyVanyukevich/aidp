@@ -125,6 +125,12 @@ export class Sweeper {
       .where('status', '=', 'running')
       .execute()
     await publish(trx, { topic: 'run.queued', runId })
+    const run = await trx
+      .selectFrom('runs')
+      .select('task_id')
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow()
+    await publish(trx, { topic: 'task.updated', taskId: run.task_id })
   }
 
   private async expire(approvalId: string, now: Date): Promise<void> {
