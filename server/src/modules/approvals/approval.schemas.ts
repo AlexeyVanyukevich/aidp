@@ -34,6 +34,14 @@ const BatchAnswers = Type.Object(
 /** The service checks the shape against the approval's kind. */
 export const AnswerBody = Type.Union([SingleAnswer, BatchAnswers])
 
+export const HelpBody = Type.Object(
+  {
+    question_index: Type.Optional(Type.Integer({ minimum: 0, maximum: LIMITS.questions })),
+    mode: Type.Union([Type.Literal('suggest'), Type.Literal('explain')]),
+  },
+  { additionalProperties: false },
+)
+
 export const ApprovalsQuery = Type.Object(
   { status: Type.Literal('open') },
   { additionalProperties: false },

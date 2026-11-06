@@ -2,6 +2,7 @@ import type { Kysely, Transaction } from 'kysely'
 import type { Database } from '../../db/schema.js'
 import { publish } from '../../shared/bus.js'
 import { ConflictError, NotFoundError, ValidationError } from '../../shared/errors.js'
+import { stopHelps } from '../approvals/help.service.js'
 import { queueDeliveryRun, queueSpecRun } from '../specs/spec.service.js'
 import { planToKeepFor } from './plan-history.queries.js'
 import { moveFacts, moveTask } from './task.moves.js'
@@ -32,6 +33,8 @@ async function cancel(trx: Transaction<Database>, taskId: string, now: Date): Pr
   if (run?.kind === 'spec') await moveTask(trx, taskId, 'drop_draft', await moveFacts(trx, taskId))
   else await moveTask(trx, taskId, 'cancel')
   if (run === undefined) return
+  await stopHelps(trx, { runId: run.id }, now)
+  await publish(trx, { topic: 'help.updated', taskId })
   const reason = 'cancelled by the owner'
   // A start still queued never began: it ends here. A running run is stopped by its runner,
   // which learns of it in its next heartbeat and reports the run's end itself. A run that
