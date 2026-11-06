@@ -20,12 +20,12 @@ const ROWS: Row[] = [
   {
     name: 'AC4 claude missing',
     env: { CLAUDE_BIN: '/nonexistent/claude' },
-    expect: /^board-cli: .*CLAUDE_BIN.*\/nonexistent\/claude/,
+    expect: /^board-cli: CLAUDE_BIN=\/nonexistent\/claude: does not exist; /,
   },
   {
     name: 'AC5 gh not on PATH',
     env: { GH_BIN: 'no-such-gh-binary' },
-    expect: /^board-cli: .*GH_BIN.*no-such-gh-binary/,
+    expect: /^board-cli: GH_BIN=no-such-gh-binary: not found on the runner's PATH; /,
   },
   {
     name: 'AC6 handoff kept',
