@@ -1,7 +1,7 @@
-import { chmodSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, describe, expect, it } from 'vitest'
 import { ConfigurationError } from '../../src/config.js'
 import { checkExecutable } from '../../src/executable.js'
 
@@ -94,6 +94,7 @@ const ROWS: Row[] = [
 
 const original = process.cwd()
 afterEach(() => process.chdir(original))
+afterAll(() => rmSync(root, { recursive: true, force: true }))
 
 describe('checkExecutable', () => {
   it.each(ROWS)('$name', ({ value, path, cwd, refused, reason }) => {
