@@ -111,8 +111,7 @@ describe('checkExecutable', () => {
     expect(error).toBeInstanceOf(ConfigurationError)
     const message = (error as ConfigurationError).message
     expect(message).not.toContain('\n')
-    expect(message).toContain('CLAUDE_BIN')
-    expect(message).toContain(value)
+    expect(message).toContain(`CLAUDE_BIN=${value}: `)
     expect(message).toContain('absolute path')
     expect(message).toContain('PATH')
     expect(message).toContain(reason ?? '')

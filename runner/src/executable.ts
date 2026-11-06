@@ -4,7 +4,7 @@ import { ConfigurationError } from './config.js'
 
 function refuse(name: string, value: string, reason: string): never {
   throw new ConfigurationError(
-    `${name} ${value}: ${reason}; use an absolute path to an executable, or a bare name found on the runner's PATH`,
+    `${name}=${value}: ${reason}; use an absolute path to an executable, or a bare name found on the runner's PATH`,
   )
 }
 
