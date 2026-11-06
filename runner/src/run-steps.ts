@@ -2,7 +2,10 @@ import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { BoardApi } from './api.js'
-import type { Checkpoint, PhaseName, Stage, Work } from './contract.js'
+import type { Checkpoint, PhaseName as AnyPhaseName, Stage, Work } from './contract.js'
+
+/** The phases a run itself carries: a help runs beside it. */
+type PhaseName = Exclude<AnyPhaseName, 'help'>
 import type { RunnerConfig } from './config.js'
 import { GitError, type Git } from './git.js'
 import { prepareLinked, removeLinked, restoreLinked } from './linked.js'

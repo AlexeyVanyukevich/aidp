@@ -24,6 +24,17 @@ describe('the board client', () => {
     },
     { name: 'a heartbeat', call: (api: BoardApi) => api.heartbeat('r1', []), limitMs: 30_000 },
     { name: 'a token', call: (api: BoardApi) => api.issueToken('run'), limitMs: 30_000 },
+    {
+      name: 'a help claim waiting 1 s',
+      call: (api: BoardApi) => api.claimHelp('r1', 1_000),
+      limitMs: 11_000,
+    },
+    {
+      name: 'a help heartbeat',
+      call: (api: BoardApi) => api.helpHeartbeat('r1', ['h']),
+      limitMs: 30_000,
+    },
+    { name: 'a help token', call: (api: BoardApi) => api.issueHelpToken('h'), limitMs: 30_000 },
   ])(
     'gives up on $name after $limitMs ms, as a failure worth retrying',
     async ({ call, limitMs }) => {

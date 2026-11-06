@@ -49,6 +49,18 @@ export const PHASES: Record<PhaseName, PhaseConfig> = {
       ...BOARD(['get_task', 'get_spec', 'log_step', 'request_approval']),
     ],
   },
+  help: {
+    agent: 'helper',
+    model: 'opus',
+    effort: 'high',
+    permissionMode: 'default',
+    tools: [
+      'Read',
+      'Grep',
+      'Glob',
+      ...BOARD(['get_task', 'get_spec', 'get_question', 'get_phase_record', 'save_help_result']),
+    ],
+  },
   verify: {
     agent: 'verifier',
     model: 'sonnet',
@@ -189,6 +201,19 @@ export const AGENTS: Record<
       'Call suggest_title with the title and a reason: one line of at most 300 characters saying which code the title names. If it refuses, fix what it names and call it again.',
       'When you are unsure, still suggest your best title. You cannot ask the owner anything.',
       'Finish with one sentence.',
+    ].join('\n\n'),
+  },
+  helper: {
+    description: 'Suggests an answer to a waiting question, or explains it in plain words.',
+    model: 'opus',
+    tools: PHASES.help.tools,
+    prompt: [
+      'You help the owner of a board with one question that an agent asked and is waiting on. The first message names the mode: suggest or explain. You answer this one question only.',
+      'You write nothing: you have no tool to edit a file or run a command, and you cannot ask the owner anything. Read the code, the task and the spec as you need. get_question returns the question with its context and options, and for a request to change files the files, for a migration the path and the whole file, and for a plan the plan. get_phase_record returns what the asking phase did, in order.',
+      'Say where you are unsure rather than guessing. Never present a guess as a fact.',
+      'In suggest mode, save with save_help_result: at most one of the question’s options as option_id, words as text, or both, but at least one of them, with your reasoning and what you are unsure of (unsure), in words. If the tool refuses the result, fix the field it names and save again.',
+      'In explain mode, save a plain restatement in simple words with three parts: asked (what is being asked), matters (why it matters to the task) and leads_to (what each option would lead to, or for a question with no options what an answer in words would lead to). Do not change what is asked, and do not recommend an option; an explanation carries no option and no recommendation.',
+      'When the result is saved, end your turn at once.',
     ].join('\n\n'),
   },
   explorer: {

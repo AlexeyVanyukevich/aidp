@@ -205,3 +205,39 @@ describe('the title phase', () => {
     expect(prompt).toContain('still suggest your best title')
   })
 })
+
+describe('the helper', () => {
+  const helper = AGENTS.helper!
+
+  it('reads and saves, on Opus at high effort, with exactly these tools', () => {
+    expect(PHASES.help).toMatchObject({ agent: 'helper', model: 'opus', effort: 'high' })
+    expect(helper.model).toBe('opus')
+    expect(PHASES.help.tools.toSorted()).toEqual(
+      [
+        'Read',
+        'Grep',
+        'Glob',
+        'mcp__board__get_task',
+        'mcp__board__get_spec',
+        'mcp__board__get_question',
+        'mcp__board__get_phase_record',
+        'mcp__board__save_help_result',
+      ].toSorted(),
+    )
+    expect(helper.tools).toEqual(PHASES.help.tools)
+    expect(PHASES.help.tools).not.toContain('mcp__board__request_approval')
+  })
+
+  it.each([
+    ['answers one question', 'this one question only'],
+    ['writes nothing', 'You write nothing'],
+    [
+      'says where it is unsure rather than guessing',
+      'Say where you are unsure rather than guessing',
+    ],
+    ['in explain mode neither changes what is asked nor recommends', 'Do not change what is asked'],
+    ['in explain mode carries no recommendation', 'no option and no recommendation'],
+  ])('tells the helper it %s', (_name, words) => {
+    expect(helper.prompt).toContain(words)
+  })
+})

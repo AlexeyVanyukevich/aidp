@@ -109,3 +109,26 @@ describe('the linked checkouts', () => {
     expect(addDirsOf(runDir)).toEqual(['/p/A', '/p/B'])
   })
 })
+
+describe('buildClaudeArgs for a helper', () => {
+  it('names the helper, Opus, high effort and exactly the helper’s tools', async () => {
+    const { PHASES } = await import('../../src/phases/agents.js')
+    const args = buildClaudeArgs({
+      ...BASE,
+      role: PHASES.help.agent,
+      model: PHASES.help.model,
+      effort: PHASES.help.effort,
+      permissionMode: PHASES.help.permissionMode,
+      tools: PHASES.help.tools,
+      budgetUsd: 3,
+    })
+    const after = (flag: string) => args[args.indexOf(flag) + 1]
+    expect(after('--agent')).toBe('helper')
+    expect(after('--model')).toBe('opus')
+    expect(after('--effort')).toBe('high')
+    expect(after('--allowedTools')).toBe(PHASES.help.tools.join(','))
+    expect(after('--max-budget-usd')).toBe('3')
+    expect(args).toContain('--session-id')
+    expect(args).not.toContain('--resume')
+  })
+})

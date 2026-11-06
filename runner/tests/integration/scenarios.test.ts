@@ -370,6 +370,8 @@ function fleet(script: object, env: Record<string, string> = {}) {
   return {
     home: join(dir, 'home'),
     daemon: () => new Daemon(loadRunnerConfig(vars)),
+    daemonWith: (env: Record<string, string>, overrides: ConstructorParameters<typeof Daemon>[1]) =>
+      new Daemon(loadRunnerConfig({ ...vars, ...env }), overrides),
     child: () => {
       // Its own process group: board-cli runs the daemon under tsx, as a child process, and a
       // runner dies only when the whole group does.
@@ -1036,6 +1038,145 @@ describe('the setup command', () => {
     expect(f.calls()).toHaveLength(0)
   })
 })
+/** A task whose builder asked and is paused, with its worktree on disk. */
+async function pausedOnQuestion(f: ReturnType<typeof fleet>, title = 'Back off retries') {
+  const taskId = await approvedTask(title)
+  expect(await f.daemon().runOnce()).toBe('released')
+  const waiting = await task(taskId)
+  return { taskId, approvalId: waiting.approval!.id }
+}
+
+interface HelpJson {
+  id: string
+  mode: string
+  status: string
+  reason: string | null
+  result: Record<string, unknown> | null
+}
+const helpsOf = (taskId: string) => api<HelpJson[]>('GET', `/api/tasks/${taskId}/helps`)
+const askHelp = (approvalId: string, body: object) =>
+  api<HelpJson>('POST', `/api/approvals/${approvalId}/helps`, body)
+
+const SUGGESTION = {
+  tool: 'save_help_result',
+  args: { option_id: 'b', reasoning: 'It matches the email worker.', unsure: 'The load.' },
+}
+
+describe('a help beside a paused run', () => {
+  it('saves its result, leaves the asking run and phase paused, and sends no checkpoint', async () => {
+    const f = fleet({
+      planner: [[{ tool: 'save_plan', args: PLAN }]],
+      builder: [[ASK], builds('export const delays = [1, 2, 4, 8]\n')],
+      helper: [[SUGGESTION]],
+    })
+    const { taskId, approvalId } = await pausedOnQuestion(f)
+    const checkpointsBefore = (await eventsOf('checkpoint')).length
+
+    const queued = await askHelp(approvalId, { mode: 'suggest' })
+    const stop = new AbortController()
+    const loop = f.daemon().helpLoop(stop.signal)
+    await until(async () => (await helpsOf(taskId))[0]?.status === 'succeeded', 'the help')
+    // The process ends itself once it has saved; the Help phase closes with it.
+    await until(
+      async () => (await runs(taskId))[0]?.phases.at(-1)?.status === 'succeeded',
+      'the Help phase to close',
+    )
+    stop.abort()
+    await loop
+
+    const [shown] = await helpsOf(taskId)
+    expect(shown).toMatchObject({ id: queued.id, result: { mode: 'suggest', option_id: 'b' } })
+    const [run] = await runs(taskId)
+    expect(run!.status).toBe('paused')
+    expect(run!.phases.map((p) => `${p.name}:${p.status}`)).toEqual([
+      'plan:succeeded',
+      'build:paused',
+      'help:succeeded',
+    ])
+    expect(run!.current_phase).toBe('build')
+    expect(await task(taskId)).toMatchObject({ state: 'needs_approval' })
+    expect((await eventsOf('checkpoint')).length).toBe(checkpointsBefore)
+    expect((await eventsOf('error')).filter((e) => e.payload.blocks === true)).toEqual([])
+  })
+
+  it('fails a help whose process ends without a result, and lets it be asked again', async () => {
+    const f = fleet({
+      planner: [[{ tool: 'save_plan', args: PLAN }]],
+      builder: [[ASK], builds('export const delays = [1, 2, 4, 8]\n')],
+      helper: [[]],
+    })
+    const { taskId, approvalId } = await pausedOnQuestion(f)
+    await askHelp(approvalId, { mode: 'explain' })
+    const stop = new AbortController()
+    const loop = f.daemon().helpLoop(stop.signal)
+    await until(async () => (await helpsOf(taskId))[0]?.status === 'failed', 'the failure')
+    stop.abort()
+    await loop
+    expect((await helpsOf(taskId))[0]).toMatchObject({
+      status: 'failed',
+      reason: 'the helper ended without saving a result',
+    })
+    expect((await runs(taskId))[0]!.status).toBe('paused')
+    const again = await askHelp(approvalId, { mode: 'explain' })
+    expect(again.status).toBe('queued')
+  })
+
+  it('carries three helps beside a running Build, and the fourth waits', async () => {
+    const BATCH = {
+      tool: 'request_approval',
+      args: {
+        kind: 'questions',
+        questions: [
+          { question: 'How many retries?', options: [{ id: 'a', label: 'Three' }] },
+          { question: 'How long a delay?', options: [{ id: 'a', label: 'One second' }] },
+        ],
+      },
+    }
+    const f = fleet({
+      byTitle: {
+        Alpha: {
+          planner: [[{ tool: 'save_plan', args: PLAN }]],
+          builder: [[BATCH], builds('export const delays = [1]\n')],
+          helper: [[{ sleep: 2500 }]],
+        },
+        Beta: {
+          planner: [[{ tool: 'save_plan', args: PLAN }]],
+          builder: [[{ sleep: 7000 }, ...builds('export const delays = [2]\n')]],
+          helper: [[{ sleep: 2500 }]],
+        },
+      },
+    })
+    const { taskId, approvalId } = await pausedOnQuestion(f, 'Alpha')
+    const other = await approvedTask('Beta')
+    const daemon = f.daemon()
+    const build = daemon.runOnce()
+    await until(
+      async () => (await runs(other))[0]?.phases.some((p) => p.name === 'build') === true,
+      'the busy Build',
+    )
+
+    for (const question_index of [0, 1])
+      for (const mode of ['suggest', 'explain']) await askHelp(approvalId, { mode, question_index })
+    const stop = new AbortController()
+    const loop = daemon.helpLoop(stop.signal)
+    await until(
+      async () => (await helpsOf(taskId)).filter((h) => h.status === 'running').length === 3,
+      'three running helps',
+    )
+    const during = await helpsOf(taskId)
+    expect(during.filter((h) => h.status === 'queued')).toHaveLength(1)
+    expect((await runs(other))[0]!.status).toBe('running')
+
+    await until(
+      async () => (await helpsOf(taskId)).every((h) => h.status === 'failed'),
+      'every help to end',
+      30_000,
+    )
+    stop.abort()
+    await loop
+    await build
+  }, 60_000)
+})
 
 // ── A run whose worktree was lost ───────────────────────────────────────────────────────────
 
@@ -1339,4 +1480,80 @@ describe('a title run end to end', () => {
     expect((await titleTask(taskId)).state).toBe('backlog')
     f.stopAll()
   })
+})
+
+describe('helps across a restart on moved code', () => {
+  it('fails a running help, queues a claimed one again and carries a handed-on resume out', async () => {
+    const f = fleet({
+      byTitle: {
+        Alpha: {
+          planner: [[{ tool: 'save_plan', args: PLAN }]],
+          builder: [[ASK], builds('export const delays = [1]\n')],
+          helper: [[{ sleep: 20_000 }], [SUGGESTION]],
+        },
+        Beta: {
+          planner: [[{ tool: 'save_plan', args: PLAN }]],
+          builder: [[ASK], builds('export const delays = [2]\n')],
+          verifier: [[report('pass')]],
+        },
+      },
+    })
+    const { taskId: alpha, approvalId: alphaApproval } = await pausedOnQuestion(f, 'Alpha')
+    const beta = await pausedOnQuestion(f, 'Beta')
+
+    let code = 'v1'
+    const statuses: number[] = []
+    const old = f.daemonWith(
+      { CLAIM_WAIT_MS: '4000' },
+      {
+        fingerprint: () => code,
+        exit: (status) => void statuses.push(status),
+        settle: async () => undefined,
+      },
+    )
+    const first = await askHelp(alphaApproval, { mode: 'explain' })
+    const stop = new AbortController()
+    const loop = old.loop(stop.signal)
+    await until(
+      async () => f.calls().some((c) => c.agent === 'helper'),
+      'the helper process to start',
+    )
+
+    // The code moves; then a second help and the owner's answer to Beta arrive together.
+    code = 'v2'
+    const second = await askHelp(alphaApproval, { mode: 'suggest' })
+    await answer(beta.approvalId, { option_id: 'b' })
+    await loop
+
+    expect(statuses).toEqual([75])
+    const handoff = JSON.parse(readFileSync(join(f.home, 'handoff.json'), 'utf8')) as {
+      work: { kind: string }
+    }
+    expect(handoff.work.kind).toBe('resume')
+    const after = await helpsOf(alpha)
+    expect(after.find((h) => h.id === first.id)).toMatchObject({
+      status: 'failed',
+      reason: 'runner restarted',
+    })
+    expect(after.find((h) => h.id === second.id)?.status).toBe('queued')
+    const [alphaRun] = (await runs(alpha)).filter((r) => r.id !== undefined)
+    expect(alphaRun!.phases.map((p) => `${p.name}:${p.status}`)).toEqual([
+      'plan:succeeded',
+      'build:paused',
+      'help:failed',
+    ])
+
+    // The new daemon carries the resume out unchanged, then claims the queued help as usual.
+    const fresh = f.daemonWith({}, {})
+    await fresh.takeOverClaim()
+    expect(await task(beta.taskId)).toMatchObject({ state: 'review' })
+    const stopFresh = new AbortController()
+    const helping = fresh.helpLoop(stopFresh.signal)
+    await until(
+      async () => (await helpsOf(alpha)).find((h) => h.id === second.id)?.status === 'succeeded',
+      'the queued help, claimed again',
+    )
+    stopFresh.abort()
+    await helping
+  }, 60_000)
 })

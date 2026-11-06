@@ -2,10 +2,28 @@
  * The runner's copy of the server's wire shapes. The scenario tests run the runner against the
  * real server; they are what catches the two drifting apart. Change both in one commit.
  */
-export type PhaseName = 'spec' | 'plan' | 'build' | 'verify' | 'title'
+export type PhaseName = 'spec' | 'plan' | 'build' | 'verify' | 'title' | 'help'
 
 /** A run's kind: a title run suggests a title for the task and makes no move. */
 export type RunKind = 'spec' | 'delivery' | 'title'
+
+/** One helper session beside a paused run, as the board's help claim hands it over. */
+export interface HelpWork {
+  id: string
+  mode: 'suggest' | 'explain'
+  approval_id: string
+  question_index: number | null
+  /** Chosen by the board, so it can close the phase of a help whose process is lost. */
+  phase_id: string
+  /** Counts the run's helps, the first being 1. */
+  attempt: number
+  run: {
+    id: string
+    number: number
+    worktree_path: string | null
+    task: { id: string; key: string; title: string; budget_usd: number | null }
+  }
+}
 export type EventType =
   | 'phase_start'
   | 'phase_end'

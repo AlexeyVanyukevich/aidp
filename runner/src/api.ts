@@ -1,4 +1,4 @@
-import type { RunKind, RunnerEvent, RunView, Work } from './contract.js'
+import type { HelpWork, RunKind, RunnerEvent, RunView, Work } from './contract.js'
 
 export class ApiError extends Error {
   constructor(
@@ -87,6 +87,48 @@ export class BoardApi {
     return this.call('POST', '/api/runner/heartbeat', this.runnerKey, {
       runner_id: runnerId,
       run_ids: runIds,
+    })
+  }
+
+  async claimHelp(runnerId: string, waitMs: number): Promise<HelpWork | null> {
+    return (
+      await this.call<{ help: HelpWork | null }>(
+        'POST',
+        '/api/runner/helps/claim',
+        this.runnerKey,
+        { runner_id: runnerId, wait_ms: waitMs },
+        waitMs + CLAIM_MARGIN_MS,
+      )
+    ).help
+  }
+
+  /** A help's own heartbeat; the board names the helps to end. */
+  helpHeartbeat(runnerId: string, helpIds: string[]): Promise<{ stop: string[] }> {
+    return this.call('POST', '/api/runner/helps/heartbeat', this.runnerKey, {
+      runner_id: runnerId,
+      help_ids: helpIds,
+    })
+  }
+
+  async issueHelpToken(helpId: string): Promise<string> {
+    return (
+      await this.call<{ token: string }>(
+        'POST',
+        `/api/runner/helps/${helpId}/tokens`,
+        this.runnerKey,
+      )
+    ).token
+  }
+
+  /** The process ended without a result. The board ignores it for a help that saved or stopped. */
+  async failHelp(helpId: string, reason: string): Promise<void> {
+    await this.call<void>('POST', `/api/runner/helps/${helpId}/fail`, this.runnerKey, { reason })
+  }
+
+  /** Gives a claimed help back: it is queued again, for any daemon to claim. */
+  async releaseHelp(helpId: string, runnerId: string): Promise<void> {
+    await this.call<void>('POST', `/api/runner/helps/${helpId}/release`, this.runnerKey, {
+      runner_id: runnerId,
     })
   }
 
