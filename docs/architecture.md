@@ -204,9 +204,9 @@ the worktree and runs the command again.
 
 **The environment of commands and sessions.** The setup command, the test command and the agents'
 `claude` sessions do not receive `RUNNER_KEY`, `DATABASE_URL`, `PORT` or any variable starting
-with `BOARD_`. A session keeps only the eight run variables the runner sets for it: `BOARD_URL`,
+with `BOARD_`. A session keeps only the nine run variables the runner sets for it: `BOARD_URL`,
 `BOARD_RUN_TOKEN`, `BOARD_RUN_ID`, `BOARD_PHASE_ID`, `BOARD_PHASE`, `BOARD_AGENT`,
-`BOARD_RUN_DIR` and `BOARD_WORKTREE`. The setup command and the test command each get their own
+`BOARD_RUN_DIR`, `BOARD_WORKTREE` and `BOARD_RUNNER_CODE` (the runner's code fingerprint, below). The setup command and the test command each get their own
 temporary `BOARD_HOME`, a fresh `aidp-command-*` directory under the OS temporary directory,
 deleted before `runTestCommand` resolves (after exit, non-zero exit and timeout alike; a failed
 removal is ignored). When that directory cannot be made, the command does not run: the result has
@@ -771,6 +771,63 @@ line on stderr, and exits 0. The reason tells the agent to end its turn because
 `request_approval` is refused as well. The `bin/board-cli` wrapper maps any non-zero exit of
 `guard` to exit 2, for a failure before the guard's own code runs; other commands keep `exec` and
 their exit status.
+
+**The runner's code fingerprint.** Hooks run the main checkout's current code, while the daemon
+keeps the code it started with, so a pull that changes the hooks' contract would break phases
+until a restart. The fingerprint is a SHA-256 digest over the `.ts` files under `runner/src`
+(recursively) and `runner/bin/board-cli`, in sorted relative-path order, each as its path and its
+content. It reads the files as they are on disk, so uncommitted edits in the main checkout count,
+and it makes no `git` call. Nothing else counts: a non-`.ts` file under `runner/src`, `runner/tests`,
+`node_modules`, `.env`, `server/`, `web/`, and any other checkout or task worktree. The daemon
+computes it once at start and gives it to every phase process as `BOARD_RUNNER_CODE`.
+
+- **The guard** computes the fingerprint at its own location before it decides a call. When
+  `BOARD_RUNNER_CODE` is unset, empty or different, it denies the call: the runner's code changed
+  since the runner started the phase, so no tool call is allowed, and the agent should end its turn
+  and say so. A fingerprint that cannot be computed is a guard failure, refused as above. The
+  event hook is unchanged: it records events, writes the pause marker and gives the files
+  feedback whatever the value.
+- **The `runner code check` block.** Before spawning a phase process, and again when one ends of
+  its own accord (before its result is acted on), the daemon computes the fingerprint. When it
+  differs from the start value, no process starts (before) or the result is dropped (after), a
+  `code-moved` marker is written in the run directory, and the run is blocked as `step_failed`
+  with the command `runner code check` and an output saying the code changed, that the runner
+  restarts itself once it has no run in hand, and that Resume then continues the run. The
+  checkpoint keeps the phase's session. A process that was paused, cancelled or stopped by a
+  shutdown is handled as before. Resume on the restarted daemon continues the same session and
+  starts its message with one line: the runner restarted on its new code since the agent's last
+  turn, and tool calls work again. That line comes before the base-moved note and the message, is
+  added outside the checkpoint's message, and is sent only when the marker exists; the marker is
+  deleted once the process is spawned, a new session included.
+- **The idle self-restart.** Before each claim the daemon reads the fingerprint. A read equal to
+  its start value ends the check. Only a differing read is followed by a wait of 2 s and a second
+  read; the code has moved when both agree. A daemon whose code moved claims nothing, logs a
+  `board-cli: ` line, and exits with status 75. A daemon whose code has not moved never exits for
+  this reason.
+- **The handoff.** Right after a claim returns a start or a resume, the daemon makes the same
+  check. When the code has moved it writes `<BOARD_HOME>/handoff.json` (one write to a temporary
+  name, then a rename) holding the claimed work and the time the claim returned, logs a
+  `board-cli: ` line, and exits 75 without carrying the work out. A claimed cleanup is never
+  handed on: the old daemon carries it out itself, and the check before its next claim makes it
+  exit. A starting daemon that finds the file deletes it first, then, if it holds a start or a
+  resume claimed less than 60 s ago, sends one heartbeat for the run. A heartbeat that does not
+  list the run in `cancel` is followed by carrying the work out as if just claimed; one that does
+  discards it with a log line. A file that cannot be read or parsed, one holding other work, or
+  a claim 60 s old or older is discarded with a log line naming the reason; the sweeper then
+  blocks the run as `runner_lost` and Resume continues it. The daemon then claims as usual.
+- **The wrapper's loop.** `bin/board-cli daemon` runs the daemon in a loop in the foreground.
+  Exit 75 starts it again at once; exit 0 ends the wrapper with 0. Any other exit ends the wrapper
+  with that status if the wrapper has not yet restarted the daemon. Once it has restarted it
+  (after a 75), the wrapper logs `board-cli: the runner's code did not start (exit N); retrying in
+10 s` and retries every later failure, not only the first, since a pull caught half done fails
+  until it finishes. SIGINT or SIGTERM sent to the process group ends the loop, during the daemon
+  or during the wait. The script's whole body is one function and its last line calls it and
+  exits, so a pull that rewrites the file while the loop runs leaves the shell nothing to read.
+  `guard` keeps its mapping of any non-zero exit to 2.
+
+Editing a file under `runner/src` or `bin/board-cli` in the main checkout, or switching its
+branch, blocks any phase in flight at its next check and restarts an idle daemon. The first
+daemon after this change is started by hand: one from before it never sets `BOARD_RUNNER_CODE`.
 
 A present but malformed `allowed-files.json`, `approved-migrations.json` or `excluded-paths.json`
 also fails a delivery run. In the `tests` stage the files gate reads all three before the test
