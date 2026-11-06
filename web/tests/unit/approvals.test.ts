@@ -13,9 +13,15 @@ import {
   migrationPath,
   optionName,
   unanswered,
+  applySuggestion,
+  failureText,
+  helpAnnouncement,
+  newlyEnded,
+  questionHelp,
+  singleAnswer,
 } from '../../src/card/approvals'
 import { keysFor } from '../../src/stream'
-import type { ApprovalView } from '../../src/types'
+import type { ApprovalView, HelpView } from '../../src/types'
 
 const base: ApprovalView = {
   id: 'ap',
@@ -202,5 +208,154 @@ describe('a migration request', () => {
   })
   it('names the code block after the path', () => {
     expect(codeLabel('a/b.ts')).toBe('Contents of a/b.ts')
+  })
+})
+
+// Helps.
+const help = (change: Partial<HelpView>): HelpView => ({
+  id: 'h1',
+  approval_id: 'a1',
+  question_index: null,
+  mode: 'suggest',
+  status: 'succeeded',
+  result: { mode: 'suggest', option_id: 'b', text: 'Use four.', reasoning: 'r', unsure: 'u' },
+  reason: null,
+  created_at: '2026-10-20T10:00:00Z',
+  ...change,
+})
+
+describe('questionHelp', () => {
+  it.each<
+    [string, HelpView[], 'suggest' | 'explain', { busy: boolean; failure?: string; shown: boolean }]
+  >([
+    ['nothing asked', [], 'suggest', { busy: false, shown: false }],
+    ['a succeeded help shows its result', [help({})], 'suggest', { busy: false, shown: true }],
+    [
+      'a running help makes its button busy',
+      [
+        help({ id: 'h2', status: 'running', result: null, created_at: '2026-10-20T10:05:00Z' }),
+        help({}),
+      ],
+      'suggest',
+      { busy: true, shown: true },
+    ],
+    [
+      'a failed help gives its reason and keeps the older result',
+      [
+        help({
+          id: 'h2',
+          status: 'failed',
+          result: null,
+          reason: 'no budget',
+          created_at: '2026-10-20T10:05:00Z',
+        }),
+        help({}),
+      ],
+      'suggest',
+      { busy: false, failure: 'no budget', shown: true },
+    ],
+    ['another mode is its own', [help({})], 'explain', { busy: false, shown: false }],
+    [
+      'another question is its own',
+      [help({ question_index: 1 })],
+      'suggest',
+      { busy: false, shown: false },
+    ],
+  ])('%s', (_name, helps, mode, expected) => {
+    const state = questionHelp(helps, 'a1', null)[mode]
+    expect({ busy: state.busy, shown: state.shown !== undefined, failure: state.failure }).toEqual({
+      failure: undefined,
+      ...expected,
+    })
+  })
+})
+
+describe('help announcements', () => {
+  const batch = { ...base, kind: 'questions' as const, question_count: 3, questions: [] }
+  it.each<[string, HelpView, ApprovalView | undefined, string]>([
+    [
+      'a suggestion in a batch',
+      help({ question_index: 1 }),
+      batch,
+      'Suggested answer ready for question 2 of 3',
+    ],
+    [
+      'an explanation of a single request',
+      help({ mode: 'explain' }),
+      base,
+      'Explanation ready for the open question',
+    ],
+    [
+      'a failure',
+      help({ status: 'failed', reason: 'budget' }),
+      base,
+      'No suggestion for the open question: budget',
+    ],
+  ])('says %s', (_name, h, approval, text) => {
+    expect(helpAnnouncement(h, approval)).toBe(text)
+  })
+
+  it('words a failure on the question itself', () => {
+    expect(failureText('explain', 'x')).toBe('No explanation: x')
+  })
+
+  it('names a help once, when it ends after being seen in flight', () => {
+    const seen = new Map<string, string>()
+    expect(newlyEnded(seen, [help({ status: 'running', result: null })])).toEqual([])
+    expect(newlyEnded(seen, [help({})]).map((h) => h.id)).toEqual(['h1'])
+    expect(newlyEnded(seen, [help({})])).toEqual([])
+  })
+
+  it('does not announce a help that was already finished when the card opened', () => {
+    expect(newlyEnded(new Map(), [help({})])).toEqual([])
+  })
+})
+
+describe('applySuggestion', () => {
+  const result = {
+    mode: 'suggest' as const,
+    option_id: 'b',
+    text: 'Use four.',
+    reasoning: 'r',
+    unsure: 'u',
+  }
+  it.each([
+    [
+      'selects the option and replaces the words',
+      { option: 'a', text: 'old' },
+      result,
+      { option: 'b', text: 'Use four.' },
+    ],
+    [
+      'keeps the chosen option when the suggestion has none',
+      { option: 'a', text: 'old' },
+      { ...result, option_id: undefined },
+      { option: 'a', text: 'Use four.' },
+    ],
+    [
+      'keeps the words when the suggestion has none',
+      { text: 'old' },
+      { ...result, text: undefined },
+      { option: 'b', text: 'old' },
+    ],
+  ])('%s', (_name, current, suggested, expected) => {
+    const { option_id, text, ...rest } = suggested
+    const clean = {
+      ...rest,
+      ...(option_id === undefined ? {} : { option_id }),
+      ...(text === undefined ? {} : { text }),
+    }
+    expect(applySuggestion(current, clean)).toEqual(expected)
+  })
+})
+
+describe('singleAnswer', () => {
+  it.each([
+    ['an option', { option: 'a', text: '' }, { option_id: 'a' }],
+    ['words', { text: ' Use 4 ' }, { text: 'Use 4' }],
+    ['both', { option: 'a', text: 'and jitter' }, { option_id: 'a', text: 'and jitter' }],
+    ['neither', { text: '  ' }, null],
+  ])('sends %s', (_name, choice, expected) => {
+    expect(singleAnswer(choice)).toEqual(expected)
   })
 })

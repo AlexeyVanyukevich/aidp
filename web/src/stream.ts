@@ -6,6 +6,7 @@ export type BoardMessage =
   | { topic: 'run.event'; runId: string; taskId: string }
   | { topic: 'approval.requested'; taskId: string }
   | { topic: 'approval.answered'; taskId: string }
+  | { topic: 'help.updated'; taskId: string }
   | { topic: 'project.updated'; key: string }
   | { topic: 'resync' }
 
@@ -27,6 +28,13 @@ export function keysFor(message: BoardMessage): QueryKey[] {
   // The server's connection to the database came back; whatever it missed meanwhile is unknown.
   if (message.topic === 'resync') return [[]]
   if (message.topic === 'project.updated') return [['projects'], testCommandsKey(message.key)]
+  // A help's result arrives: the question shows it, and the Help phase is in runs and costs.
+  if (message.topic === 'help.updated')
+    return [
+      ['helps', message.taskId],
+      ['runs', message.taskId],
+      ['costs', message.taskId],
+    ]
   if (message.topic === 'approval.requested' || message.topic === 'approval.answered')
     return [
       ['approvals', message.taskId],
@@ -56,6 +64,7 @@ export function useBoardStream(client: QueryClient): void {
       'run.event',
       'approval.requested',
       'approval.answered',
+      'help.updated',
       'project.updated',
       'resync',
     ])

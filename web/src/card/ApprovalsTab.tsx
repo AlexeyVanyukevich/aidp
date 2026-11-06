@@ -1,10 +1,18 @@
-import { useId, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Empty, Field, Markdown, Textarea } from '@zellige/react'
+import { flushSync } from 'react-dom'
+import { Button, Empty, Field, Markdown, Radio, RadioGroup, Textarea } from '@zellige/react'
 import { api } from '../api'
-import { isConflict } from '../errors'
+import { invalidField, isConflict } from '../errors'
 import { Loaded } from '../Loaded'
-import type { ApprovalAnswer, ApprovalView, BatchAnswer, TaskView } from '../types'
+import type {
+  ApprovalAnswer,
+  ApprovalView,
+  BatchAnswer,
+  HelpMode,
+  HelpView,
+  TaskView,
+} from '../types'
 import {
   answerSummary,
   batchAnswerLines,
@@ -15,8 +23,114 @@ import {
   headingFor,
   migrationPath,
   optionName,
+  questionHelp,
+  singleAnswer,
+  applySuggestion,
+  type Choice,
 } from './approvals'
 import { BatchForm } from './BatchForm'
+import { HelpPanel } from './HelpPanel'
+
+const NOTHING = 'Write an answer, or choose one of the options.'
+const NO_WORDS_WITH_PLAN =
+  'Approving the plan carries no words. Clear them, or leave the plan unchosen to ask for changes.'
+
+/**
+ * A single request's one form: its options as a radio group named by the question, the words
+ * field, and one Send answer. Choosing sends nothing; a send with neither marks the words field
+ * and focuses it. Use this answer fills the form and sends nothing.
+ */
+function SingleForm({
+  approval,
+  helps,
+  sending,
+  refused,
+  onAsk,
+  onSend,
+}: {
+  approval: ApprovalView
+  helps: HelpView[]
+  sending: boolean
+  /** The board refused the words: the owner's last send, and why the field is invalid. */
+  refused: { message: string } | undefined
+  onAsk: (mode: HelpMode) => void
+  onSend: (body: ApprovalAnswer) => void
+}) {
+  const [choice, setChoice] = useState<Choice>({ text: '' })
+  const [problem, setProblem] = useState<string | undefined>()
+  const field = useRef<HTMLTextAreaElement>(null)
+  const questionId = useId()
+  const hasOptions = approval.options.length > 0
+
+  useEffect(() => {
+    if (refused === undefined) return
+    setProblem(refused.message)
+    field.current?.focus()
+  }, [refused])
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault()
+    const body = singleAnswer(choice)
+    if (body === null) {
+      flushSync(() => setProblem(hasOptions ? NOTHING : 'Write an answer.'))
+      field.current?.focus()
+      return
+    }
+    setProblem(undefined)
+    onSend(body)
+  }
+
+  return (
+    <form onSubmit={submit} className="answer" noValidate>
+      <HelpPanel
+        help={questionHelp(helps, approval.id, null)}
+        options={approval.options}
+        level={4}
+        onAsk={onAsk}
+        onUse={(result) => setChoice((now) => applySuggestion(now, result))}
+      />
+      {hasOptions ? (
+        <RadioGroup
+          label={approval.question}
+          value={choice.option ?? null}
+          onChange={(option) => setChoice((now) => ({ ...now, option }))}
+        >
+          {approval.options.map((option) => (
+            <Radio
+              key={option.id}
+              value={option.id}
+              {...(option.impact === undefined ? {} : { description: option.impact })}
+            >
+              {optionName(option, approval.recommendation)}
+            </Radio>
+          ))}
+        </RadioGroup>
+      ) : (
+        <p id={questionId} className="question">
+          {approval.question}
+        </p>
+      )}
+      <Field
+        label={fieldLabel(approval.kind)}
+        hint="Sent to the agent as you write it."
+        error={problem}
+      >
+        <Textarea
+          ref={field}
+          rows={4}
+          value={choice.text}
+          onChange={(event) => {
+            setChoice((now) => ({ ...now, text: event.target.value }))
+            if (problem !== undefined) setProblem(undefined)
+          }}
+        />
+      </Field>
+      <Button type="submit" busy={sending}>
+        Send answer
+      </Button>
+    </form>
+  )
+}
 
 /**
  * The card's questions (slice 2 spec, §11): the one it waits on, answered by an option or in
@@ -37,25 +151,25 @@ export function ApprovalsTab({
     queryKey: ['approvals', task.id],
     queryFn: () => api.approvals(task.id),
   })
-  const [text, setText] = useState('')
-  const [missing, setMissing] = useState(false)
+  const helps = useQuery({
+    queryKey: ['helps', task.id],
+    queryFn: () => api.helps(task.id),
+  })
   const [sending, setSending] = useState<string | undefined>()
-  const field = useRef<HTMLTextAreaElement>(null)
+  const [refused, setRefused] = useState<{ message: string } | undefined>()
   const headingId = useId()
-  const questionId = useId()
   const filesId = useId()
   const answeredId = useId()
-  const impactId = useId()
 
   const answer = useMutation({
     mutationFn: ({ id, body }: { id: string; body: ApprovalAnswer | BatchAnswer }) =>
       api.answer(id, body),
     onSuccess: () => {
-      setText('')
       onAnswered(`${task.key} answered. The run continues.`)
     },
     onError: (error) => {
-      if (isConflict(error))
+      if (invalidField(error) === 'text') setRefused({ message: NO_WORDS_WITH_PLAN })
+      else if (isConflict(error))
         onProblem('This question was answered or withdrawn meanwhile; its latest state is shown.')
       else onProblem('The answer was not sent. Try again.')
     },
@@ -73,13 +187,19 @@ export function ApprovalsTab({
     setSending(which)
     answer.mutate({ id: approval.id, body })
   }
-  const submit = (approval: ApprovalView) => (event: FormEvent) => {
-    event.preventDefault()
-    const empty = text.trim() === ''
-    setMissing(empty)
-    if (empty) field.current?.focus()
-    else send(approval, { text: text.trim() }, 'text')
-  }
+  const ask = useMutation({
+    mutationFn: ({ id, mode, index }: { id: string; mode: HelpMode; index: number | null }) =>
+      api.askHelp(id, mode, index),
+    onError: (error) =>
+      onProblem(
+        isConflict(error)
+          ? 'This question was answered or withdrawn meanwhile; its latest state is shown.'
+          : 'The help was not asked. Try again.',
+      ),
+    onSettled: () => client.invalidateQueries({ queryKey: ['helps', task.id] }),
+  })
+  const askFor = (approval: ApprovalView) => (mode: HelpMode, index: number | null) =>
+    ask.mutate({ id: approval.id, mode, index })
 
   return (
     <Loaded query={approvals} failure="The questions could not be loaded.">
@@ -105,6 +225,9 @@ export function ApprovalsTab({
                 )}
                 <BatchForm
                   questions={current.questions ?? []}
+                  approvalId={current.id}
+                  helps={helps.data ?? []}
+                  onAsk={askFor(current)}
                   sending={sending === 'batch'}
                   onSend={(body) => send(current, body, 'batch')}
                 />
@@ -113,9 +236,6 @@ export function ApprovalsTab({
             {current !== undefined && current.kind !== 'questions' && (
               <section aria-labelledby={headingId} className="approval">
                 <h3 id={headingId}>{headingFor(current.status)}</h3>
-                <p id={questionId} className="question">
-                  {current.question}
-                </p>
                 {migrationPath(current) !== undefined ? (
                   <>
                     <p id={filesId}>The migration it asks to write:</p>
@@ -153,50 +273,18 @@ export function ApprovalsTab({
                     )}
                   </>
                 )}
-                {current.options.length > 0 && (
-                  // The platform's group, named by the question it answers.
-                  <fieldset aria-labelledby={questionId} className="options">
-                    {current.options.map((option) => (
-                      <div key={option.id} className="option">
-                        <Button
-                          variant={option.id === current.recommendation ? 'primary' : 'neutral'}
-                          busy={sending === option.id}
-                          aria-describedby={
-                            option.impact === undefined ? undefined : `${impactId}-${option.id}`
-                          }
-                          onClick={() => send(current, { option_id: option.id }, option.id)}
-                        >
-                          {optionName(option, current.recommendation)}
-                        </Button>
-                        {option.impact !== undefined && (
-                          <p id={`${impactId}-${option.id}`} className="impact">
-                            {option.impact}
-                          </p>
-                        )}
-                      </div>
-                    ))}
-                  </fieldset>
-                )}
-                <form onSubmit={submit(current)} className="answer">
-                  <Field
-                    label={fieldLabel(current.kind)}
-                    hint="Sent to the agent as you write it."
-                    error={missing ? 'Write an answer, or choose one of the options.' : undefined}
-                  >
-                    <Textarea
-                      ref={field}
-                      rows={4}
-                      value={text}
-                      onChange={(event) => {
-                        setText(event.target.value)
-                        if (missing) setMissing(false)
-                      }}
-                    />
-                  </Field>
-                  <Button type="submit" busy={sending === 'text'}>
-                    Send answer
-                  </Button>
-                </form>
+                <SingleForm
+                  key={current.id}
+                  approval={current}
+                  helps={helps.data ?? []}
+                  sending={sending === 'single'}
+                  refused={refused}
+                  onAsk={(mode) => askFor(current)(mode, null)}
+                  onSend={(body) => {
+                    setRefused(undefined)
+                    send(current, body, 'single')
+                  }}
+                />
               </section>
             )}
             {answered.length > 0 && (

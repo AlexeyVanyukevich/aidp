@@ -147,14 +147,23 @@ test('a batch is answered from the keyboard alone, focus landing where it should
   const card = page.getByRole('dialog', { name: 'Answer by keyboard' })
   const approvals = card.getByRole('tabpanel', { name: 'Approvals' })
 
-  // The group is one stop: Tab enters at its first radio, Space chooses it.
+  // Each question opens with its two helps; then the group is one stop: Tab enters at its
+  // first radio, and the arrows choose.
   const three = approvals.getByRole('radio', { name: 'Three (recommended)' })
-  await tabTo(page, three)
+  await tabTo(page, approvals.getByRole('button', { name: 'Suggest an answer' }).first())
+  await page.keyboard.press('Tab')
+  await expect(approvals.getByRole('button', { name: 'Explain simply' }).first()).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(three).toBeFocused()
   await page.keyboard.press('ArrowDown')
   await expect(approvals.getByRole('radio', { name: 'Five' })).toBeFocused()
   await expect(approvals.getByRole('radio', { name: 'Five' })).toBeChecked()
   await page.keyboard.press('Tab')
   await expect(approvals.getByRole('textbox', { name: 'Your answer to question 1' })).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(approvals.getByRole('button', { name: 'Suggest an answer' }).nth(1)).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(approvals.getByRole('button', { name: 'Explain simply' }).nth(1)).toBeFocused()
   await page.keyboard.press('Tab')
   await expect(approvals.getByRole('textbox', { name: 'Your answer to question 2' })).toBeFocused()
   await page.keyboard.type('Only 5xx answers.')
