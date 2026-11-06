@@ -2,18 +2,28 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { TypeBoxTypeProvider } from '@fastify/type-provider-typebox'
 import { UnauthorizedError } from '../../shared/errors.js'
 import { bearer, resolveRunToken, sameSecret } from '../../shared/tokens.js'
-import { ClaimBody, EventsBody, HeartbeatBody, RunParams } from './runner.schemas.js'
+import { HelpService } from '../approvals/help.service.js'
+import {
+  ClaimBody,
+  EventsBody,
+  HeartbeatBody,
+  HelpFailBody,
+  HelpHeartbeatBody,
+  HelpReleaseBody,
+  RunParams,
+} from './runner.schemas.js'
 import { RunnerService } from './runner.service.js'
 
 declare module 'fastify' {
   interface FastifyRequest {
-    runContext: { runId: string; taskId: string } | null
+    runContext: { runId: string; taskId: string; helpId: string | null } | null
   }
 }
 
 export function registerRunner(instance: FastifyInstance): void {
   const app = instance.withTypeProvider<TypeBoxTypeProvider>()
   const service = new RunnerService(app.db, app.bus, app.clock)
+  const helps = new HelpService(app.db, app.bus, app.clock)
   app.decorateRequest('runContext', null)
 
   const runnerKey = async (request: FastifyRequest) => {
@@ -45,6 +55,47 @@ export function registerRunner(instance: FastifyInstance): void {
     '/api/runner/heartbeat',
     { preValidation: runnerKey, schema: { body: HeartbeatBody } },
     async (request) => service.heartbeat(request.body.runner_id, request.body.run_ids),
+  )
+
+  app.post(
+    '/api/runner/helps/claim',
+    { preValidation: runnerKey, schema: { body: ClaimBody } },
+    async (request) => ({
+      help: await helps.claim(
+        request.body.runner_id,
+        request.body.wait_ms ?? app.config.claimWaitMs,
+      ),
+    }),
+  )
+
+  app.post(
+    '/api/runner/helps/heartbeat',
+    { preValidation: runnerKey, schema: { body: HelpHeartbeatBody } },
+    async (request) => helps.heartbeat(request.body.runner_id, request.body.help_ids),
+  )
+
+  app.post(
+    '/api/runner/helps/:id/tokens',
+    { preValidation: runnerKey, schema: { params: RunParams } },
+    async (request) => helps.issueToken(request.params.id),
+  )
+
+  app.post(
+    '/api/runner/helps/:id/fail',
+    { preValidation: runnerKey, schema: { params: RunParams, body: HelpFailBody } },
+    async (request, reply) => {
+      await helps.fail(request.params.id, request.body.reason)
+      reply.status(204)
+    },
+  )
+
+  app.post(
+    '/api/runner/helps/:id/release',
+    { preValidation: runnerKey, schema: { params: RunParams, body: HelpReleaseBody } },
+    async (request, reply) => {
+      await helps.release(request.params.id, request.body.runner_id)
+      reply.status(204)
+    },
   )
 
   app.post(

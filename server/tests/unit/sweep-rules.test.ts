@@ -19,22 +19,22 @@ describe('sweepDecisions', () => {
     [
       'a run silent 89 s is not lost',
       { runs: [running(89 * S)] },
-      { rearm: false, lost: [], expired: [] },
+      { rearm: false, lost: [], expired: [], lostHelps: [] },
     ],
     [
       'a run silent exactly 90 s is not lost yet',
       { runs: [running(90 * S)] },
-      { rearm: false, lost: [], expired: [] },
+      { rearm: false, lost: [], expired: [], lostHelps: [] },
     ],
     [
       'a run silent 91 s is lost',
       { runs: [running(91 * S)] },
-      { rearm: false, lost: ['run'], expired: [] },
+      { rearm: false, lost: ['run'], expired: [], lostHelps: [] },
     ],
     [
       'a paused run holds no runner, however long it waits',
       { runs: [{ id: 'run', status: 'paused', lastHeartbeatAt: ago(5 * H) }] },
-      { rearm: false, lost: [], expired: [] },
+      { rearm: false, lost: [], expired: [], lostHelps: [] },
     ],
     [
       'after a sleep, the runner gets a full window first',
@@ -44,22 +44,37 @@ describe('sweepDecisions', () => {
     [
       'a gap just under two intervals is no sleep',
       { lastTick: ago(119 * S), runs: [running(3 * MIN)] },
-      { rearm: false, lost: ['run'], expired: [] },
+      { rearm: false, lost: ['run'], expired: [], lostHelps: [] },
     ],
     [
       'an approval at 47 h 59 m stays open',
       { approvals: [open(47 * H + 59 * MIN)] },
-      { rearm: false, lost: [], expired: [] },
+      { rearm: false, lost: [], expired: [], lostHelps: [] },
     ],
     [
       'an approval at 48 h expires',
       { approvals: [open(48 * H)] },
-      { rearm: false, lost: [], expired: ['approval'] },
+      { rearm: false, lost: [], expired: ['approval'], lostHelps: [] },
     ],
     [
       'an answered approval never expires',
       { approvals: [{ id: 'approval', status: 'answered', createdAt: ago(50 * H) }] },
-      { rearm: false, lost: [], expired: [] },
+      { rearm: false, lost: [], expired: [], lostHelps: [] },
+    ],
+    [
+      'a help silent 91 s is lost',
+      { helps: [{ id: 'help', status: 'running', lastHeartbeatAt: ago(91 * S) }] },
+      { rearm: false, lost: [], expired: [], lostHelps: ['help'] },
+    ],
+    [
+      'a help silent exactly 90 s is not lost yet',
+      { helps: [{ id: 'help', status: 'running', lastHeartbeatAt: ago(90 * S) }] },
+      { rearm: false, lost: [], expired: [], lostHelps: [] },
+    ],
+    [
+      'a help that already ended is never lost',
+      { helps: [{ id: 'help', status: 'succeeded', lastHeartbeatAt: ago(10 * MIN) }] },
+      { rearm: false, lost: [], expired: [], lostHelps: [] },
     ],
     [
       'after a sleep, expiry waits a tick too',
@@ -74,6 +89,7 @@ describe('sweepDecisions', () => {
         intervalMs: 60 * S,
         runs: [],
         approvals: [],
+        helps: [],
         ...input,
       }),
     ).toEqual(expected)

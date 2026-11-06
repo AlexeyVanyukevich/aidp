@@ -66,6 +66,7 @@ export interface Finding {
     | 'not_relative'
     | 'out_of_order'
     | 'fenced'
+    | 'not_allowed'
   /** For `out_of_order`: the greatest sibling name, which a new name must sort after. */
   after?: string
 }
@@ -213,8 +214,14 @@ export function checkRequest(input: RequestInput, order?: MigrationSiblings): Fi
   return findings
 }
 
-export function checkAnswer(approval: { options: ApprovalOption[] }, answer: Answer): Finding[] {
+export function checkAnswer(
+  approval: { kind?: ApprovalKind; options: ApprovalOption[] },
+  answer: Answer,
+): Finding[] {
   const findings: Finding[] = []
+  // Approving the plan carries no words: changes to the plan are asked for in words alone.
+  if (approval.kind === 'plan' && answer.option_id !== undefined && !blank(answer.text))
+    findings.push({ field: 'text', code: 'not_allowed' })
   if (answer.option_id === undefined && blank(answer.text))
     findings.push({ field: 'text', code: 'required' })
   if (

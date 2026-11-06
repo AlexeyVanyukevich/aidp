@@ -7,6 +7,9 @@ import type {
   Block,
   Checkpoint,
   EventType,
+  HelpMode,
+  HelpResult,
+  HelpStatus,
   PendingWork,
   PhaseName,
   PhaseStatus,
@@ -114,6 +117,26 @@ export interface RunTokensTable {
   token_hash: string
   expires_at: Timestamp
   created_at: Generated<Date>
+  /** Set on a helper's token: it reaches the helper's tools and nothing else. */
+  help_id: ColumnType<string | null, string | null | undefined, string | null>
+}
+
+export interface HelpsTable {
+  id: Generated<string>
+  run_id: string
+  approval_id: string
+  /** The question of a batch; null for a single request. */
+  question_index: number | null
+  mode: HelpMode
+  status: HelpStatus
+  result: JSONColumnType<HelpResult | null, string | null, string | null>
+  reason: string | null
+  phase_id: string | null
+  runner_id: string | null
+  created_at: Generated<Date>
+  started_at: NullableTimestamp
+  ended_at: NullableTimestamp
+  last_heartbeat_at: NullableTimestamp
 }
 
 export interface PhasesTable {
@@ -213,6 +236,7 @@ export interface Database {
   specs: SpecsTable
   runs: RunsTable
   run_tokens: RunTokensTable
+  helps: HelpsTable
   phases: PhasesTable
   events: EventsTable
   approval_requests: ApprovalRequestsTable

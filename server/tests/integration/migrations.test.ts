@@ -485,3 +485,61 @@ describe('the title-runs migration', () => {
     ).rejects.toThrow(/runs_phase_known/)
   })
 })
+
+describe('the helps migration', () => {
+  afterEach(async () => {
+    expect((await migrator().migrateToLatest()).error).toBeUndefined()
+  })
+
+  it('allows a help phase, and its down step deletes Help phases, their events and tokens', async () => {
+    const db = getTestDb()
+    const { id } = await project()
+    const task = await db
+      .insertInto('tasks')
+      .values({
+        project_id: id,
+        number: 1,
+        title: 'T',
+        state: 'running',
+        position: 1,
+        updated_at: new Date(),
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow()
+    const run = await sql<{ id: string }>`
+      insert into runs (task_id, kind, number, spec_version, status)
+      values (${task.id}, 'delivery', 1, 1, 'paused') returning id`.execute(db)
+    const runId = run.rows[0]!.id
+    const phase = (name: 'build' | 'help') => ({
+      id: crypto.randomUUID(),
+      run_id: runId,
+      name,
+      attempt: 1,
+      agent: 'a',
+      model: 'opus',
+      status: 'succeeded' as const,
+      session_id: null,
+      summary_md: null,
+      reported_cost: null,
+      started_at: new Date(),
+      ended_at: null,
+    })
+    const build = phase('build')
+    const help = phase('help')
+    await db.insertInto('phases').values([build, help]).execute()
+    for (const phaseId of [build.id, help.id])
+      await sql`insert into events (id, run_id, phase_id, ts, type)
+        values (${crypto.randomUUID()}, ${runId}, ${phaseId}, now(), 'message')`.execute(db)
+
+    expect((await migrator().migrateTo('008_title_runs')).error).toBeUndefined()
+    const phases = await sql<{ name: string }>`select name from phases`.execute(db)
+    expect(phases.rows).toEqual([{ name: 'build' }])
+    const events = await sql<{ phase_id: string }>`select phase_id from events`.execute(db)
+    expect(events.rows).toEqual([{ phase_id: build.id }])
+    expect(await columns()).not.toContain('run_tokens.help_id')
+    expect(await columns()).not.toContain('helps.id')
+    await expect(db.insertInto('phases').values(phase('help')).execute()).rejects.toThrow(
+      /phases_name_known/,
+    )
+  })
+})

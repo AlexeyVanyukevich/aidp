@@ -3,6 +3,8 @@ import type { Database } from '../../db/schema.js'
 import { publish } from '../../shared/bus.js'
 import { ConflictError, NotFoundError, ValidationError } from '../../shared/errors.js'
 import type { ApprovalKind, ApprovalStatus, Block } from '../../shared/vocabulary.js'
+import { stopHelps } from './help.service.js'
+import { isCurrent } from './help-rules.js'
 import { moveFacts, moveTask } from '../tasks/task.moves.js'
 import {
   checkAnswer,
@@ -260,11 +262,11 @@ export class ApprovalService {
       if (row === undefined) throw new NotFoundError('No such approval request')
       const block = row.block as Block | null
       // An expired question stays answerable while the card it blocked waits on it (spec §2).
-      const answerable =
-        row.status === 'open' ||
-        (row.status === 'expired' &&
-          row.task_state === 'blocked' &&
-          block?.cause === 'approval_expired')
+      const answerable = isCurrent({
+        status: row.status,
+        taskState: row.task_state,
+        blockCause: block?.cause ?? null,
+      })
       if (!answerable)
         throw new ConflictError(`This request is ${row.status}; reload to see the latest`, {
           status: row.status,
@@ -310,6 +312,7 @@ export class ApprovalService {
           payload: JSON.stringify({ approval_id: id, ...body }),
         })
         .execute()
+      await stopHelps(trx, { approvalId: id }, now)
       await moveTask(trx, row.task_id, 'answer', await moveFacts(trx, row.task_id))
       await trx
         .updateTable('runs')
@@ -327,6 +330,7 @@ export class ApprovalService {
         .where('id', '=', row.run_id)
         .execute()
       await publish(trx, { topic: 'approval.answered', taskId: row.task_id })
+      await publish(trx, { topic: 'help.updated', taskId: row.task_id })
       await publish(trx, { topic: 'run.queued', runId: row.run_id })
       const { task_id: _task, block: _block, task_state: _state, ...rest } = approval
       return { ...rest, status: 'answered', answer: body, answered_at: now }

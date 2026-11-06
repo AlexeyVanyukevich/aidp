@@ -4,7 +4,16 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { Database } from '../../db/schema.js'
 import { publish } from '../../shared/bus.js'
 import { AppError, ConflictError } from '../../shared/errors.js'
-import { LIMITS, type Finding, type MigrationSiblings } from '../approvals/approval-rules.js'
+import {
+  LIMITS,
+  type ApprovalOption,
+  type BatchQuestion,
+  type Finding,
+  type MigrationSiblings,
+} from '../approvals/approval-rules.js'
+import { questionOf } from '../approvals/help-rules.js'
+import { HelpService } from '../approvals/help.service.js'
+import type { Bus } from '../../shared/bus.js'
 import { readMigrationSiblings } from '../projects/migration-siblings.js'
 import { openApproval } from '../approvals/approval.service.js'
 import { lintReply } from '../specs/spec-lint-text.js'
@@ -26,6 +35,8 @@ export interface ToolContext {
   db: Kysely<Database>
   runId: string
   taskId: string
+  /** Set for a helper's token: it reaches the helper's tools and no others. */
+  helpId?: string | null
   clock: () => Date
 }
 
@@ -49,6 +60,7 @@ async function runningPhase(ctx: ToolContext) {
     .select(['id', 'agent', 'name'])
     .where('run_id', '=', ctx.runId)
     .where('status', '=', 'running')
+    .where('name', '!=', 'help')
     .orderBy('started_at', 'desc')
     .executeTakeFirst()
 }
@@ -157,7 +169,128 @@ async function siblingsOf(
   )
 }
 
+/** The question a help is for, and the phase that asked it. */
+async function helpQuestion(ctx: ToolContext, helpId: string) {
+  const row = await ctx.db
+    .selectFrom('helps')
+    .innerJoin('approval_requests', 'approval_requests.id', 'helps.approval_id')
+    .select([
+      'helps.question_index',
+      'approval_requests.kind',
+      'approval_requests.question',
+      'approval_requests.context_md',
+      'approval_requests.options',
+      'approval_requests.recommendation',
+      'approval_requests.files',
+      'approval_requests.questions',
+      'approval_requests.phase_id',
+    ])
+    .where('helps.id', '=', helpId)
+    .executeTakeFirstOrThrow()
+  const asked = questionOf(
+    {
+      kind: row.kind,
+      question: row.question,
+      context_md: row.context_md,
+      options: row.options as ApprovalOption[],
+      recommendation: row.recommendation,
+      questions: (row.questions ?? null) as BatchQuestion[] | null,
+    },
+    row.question_index,
+  )
+  return { row, asked }
+}
+
+/** The tools of a helper: it reads the task, its question and the asking phase, and saves. */
+function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string): void {
+  const service = new HelpService(ctx.db, undefined as unknown as Bus, ctx.clock)
+  server.registerTool(
+    'get_question',
+    {
+      description:
+        'Read the question you were asked to help with: the question, its context, its options with the recommendation, and for a request to change files the files, for a migration request the path and the whole file, and for a plan the plan.',
+    },
+    async () => {
+      const { row, asked } = await helpQuestion(ctx, helpId)
+      if (asked === null) return reply('This question is gone.', true)
+      const files = (row.files ?? null) as string[] | null
+      return json({
+        kind: row.kind,
+        question: asked.question,
+        context_md: asked.context_md,
+        options: asked.options,
+        recommendation: asked.recommendation,
+        ...(files === null ? {} : { files }),
+        ...(row.kind === 'plan' ? { plan: row.context_md } : {}),
+        ...(row.kind === 'questions' ? { batch_lead: row.question } : {}),
+      })
+    },
+  )
+
+  server.registerTool(
+    'get_phase_record',
+    {
+      description:
+        'Read what the asking phase did, in order: its log_step lines and its tool calls.',
+    },
+    async () => {
+      const { row } = await helpQuestion(ctx, helpId)
+      if (row.phase_id === null) return json([])
+      const events = await ctx.db
+        .selectFrom('events')
+        .select(['type', 'ts', 'tool', 'target', 'status', 'payload'])
+        .where('run_id', '=', ctx.runId)
+        .where('phase_id', '=', row.phase_id)
+        .where('type', 'in', ['message', 'tool_call'])
+        .orderBy('ts')
+        .orderBy('id')
+        .limit(300)
+        .execute()
+      return json(
+        events
+          .filter((e) => e.type === 'tool_call' || e.payload.declared === true)
+          .map((e) =>
+            e.type === 'tool_call'
+              ? { type: 'tool_call', ts: e.ts, tool: e.tool, target: e.target, status: e.status }
+              : { type: 'log_step', ts: e.ts, summary: e.payload.summary ?? null },
+          ),
+      )
+    },
+  )
+
+  server.registerTool(
+    'save_help_result',
+    {
+      description:
+        'Save your result. A suggestion: option_id (one the question offers), text, or both, with reasoning and unsure (what you are unsure of). An explanation: asked (what is being asked), matters (why it matters to the task) and leads_to (what each option, or an answer in words, would lead to), and no option. Refused with the field to fix when it does not fit; fix it and save again.',
+      inputSchema: {
+        option_id: z.string().optional(),
+        text: z.string().optional(),
+        reasoning: z.string().optional(),
+        unsure: z.string().optional(),
+        asked: z.string().optional(),
+        matters: z.string().optional(),
+        leads_to: z.string().optional(),
+      },
+    },
+    async (input) => {
+      const saved = await service.save(helpId, input)
+      return 'error' in saved ? reply(saved.error, true) : reply('Saved. End your turn now.')
+    },
+  )
+}
+
 export function registerBoardTools(server: McpServer, ctx: ToolContext): void {
+  if (ctx.helpId != null) {
+    registerHelpTools(server, ctx, ctx.helpId)
+    registerReadTools(server, ctx)
+    return
+  }
+  registerReadTools(server, ctx)
+  registerRunTools(server, ctx)
+}
+
+function registerRunTools(server: McpServer, ctx: ToolContext): void {
   server.registerTool(
     'request_approval',
     {
@@ -228,45 +361,6 @@ export function registerBoardTools(server: McpServer, ctx: ToolContext): void {
         return refusal(error)
       }
       return reply(PAUSED_REPLY)
-    },
-  )
-
-  server.registerTool(
-    'get_task',
-    { description: 'Read the task this run carries out.' },
-    async () => {
-      const row = await ctx.db
-        .selectFrom('tasks')
-        .innerJoin('projects', 'projects.id', 'tasks.project_id')
-        .select(['tasks.number', 'tasks.title', 'tasks.description_md', 'projects.key'])
-        .where('tasks.id', '=', ctx.taskId)
-        .executeTakeFirstOrThrow()
-      const phase = await runningPhase(ctx)
-      return json({
-        key: `${row.key}-${row.number}`,
-        title: row.title,
-        description_md: row.description_md,
-        run_id: ctx.runId,
-        phase: phase?.name ?? null,
-      })
-    },
-  )
-
-  server.registerTool(
-    'get_spec',
-    {
-      description:
-        'Read the spec: in a delivery run, the approved, frozen spec it must satisfy; in a spec run, the task’s latest version, which a redraft starts from.',
-    },
-    async () => {
-      if ((await runKind(ctx)) === 'delivery') return json(await frozenSpec(ctx))
-      const latest = await ctx.db
-        .selectFrom('specs')
-        .select(['version', 'body_md'])
-        .where('task_id', '=', ctx.taskId)
-        .orderBy('version', 'desc')
-        .executeTakeFirst()
-      return latest === undefined ? reply('This task has no spec yet.') : json(latest)
     },
   )
 
@@ -457,6 +551,47 @@ export function registerBoardTools(server: McpServer, ctx: ToolContext): void {
         .execute()
       await publish(ctx.db, { topic: 'run.event', runId: ctx.runId, taskId: ctx.taskId })
       return reply('Logged.')
+    },
+  )
+}
+
+function registerReadTools(server: McpServer, ctx: ToolContext): void {
+  server.registerTool(
+    'get_task',
+    { description: 'Read the task this run carries out.' },
+    async () => {
+      const row = await ctx.db
+        .selectFrom('tasks')
+        .innerJoin('projects', 'projects.id', 'tasks.project_id')
+        .select(['tasks.number', 'tasks.title', 'tasks.description_md', 'projects.key'])
+        .where('tasks.id', '=', ctx.taskId)
+        .executeTakeFirstOrThrow()
+      const phase = await runningPhase(ctx)
+      return json({
+        key: `${row.key}-${row.number}`,
+        title: row.title,
+        description_md: row.description_md,
+        run_id: ctx.runId,
+        phase: phase?.name ?? null,
+      })
+    },
+  )
+
+  server.registerTool(
+    'get_spec',
+    {
+      description:
+        'Read the spec: in a delivery run, the approved, frozen spec it must satisfy; in a spec run, the task’s latest version, which a redraft starts from.',
+    },
+    async () => {
+      if ((await runKind(ctx)) === 'delivery') return json(await frozenSpec(ctx))
+      const latest = await ctx.db
+        .selectFrom('specs')
+        .select(['version', 'body_md'])
+        .where('task_id', '=', ctx.taskId)
+        .orderBy('version', 'desc')
+        .executeTakeFirst()
+      return latest === undefined ? reply('This task has no spec yet.') : json(latest)
     },
   )
 }

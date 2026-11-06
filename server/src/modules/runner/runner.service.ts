@@ -220,6 +220,7 @@ export class RunnerService {
       .selectFrom('phases')
       .select(['id', 'name', 'attempt', 'session_id'])
       .where('run_id', '=', runId)
+      .where('name', '!=', 'help')
       .orderBy('started_at', 'desc')
       .executeTakeFirst()
     const plan = await trx
@@ -482,7 +483,7 @@ export class RunnerService {
 
   /** One transaction: a malformed event refuses the whole batch, so a replay is all or nothing. */
   async ingest(
-    context: { runId: string; taskId: string },
+    context: { runId: string; taskId: string; helpId?: string | null },
     events: RunnerEvent[],
   ): Promise<{ accepted: number }> {
     if (events.some((event) => event.run_id !== context.runId)) throw new UnauthorizedError()
@@ -565,7 +566,7 @@ export class RunnerService {
 
   private async apply(
     trx: Transaction<Database>,
-    context: { runId: string; taskId: string },
+    context: { runId: string; taskId: string; helpId?: string | null },
     effect: Effect,
   ): Promise<void> {
     switch (effect.kind) {
@@ -585,6 +586,8 @@ export class RunnerService {
           })
           .onConflict((oc) => oc.column('id').doNothing())
           .execute()
+        // A help is beside the run: it never becomes the run's phase.
+        if (effect.name === 'help') return
         await trx
           .updateTable('runs')
           .set((eb) => ({
@@ -626,6 +629,7 @@ export class RunnerService {
           .execute()
         return
       case 'checkpoint':
+        if (context.helpId != null) return
         await trx
           .updateTable('runs')
           .set({ checkpoint: JSON.stringify(effect.checkpoint) })
@@ -633,6 +637,7 @@ export class RunnerService {
           .execute()
         return
       case 'block': {
+        if (context.helpId != null) return
         await trx
           .updateTable('runs')
           .set({ status: 'blocked', block: JSON.stringify(effect.block) })
@@ -643,6 +648,7 @@ export class RunnerService {
           .set({ status: 'paused' })
           .where('run_id', '=', context.runId)
           .where('status', '=', 'running')
+          .where('name', '!=', 'help')
           .execute()
         const task = await trx
           .selectFrom('tasks')
@@ -655,6 +661,7 @@ export class RunnerService {
         return
       }
       case 'plan_approval':
+        if (context.helpId != null) return
         await openApproval(
           trx,
           {
@@ -672,6 +679,7 @@ export class RunnerService {
         )
         return
       case 'run_end': {
+        if (context.helpId != null) return
         const kind = await trx
           .selectFrom('runs')
           .select('kind')
