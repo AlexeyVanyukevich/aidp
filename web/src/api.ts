@@ -95,8 +95,13 @@ export const api = {
       test_command_id?: string | null
     },
   ) => request<TaskView>('PATCH', `/api/tasks/${id}`, patch),
-  action: (id: string, action: 'cancel' | 'resume' | 'draft-spec') =>
-    request<TaskView>('POST', `/api/tasks/${id}/actions/${action}`),
+  action: (
+    id: string,
+    action: 'cancel' | 'resume' | 'draft-spec' | 'rephrase-title' | 'stop-title' | 'discard-title',
+  ) => request<TaskView>('POST', `/api/tasks/${id}/actions/${action}`),
+  /** Applies the suggested title, as the owner edited it. */
+  acceptTitle: (id: string, title: string) =>
+    request<TaskView>('POST', `/api/tasks/${id}/actions/accept-title`, { title }),
   /** Re-run a Failed card: keep the accepted plan, or plan again. */
   rerun: (id: string, plan: 'keep' | 'again') =>
     request<TaskView>('POST', `/api/tasks/${id}/actions/rerun`, { plan }),

@@ -5,6 +5,7 @@ import { formatUsd } from '../board/columns'
 import { Loaded } from '../Loaded'
 import type { CostLine, PlanData, TaskView } from '../types'
 import { formatPercent, formatTokens } from './format'
+import { phaseLabel } from './timeline'
 
 function Cells({ line }: { line: CostLine }) {
   return (
@@ -64,7 +65,7 @@ export function CostTab({ task }: { task: TaskView }) {
                 {c.byPhase.map((p) => (
                   <tr key={p.phaseId}>
                     <th scope="row">
-                      {p.name} {p.attempt}
+                      {phaseLabel(p.name)} {p.attempt}
                       {/* A message cut off when its process stopped counts as at least what
                           its start said: the counters are a floor. */}
                       {p.cut && <span className="muted"> · at least</span>}
