@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { BoardApi } from '../../src/api.js'
+import type { RunnerConfig } from '../../src/config.js'
 import type { Work } from '../../src/contract.js'
 import { Daemon } from '../../src/daemon.js'
 import { NOW, RUN, START, checkpoint, harness, resume, withPlan } from './run-harness.js'
@@ -27,8 +28,15 @@ function setUp(options: {
   titleClaims?: (Work | null)[]
   cancel?: string[]
   now?: Date
+  clock?: () => Date
+  config?: Partial<RunnerConfig>
+  /** How long a title claim stays open before it returns. */
+  titleClaimMs?: number
+  /** Every heartbeat is sent, and fails, as one does while the board is down. */
+  heartbeatFails?: boolean
 }) {
   const h = withPlan(harness({}))
+  const clock = options.clock ?? (() => options.now ?? NOW)
   const log: string[] = []
   vi.spyOn(console, 'log').mockImplementation((line: string) => void log.push(String(line)))
   vi.spyOn(console, 'error').mockImplementation((line: string) => void log.push(String(line)))
@@ -37,6 +45,8 @@ function setUp(options: {
   const titleClaims = [...(options.titleClaims ?? [])]
   /** The kinds each claim request asked for, in order. */
   const asked: (readonly string[] | undefined)[] = []
+  /** Each heartbeat: when it was sent, by the daemon's clock, and for which runs. */
+  const beats: { at: string; runIds: string[] }[] = []
   const reads = options.fingerprints
   let read = 0
   const api = {
@@ -45,10 +55,12 @@ function setUp(options: {
       asked.push(kinds)
       const title = kinds?.length === 1 && kinds[0] === 'title'
       events.push(title ? 'claim:title' : 'claim')
-      await new Promise((done) => setTimeout(done, 2))
+      await new Promise((done) => setTimeout(done, title ? (options.titleClaimMs ?? 2) : 2))
       return (title ? titleClaims : claims).shift() ?? null
     },
-    heartbeat: async () => {
+    heartbeat: async (_runnerId: string, runIds: string[]) => {
+      beats.push({ at: clock().toISOString(), runIds })
+      if (options.heartbeatFails === true) throw new Error('fetch failed')
       events.push(`heartbeat (stages so far: ${h.calls.length})`)
       return { cancel: options.cancel ?? [], pause: [] }
     },
@@ -56,23 +68,26 @@ function setUp(options: {
   const exits: number[] = []
   const settles: number[] = []
   const handoffPath = join(h.home, 'handoff.json')
-  const daemon = new Daemon(h.deps.config, {
-    api,
-    git: h.deps.git,
-    phases: h.deps.phases,
-    runTests: h.deps.runTests!,
-    clock: () => options.now ?? NOW,
-    fingerprint: () => {
-      read += 1
-      const value = reads[Math.min(read - 1, reads.length - 1)] ?? START_CODE
-      if (value === UNREADABLE) throw new Error('ENOENT: no such file or directory')
-      return value
+  const daemon = new Daemon(
+    { ...h.deps.config, ...options.config },
+    {
+      api,
+      git: h.deps.git,
+      phases: h.deps.phases,
+      runTests: h.deps.runTests!,
+      clock,
+      fingerprint: () => {
+        read += 1
+        const value = reads[Math.min(read - 1, reads.length - 1)] ?? START_CODE
+        if (value === UNREADABLE) throw new Error('ENOENT: no such file or directory')
+        return value
+      },
+      exit: (status) => void exits.push(status),
+      settle: async () => void settles.push(read),
+      handoffPath,
     },
-    exit: (status) => void exits.push(status),
-    settle: async () => void settles.push(read),
-    handoffPath,
-  })
-  return { h, daemon, log, events, exits, settles, handoffPath, asked, reads: () => read }
+  )
+  return { h, daemon, log, events, beats, exits, settles, handoffPath, asked, reads: () => read }
 }
 
 const never = new AbortController().signal
@@ -173,6 +188,42 @@ describe('a claim that returns work after the code moved', () => {
     expect(t.exits).toEqual([75])
     expect(t.log.some((l) => l.startsWith('board-cli: ') && l.includes('handed'))).toBe(true)
   })
+
+  // The daemon waits 100 ms (claim wait + grace) for the title lane, whose claim stays open 250 ms.
+  const WAIT_MS = 100
+  it.each([
+    { name: 'that get through', fail: false, stamp: 'the last heartbeat' },
+    { name: 'that fail', fail: true, stamp: 'the claim' },
+  ])(
+    'heartbeats a claim while the title lane is waited for; with heartbeats $name, stamps $stamp',
+    async ({ fail }) => {
+      const started = Date.now()
+      // The start read; the loops' shared check before their claims; the check after the claim.
+      const t = setUp({
+        fingerprints: [START_CODE, START_CODE, MOVED, MOVED],
+        claims: [START],
+        titleClaimMs: 250,
+        heartbeatFails: fail,
+        config: { claimWaitMs: WAIT_MS, stopGraceMs: 0, heartbeatMs: 20 },
+        clock: () => new Date(NOW.getTime() + (Date.now() - started)),
+      })
+      await t.daemon.loop(new AbortController().signal)
+      const held = t.beats.filter((b) => b.runIds.includes(RUN.id))
+      expect(held.length).toBeGreaterThanOrEqual(2)
+      const handed = JSON.parse(readFileSync(t.handoffPath, 'utf8')) as { claimed_at: string }
+      const stamped = Date.parse(handed.claimed_at)
+      if (fail) {
+        // The claim's own moment: before the wait, never its end.
+        expect(stamped).toBeLessThan(NOW.getTime() + WAIT_MS)
+      } else {
+        // The daemon reads its clock just before the heartbeat the board records.
+        const last = Date.parse(held.at(-1)?.at ?? '')
+        expect(stamped).toBeLessThanOrEqual(last)
+        expect(stamped).toBeGreaterThan(last - 10)
+      }
+      expect(t.exits).toEqual([75])
+    },
+  )
 
   it('carries a cleanup out itself, writes no handoff and exits 75 before another claim', async () => {
     // The start read and the check before the claim see the start value; the rest see the move.

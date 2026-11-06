@@ -874,8 +874,11 @@ computes it once at start and gives it to every phase process as `BOARD_RUNNER_C
   `board-cli: ` line, and exits with status 75. A daemon whose code has not moved never exits for
   this reason.
 - **The handoff.** Right after a claim returns a start or a resume, the daemon makes the same
-  check. When the code has moved it writes `<BOARD_HOME>/handoff.json` (one write to a temporary
-  name, then a rename) holding the claimed work and the time the claim returned, logs a
+  check. When the code has moved it first waits for the title lane, as above, heartbeating the
+  claimed run meanwhile and once more at the end, so the sweeper does not lose it. It then writes
+  `<BOARD_HOME>/handoff.json` (one write to a temporary name, then a rename) holding the claimed
+  work and the time the board last heard of the run: its last heartbeat that got through, or the
+  claim if none did, which is what the sweeper counts from. It logs a
   `board-cli: ` line, and exits 75 without carrying the work out. A claimed cleanup is never
   handed on: the old daemon carries it out itself, and the check before its next claim makes it
   exit. A starting daemon that finds the file deletes it first, then, if it holds a start or a
