@@ -4,7 +4,6 @@ import type { ApprovalOption, HelpMode, HelpResult } from '../types'
 import { failureText, type ModeHelp, type QuestionHelp } from './approvals'
 
 type Suggestion = Extract<HelpResult, { mode: 'suggest' }>
-type Explanation = Extract<HelpResult, { mode: 'explain' }>
 
 /**
  * The two helps of one question: Suggest an answer and Explain simply, each busy while its help
