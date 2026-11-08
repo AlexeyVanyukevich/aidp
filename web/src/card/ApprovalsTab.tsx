@@ -47,14 +47,19 @@ function SingleForm({
   refused,
   onAsk,
   onSend,
+  onEdit,
 }: {
   approval: ApprovalView
   helps: HelpView[]
   sending: boolean
-  /** The board refused the words: the owner's last send, and why the field is invalid. */
+  /**
+   * The board refused the words: the owner's last send, and why the field is invalid. Shown
+   * until the next send or edit, which the parent clears through `onSend` and `onEdit`.
+   */
   refused: { message: string } | undefined
   onAsk: (mode: HelpMode) => void
   onSend: (body: ApprovalAnswer) => void
+  onEdit: () => void
 }) {
   const [choice, setChoice] = useState<Choice>({ text: '' })
   const [problem, setProblem] = useState<string | undefined>()
@@ -63,9 +68,7 @@ function SingleForm({
   const hasOptions = approval.options.length > 0
 
   useEffect(() => {
-    if (refused === undefined) return
-    setProblem(refused.message)
-    field.current?.focus()
+    if (refused !== undefined) field.current?.focus()
   }, [refused])
 
   const submit = (event: FormEvent) => {
@@ -113,7 +116,7 @@ function SingleForm({
       <Field
         label={fieldLabel(approval.kind)}
         hint="Sent to the agent as you write it."
-        error={problem}
+        error={problem ?? refused?.message}
       >
         <Textarea
           ref={field}
@@ -122,6 +125,7 @@ function SingleForm({
           onChange={(event) => {
             setChoice((now) => ({ ...now, text: event.target.value }))
             if (problem !== undefined) setProblem(undefined)
+            if (refused !== undefined) onEdit()
           }}
         />
       </Field>
@@ -284,6 +288,7 @@ export function ApprovalsTab({
                     setRefused(undefined)
                     send(current, body, 'single')
                   }}
+                  onEdit={() => setRefused(undefined)}
                 />
               </section>
             )}
