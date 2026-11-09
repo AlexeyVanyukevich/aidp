@@ -25,7 +25,7 @@ export type RunStatus = (typeof RUN_STATUSES)[number]
 
 /** A run's kind: a spec run drafts, a delivery run delivers, a title run suggests a title, a rephrase
  * run suggests a clearer description. */
-export const RUN_KINDS = ['spec', 'delivery', 'title', 'rephrase'] as const
+export const RUN_KINDS = ['spec', 'delivery', 'title', 'rephrase', 'help'] as const
 export type RunKind = (typeof RUN_KINDS)[number]
 
 export const SUGGESTION_STATUSES = ['pending', 'accepted', 'discarded', 'replaced'] as const
@@ -39,8 +39,21 @@ export type PhaseName = (typeof PHASE_NAMES)[number]
 export const PHASE_STATUSES = ['running', 'paused', 'succeeded', 'failed'] as const
 export type PhaseStatus = (typeof PHASE_STATUSES)[number]
 
-export const HELP_MODES = ['suggest', 'explain'] as const
+export const HELP_MODES = ['suggest', 'explain', 'review', 'restate', 'recommend', 'check'] as const
 export type HelpMode = (typeof HELP_MODES)[number]
+
+/** The modes of a question help; the others belong to a decision of the card. */
+export type QuestionHelpMode = 'suggest' | 'explain'
+
+/** What a help advises on: a waiting question, or one of the decisions of a card. */
+export const HELP_DECISIONS = ['question', 'spec_review', 'stopped_run', 'mark_done'] as const
+export type HelpDecision = (typeof HELP_DECISIONS)[number]
+
+/** What a decision help recorded when it was created. */
+export type HelpSubject =
+  | { spec_version: number }
+  | { run_id: string; task_state: TaskState; block: BlockCause | null }
+  | { task_state: TaskState; spec_version: number | null; delivery_run_id: string | null }
 
 export const HELP_STATUSES = ['queued', 'running', 'succeeded', 'failed', 'stopped'] as const
 export type HelpStatus = (typeof HELP_STATUSES)[number]
@@ -59,6 +72,31 @@ export type HelpResult =
       asked: string
       matters: string
       leads_to: string
+    }
+  | {
+      mode: 'review'
+      verdict: 'changes' | 'nothing_to_change'
+      findings: {
+        kind: 'missing' | 'contradiction' | 'uncheckable' | 'risk'
+        where?: string
+        text: string
+      }[]
+      unsure: string
+    }
+  | { mode: 'restate'; changes: string; requirements: string; left_out: string }
+  | {
+      mode: 'recommend'
+      why_stopped: string
+      action: string
+      reasoning: string
+      unsure: string
+    }
+  | {
+      mode: 'check'
+      checked_against: 'approved_spec' | 'latest_spec' | 'description'
+      produced: string
+      unfinished: { where?: string; text: string }[]
+      unsure: string
     }
 
 export const APPROVAL_STATUSES = ['open', 'answered', 'expired', 'withdrawn'] as const

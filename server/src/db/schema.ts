@@ -7,9 +7,11 @@ import type {
   Block,
   Checkpoint,
   EventType,
+  HelpDecision,
   HelpMode,
   HelpResult,
   HelpStatus,
+  HelpSubject,
   PendingWork,
   PhaseName,
   PhaseStatus,
@@ -135,7 +137,14 @@ export interface RunTokensTable {
 export interface HelpsTable {
   id: Generated<string>
   run_id: string
-  approval_id: string
+  /** Set exactly for a question help. */
+  approval_id: string | null
+  /** What the help advises on: a waiting question or one of the card's decisions. */
+  decision: HelpDecision
+  /** What the help is about, recorded when it was created; null for a question help. */
+  subject: JSONColumnType<HelpSubject | null, string | null, string | null>
+  /** Set when a succeeded help's subject no longer stands. */
+  retired_at: NullableTimestamp
   /** The question of a batch; null for a single request. */
   question_index: number | null
   mode: HelpMode

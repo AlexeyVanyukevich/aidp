@@ -7,9 +7,12 @@ import { newToken } from '../../shared/tokens.js'
 import type {
   ApprovalKind,
   Block,
+  HelpDecision,
   HelpMode,
   HelpResult,
   HelpStatus,
+  HelpSubject,
+  QuestionHelpMode,
 } from '../../shared/vocabulary.js'
 import type { ApprovalOption, BatchQuestion } from './approval-rules.js'
 import {
@@ -24,7 +27,9 @@ import {
 
 export interface HelpView {
   id: string
-  approval_id: string
+  approval_id: string | null
+  decision: HelpDecision
+  subject: HelpSubject | null
   question_index: number | null
   mode: HelpMode
   status: HelpStatus
@@ -37,7 +42,7 @@ export interface HelpView {
 export interface HelpWork {
   id: string
   mode: HelpMode
-  approval_id: string
+  approval_id: string | null
   question_index: number | null
   /** Server-chosen, so the sweeper can close the phase of a help whose process is lost. */
   phase_id: string
@@ -54,6 +59,8 @@ export interface HelpWork {
 const COLUMNS = [
   'helps.id',
   'helps.approval_id',
+  'helps.decision',
+  'helps.subject',
   'helps.question_index',
   'helps.mode',
   'helps.status',
@@ -92,7 +99,7 @@ export class HelpService {
   async create(
     approvalId: string,
     questionIndex: number | null,
-    mode: HelpMode,
+    mode: QuestionHelpMode,
   ): Promise<HelpView> {
     return this.db.transaction().execute(async (trx) => {
       const row = await trx
@@ -158,6 +165,8 @@ export class HelpService {
         .values({
           run_id: row.run_id,
           approval_id: approvalId,
+          decision: 'question',
+          subject: null,
           question_index: questionIndex,
           mode,
           status: 'queued',
@@ -222,6 +231,7 @@ export class HelpService {
         .selectFrom('helps')
         .select(['id', 'run_id', 'approval_id', 'question_index', 'mode'])
         .where('status', '=', 'queued')
+        .where('decision', '=', 'question')
         .orderBy('created_at')
         .limit(1)
         .forUpdate()
@@ -429,7 +439,7 @@ export class HelpService {
         },
         help.question_index,
       )
-      const findings = checkHelpResult(help.mode, asked?.options ?? [], input)
+      const findings = checkHelpResult(help.mode as QuestionHelpMode, asked?.options ?? [], input)
       if (findings.length > 0)
         return {
           error: [
@@ -441,7 +451,7 @@ export class HelpService {
         .updateTable('helps')
         .set({
           status: 'succeeded',
-          result: JSON.stringify(resultOf(help.mode, input)),
+          result: JSON.stringify(resultOf(help.mode as QuestionHelpMode, input)),
           ended_at: this.clock(),
         })
         .where('id', '=', helpId)
