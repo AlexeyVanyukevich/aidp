@@ -3,6 +3,7 @@ import type { Database } from '../../db/schema.js'
 import { publish } from '../../shared/bus.js'
 import { ConflictError, NotFoundError } from '../../shared/errors.js'
 import type { TaskState } from '../../shared/vocabulary.js'
+import { settleHelps } from '../approvals/help.service.js'
 import { DELIVERY_FACTS, nextState, type Facts, type Move } from './transitions.js'
 
 type Db = Kysely<Database> | Transaction<Database>
@@ -88,6 +89,12 @@ export async function moveTask(
     .set({ state: to, position: last + 1, updated_at: new Date() })
     .where('id', '=', taskId)
     .execute()
+  await settleHelpsIn(db, taskId)
   await publish(db, { topic: 'task.updated', taskId })
   return { from: task.state, to }
+}
+
+/** Settles the task's decision helps in the move's own transaction, when it has one. */
+async function settleHelpsIn(db: Db, taskId: string): Promise<void> {
+  if (db.isTransaction) await settleHelps(db as Transaction<Database>, taskId, new Date())
 }

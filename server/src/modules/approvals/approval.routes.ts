@@ -1,7 +1,13 @@
 import type { FastifyInstance } from 'fastify'
 import type { TypeBoxTypeProvider } from '@fastify/type-provider-typebox'
 import { TaskParams } from '../tasks/task.schemas.js'
-import { AnswerBody, ApprovalParams, ApprovalsQuery, HelpBody } from './approval.schemas.js'
+import {
+  AnswerBody,
+  ApprovalParams,
+  ApprovalsQuery,
+  DecisionHelpBody,
+  HelpBody,
+} from './approval.schemas.js'
 import { ApprovalService } from './approval.service.js'
 import { HelpService } from './help.service.js'
 
@@ -24,6 +30,15 @@ export function registerApprovals(instance: FastifyInstance): void {
     async (request, reply) => {
       reply.status(201)
       return helps.create(request.params.id, request.body.question_index ?? null, request.body.mode)
+    },
+  )
+
+  app.post(
+    '/api/tasks/:id/helps',
+    { schema: { params: TaskParams, body: DecisionHelpBody } },
+    async (request, reply) => {
+      reply.status(201)
+      return helps.createForDecision(request.params.id, request.body.decision, request.body.mode)
     },
   )
 

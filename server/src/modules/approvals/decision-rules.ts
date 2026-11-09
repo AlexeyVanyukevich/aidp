@@ -89,6 +89,8 @@ export type Subject = HelpSubject
 /** The facts a subject is compared with. */
 export interface SubjectFacts extends DecisionFacts {
   latestSpecVersion: number | null
+  /** The approved version, null when none is approved. */
+  approvedSpecVersion: number | null
   /** The task's latest spec or delivery run. */
   latestRunId: string | null
   latestDeliveryRunId: string | null
@@ -107,7 +109,8 @@ export function subjectOf(decision: CardDecision, facts: SubjectFacts): Subject 
     }
   return {
     task_state: facts.taskState,
-    spec_version: facts.latestSpecVersion,
+    // The spec Mark done reads: the approved one in Review and Failed, the latest in Spec review.
+    spec_version: specRead(facts).version,
     delivery_run_id: facts.latestDeliveryRunId,
   }
 }
@@ -121,4 +124,18 @@ export function stands(decision: CardDecision, subject: Subject, facts: SubjectF
 
 function sorted(subject: Subject): Record<string, unknown> {
   return Object.fromEntries(Object.entries(subject).sort(([a], [b]) => (a < b ? -1 : 1)))
+}
+
+/** What Mark done's check reads for the task's state (R11's `checked_against`). */
+export function specRead(
+  facts: Pick<SubjectFacts, 'taskState' | 'latestSpecVersion' | 'approvedSpecVersion'>,
+): {
+  checkedAgainst: 'approved_spec' | 'latest_spec' | 'description'
+  version: number | null
+} {
+  if (facts.taskState === 'spec_review')
+    return { checkedAgainst: 'latest_spec', version: facts.latestSpecVersion }
+  if (facts.taskState === 'review' || facts.taskState === 'failed')
+    return { checkedAgainst: 'approved_spec', version: facts.approvedSpecVersion }
+  return { checkedAgainst: 'description', version: null }
 }

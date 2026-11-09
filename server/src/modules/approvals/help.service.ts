@@ -1,5 +1,6 @@
 import type { Kysely, Transaction } from 'kysely'
 import type { Database } from '../../db/schema.js'
+import { planToKeepFor } from '../tasks/plan-history.queries.js'
 import type { Bus } from '../../shared/bus.js'
 import { publish } from '../../shared/bus.js'
 import { ConflictError, NotFoundError, ValidationError } from '../../shared/errors.js'
@@ -16,6 +17,14 @@ import type {
 } from '../../shared/vocabulary.js'
 import type { ApprovalOption, BatchQuestion } from './approval-rules.js'
 import {
+  DECISION_MODES,
+  offered,
+  stands,
+  subjectOf,
+  type CardDecision,
+  type SubjectFacts,
+} from './decision-rules.js'
+import {
   checkHelpResult,
   HELP_LIMITS,
   hasInFlight,
@@ -24,6 +33,8 @@ import {
   resultOf,
   type HelpResultInput,
 } from './help-rules.js'
+
+type Db = Kysely<Database> | Transaction<Database>
 
 export interface HelpView {
   id: string
@@ -54,6 +65,120 @@ export interface HelpWork {
     worktree_path: string | null
     task: { id: string; key: string; title: string; budget_usd: number | null }
   }
+}
+
+/** The facts the decision rules read for one task, as the database holds them now. */
+export async function readSubjectFacts(db: Db, taskId: string): Promise<SubjectFacts> {
+  const task = await db
+    .selectFrom('tasks')
+    .select('state')
+    .where('id', '=', taskId)
+    .executeTakeFirstOrThrow()
+  const run = await db
+    .selectFrom('runs')
+    .select(['id', 'block', 'checkpoint'])
+    .where('task_id', '=', taskId)
+    .where('kind', 'in', ['spec', 'delivery'])
+    .orderBy('created_at', 'desc')
+    .limit(1)
+    .executeTakeFirst()
+  const delivery = await db
+    .selectFrom('runs')
+    .select('id')
+    .where('task_id', '=', taskId)
+    .where('kind', '=', 'delivery')
+    .orderBy('created_at', 'desc')
+    .limit(1)
+    .executeTakeFirst()
+  const specs = await db
+    .selectFrom('specs')
+    .select(['version', 'status'])
+    .where('task_id', '=', taskId)
+    .execute()
+  const latest = specs.reduce<number | null>(
+    (best, spec) => (best === null || spec.version > best ? spec.version : best),
+    null,
+  )
+  const approved = specs
+    .filter((spec) => spec.status === 'approved')
+    .reduce<number | null>(
+      (best, spec) => (best === null || spec.version > best ? spec.version : best),
+      null,
+    )
+  const approval = await db
+    .selectFrom('approval_requests')
+    .innerJoin('runs', 'runs.id', 'approval_requests.run_id')
+    .select('approval_requests.status')
+    .where('runs.task_id', '=', taskId)
+    .where('approval_requests.status', 'in', ['open', 'expired'])
+    .orderBy('approval_requests.created_at', 'desc')
+    .limit(1)
+    .executeTakeFirst()
+  const block = (run?.block ?? null) as Block | null
+  const kept =
+    task.state === 'failed' ? await planToKeepFor(db as Kysely<Database>, taskId) : undefined
+  return {
+    taskState: task.state,
+    blockCause: block?.cause ?? null,
+    planToKeep: kept !== undefined,
+    checkpoint: run?.checkpoint !== null && run?.checkpoint !== undefined,
+    approvalCurrent:
+      approval !== undefined &&
+      isCurrent({
+        status: approval.status,
+        taskState: task.state,
+        blockCause: block?.cause ?? null,
+      }),
+    latestSpecVersion: latest,
+    approvedSpecVersion: approved,
+    latestRunId: run?.id ?? null,
+    latestDeliveryRunId: delivery?.id ?? null,
+    runBlock: block?.cause ?? null,
+  }
+}
+
+/**
+ * Called in the transaction of every task move and every insert of a spec version, with the
+ * task row locked: a queued or running decision help whose subject no longer stands is stopped
+ * and its run cancelled; a succeeded one is retired.
+ */
+export async function settleHelps(
+  db: Transaction<Database>,
+  taskId: string,
+  now: Date,
+): Promise<void> {
+  const helps = await db
+    .selectFrom('helps')
+    .innerJoin('runs', 'runs.id', 'helps.run_id')
+    .select(['helps.id', 'helps.run_id', 'helps.decision', 'helps.subject', 'helps.status'])
+    .where('runs.task_id', '=', taskId)
+    .where('helps.decision', '!=', 'question')
+    .where('helps.status', 'in', ['queued', 'running', 'succeeded'])
+    .where('helps.retired_at', 'is', null)
+    .execute()
+  if (helps.length === 0) return
+  const facts = await readSubjectFacts(db, taskId)
+  let changed = false
+  for (const help of helps) {
+    if (stands(help.decision as CardDecision, help.subject as HelpSubject, facts)) continue
+    changed = true
+    if (help.status === 'succeeded') {
+      await db.updateTable('helps').set({ retired_at: now }).where('id', '=', help.id).execute()
+      continue
+    }
+    await db
+      .updateTable('helps')
+      .set({ status: 'stopped', ended_at: now })
+      .where('id', '=', help.id)
+      .execute()
+    await db
+      .updateTable('runs')
+      .set({ status: 'cancelled', ended_at: now, queued_at: null })
+      .where('id', '=', help.run_id)
+      .where('status', 'in', ['queued', 'running'])
+      .execute()
+  }
+  if (changed) await publish(db, { topic: 'help.updated', taskId })
 }
 
 const COLUMNS = [
@@ -188,23 +313,37 @@ export class HelpService {
   }
 
   /**
-   * A task's helps worth showing: for each question and mode the latest help, and the latest
-   * succeeded one when the latest is not that.
+   * A task's helps worth showing: for each question and mode, or each decision and mode, the
+   * latest help, and the latest succeeded one when the latest is not that. A decision help that
+   * is retired, or whose subject no longer stands, is left out.
    */
   async forTask(taskId: string): Promise<HelpView[]> {
-    const rows = (await this.db
+    const all = (await this.db
       .selectFrom('helps')
       .innerJoin('runs', 'runs.id', 'helps.run_id')
-      .select(COLUMNS)
+      .select([...COLUMNS, 'helps.retired_at'])
       .where('runs.task_id', '=', taskId)
       .where('helps.status', '!=', 'stopped')
       .orderBy('helps.created_at', 'desc')
-      .execute()) as HelpView[]
+      .execute()) as (HelpView & { retired_at: Date | null })[]
+    const facts = all.some((help) => help.decision !== 'question')
+      ? await readSubjectFacts(this.db, taskId)
+      : null
+    const rows = all.filter(
+      (help) =>
+        help.decision === 'question' ||
+        (help.retired_at === null &&
+          facts !== null &&
+          stands(help.decision as CardDecision, help.subject as HelpSubject, facts)),
+    )
     const keep = new Set<string>()
     const seenLatest = new Set<string>()
     const seenDone = new Set<string>()
     for (const help of rows) {
-      const key = `${help.approval_id}/${help.question_index ?? ''}/${help.mode}`
+      const key =
+        help.decision === 'question'
+          ? `${help.approval_id}/${help.question_index ?? ''}/${help.mode}`
+          : `${help.decision}/${help.mode}`
       if (!seenLatest.has(key)) {
         seenLatest.add(key)
         keep.add(help.id)
@@ -214,7 +353,85 @@ export class HelpService {
         keep.add(help.id)
       }
     }
-    return rows.filter((help) => keep.has(help.id))
+    return rows.filter((help) => keep.has(help.id)).map(({ retired_at: _retired, ...help }) => help)
+  }
+
+  /**
+   * Asks for a decision help (R4): with the task row locked, checks the decision is offered,
+   * then queues a help run and its help. A second press while one is in flight answers with it.
+   */
+  async createForDecision(taskId: string, decision: string, mode: string): Promise<HelpView> {
+    if (!(decision in DECISION_MODES) || decision === 'question')
+      throw new ValidationError('Unknown decision', { field: 'decision' })
+    const known = decision as CardDecision
+    const modes: readonly string[] = DECISION_MODES[known]
+    if (!modes.includes(mode)) throw new ValidationError('Unknown mode', { field: 'mode' })
+    return this.db.transaction().execute(async (trx) => {
+      const task = await trx
+        .selectFrom('tasks')
+        .select('state')
+        .where('id', '=', taskId)
+        .forUpdate()
+        .executeTakeFirst()
+      if (task === undefined) throw new NotFoundError('No such task')
+      const facts = await readSubjectFacts(trx, taskId)
+      if (!offered(known, facts))
+        throw new ConflictError(`Help with ${decision.replaceAll('_', ' ')} is not offered now`, {
+          reason: 'not_offered',
+          state: task.state,
+        })
+      const busy = await trx
+        .selectFrom('helps')
+        .innerJoin('runs', 'runs.id', 'helps.run_id')
+        .select(COLUMNS)
+        .where('runs.task_id', '=', taskId)
+        .where('helps.decision', '=', known)
+        .where('helps.mode', '=', mode as HelpMode)
+        .where('helps.status', 'in', ['queued', 'running'])
+        .executeTakeFirst()
+      if (busy !== undefined) return busy as HelpView
+      const last = await trx
+        .selectFrom('runs')
+        .select((eb) => eb.fn.max('number').as('n'))
+        .where('task_id', '=', taskId)
+        .where('kind', '=', 'help')
+        .executeTakeFirst()
+      const run = await trx
+        .insertInto('runs')
+        .values({
+          task_id: taskId,
+          kind: 'help',
+          number: (last?.n ?? 0) + 1,
+          status: 'queued',
+          queued_at: null,
+        })
+        .returning('id')
+        .executeTakeFirstOrThrow()
+      const created = await trx
+        .insertInto('helps')
+        .values({
+          run_id: run.id,
+          approval_id: null,
+          decision: known,
+          subject: JSON.stringify(subjectOf(known, facts)),
+          question_index: null,
+          mode: mode as HelpMode,
+          status: 'queued',
+          result: null,
+          reason: null,
+          phase_id: null,
+          runner_id: null,
+          started_at: null,
+          ended_at: null,
+          last_heartbeat_at: null,
+          created_at: this.clock(),
+        })
+        .returning(COLUMNS)
+        .executeTakeFirstOrThrow()
+      await publish(trx, { topic: 'help.queued', taskId })
+      await publish(trx, { topic: 'help.updated', taskId })
+      return created as HelpView
+    })
   }
 
   /** Takes the oldest queued help, waiting up to `waitMs` for one. */
