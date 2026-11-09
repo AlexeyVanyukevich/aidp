@@ -8,6 +8,7 @@ import {
   EventsBody,
   HeartbeatBody,
   HelpFailBody,
+  HelpEndedBody,
   HelpHeartbeatBody,
   HelpReleaseBody,
   RunParams,
@@ -66,6 +67,12 @@ export function registerRunner(instance: FastifyInstance): void {
         request.body.wait_ms ?? app.config.claimWaitMs,
       ),
     }),
+  )
+
+  app.post(
+    '/api/runner/helps/ended',
+    { preValidation: runnerKey, schema: { body: HelpEndedBody } },
+    async (request) => ({ ended: await helps.ended(request.body.run_ids) }),
   )
 
   app.post(
