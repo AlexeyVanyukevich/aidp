@@ -8,14 +8,18 @@ import { ProjectRepository } from '../projects/project.repository.js'
 import { RunRepository } from '../runs/run.repository.js'
 import {
   ACTIONS,
+  cancelRephrase,
+  decideSuggestion,
   decideTitle,
   performAction,
   redraft,
+  rephraseDescription,
   rephraseTitle,
   stopTitle,
 } from './task.actions.js'
 import { TaskRepository } from './task.repository.js'
 import {
+  AcceptSuggestionBody,
   AcceptTitleBody,
   CreateTaskBody,
   PatchTaskBody,
@@ -124,6 +128,45 @@ export function registerTasks(instance: FastifyInstance): void {
     { schema: { params: TaskParams } },
     async (request) => {
       await decideTitle(app.db, request.params.id, 'discard')
+      return service.get(request.params.id)
+    },
+  )
+
+  // The description actions: static paths too. None moves the card.
+  app.post(
+    '/api/tasks/:id/actions/rephrase',
+    { schema: { params: TaskParams } },
+    async (request) => {
+      await rephraseDescription(app.db, request.params.id, app.clock())
+      return service.get(request.params.id)
+    },
+  )
+  app.post(
+    '/api/tasks/:id/actions/cancel-rephrase',
+    { schema: { params: TaskParams } },
+    async (request) => {
+      await cancelRephrase(app.db, request.params.id, app.clock())
+      return service.get(request.params.id)
+    },
+  )
+  app.post(
+    '/api/tasks/:id/suggestion/accept',
+    { schema: { params: TaskParams, body: AcceptSuggestionBody } },
+    async (request) => {
+      await decideSuggestion(
+        app.db,
+        request.params.id,
+        { accept: request.body.description_md },
+        app.clock(),
+      )
+      return service.get(request.params.id)
+    },
+  )
+  app.post(
+    '/api/tasks/:id/suggestion/discard',
+    { schema: { params: TaskParams } },
+    async (request) => {
+      await decideSuggestion(app.db, request.params.id, 'discard', app.clock())
       return service.get(request.params.id)
     },
   )

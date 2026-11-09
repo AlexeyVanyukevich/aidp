@@ -7,6 +7,9 @@ import { DELIVERY_FACTS, nextState, type Facts, type Move } from './transitions.
 
 type Db = Kysely<Database> | Transaction<Database>
 
+/** The moves a rephrase run in flight holds back: each fixes the description it reads. */
+const HELD_BY_REPHRASE: readonly Move[] = ['draft_spec', 'redraft', 'approve']
+
 /**
  * What a move's destination can depend on (`Facts`), read where the move is made: the kind of
  * the task's latest run, and whether the task has a spec version.
@@ -16,7 +19,7 @@ export async function moveFacts(db: Db, taskId: string): Promise<Facts> {
     .selectFrom('runs')
     .select('kind')
     .where('task_id', '=', taskId)
-    .where('kind', '!=', 'title')
+    .where('kind', 'in', ['spec', 'delivery'])
     .orderBy('created_at', 'desc')
     .limit(1)
     .executeTakeFirst()
@@ -54,6 +57,23 @@ export async function moveTask(
       state: task.state,
       move,
     })
+  }
+
+  if (HELD_BY_REPHRASE.includes(move)) {
+    const rephrasing = await db
+      .selectFrom('runs')
+      .select('id')
+      .where('task_id', '=', taskId)
+      .where('kind', '=', 'rephrase')
+      .where('status', 'in', ['queued', 'running'])
+      .limit(1)
+      .executeTakeFirst()
+    if (rephrasing !== undefined)
+      throw new ConflictError('The description is being rephrased; wait for it or cancel it', {
+        reason: 'rephrasing',
+        state: task.state,
+        move,
+      })
   }
 
   const { last } = await db

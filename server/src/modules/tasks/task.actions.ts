@@ -26,7 +26,7 @@ async function cancel(trx: Transaction<Database>, taskId: string, now: Date): Pr
     .selectFrom('runs')
     .select(['id', 'kind', 'status', 'pending'])
     .where('task_id', '=', taskId)
-    .where('kind', '!=', 'title')
+    .where('kind', 'in', ['spec', 'delivery'])
     .where('status', 'in', ['queued', 'running', 'paused', 'blocked'])
     .orderBy('created_at', 'desc')
     .executeTakeFirst()
@@ -112,7 +112,7 @@ export async function performAction(
         .selectFrom('runs')
         .select(['id', 'block', 'checkpoint'])
         .where('task_id', '=', taskId)
-        .where('kind', '!=', 'title')
+        .where('kind', 'in', ['spec', 'delivery'])
         .where('status', '=', 'blocked')
         .orderBy('created_at', 'desc')
         .executeTakeFirst()
@@ -200,7 +200,11 @@ export async function redraft(
  * The title actions leave the card where it is: they lock the task row, so a move or a second
  * action waits, and refuse a card outside Backlog and Spec review.
  */
-async function lockForTitle(trx: Transaction<Database>, taskId: string): Promise<void> {
+async function lockForTitle(
+  trx: Transaction<Database>,
+  taskId: string,
+  what: 'title' | 'description' = 'title',
+): Promise<void> {
   const task = await trx
     .selectFrom('tasks')
     .select('state')
@@ -209,7 +213,7 @@ async function lockForTitle(trx: Transaction<Database>, taskId: string): Promise
     .executeTakeFirst()
   if (task === undefined) throw new NotFoundError('No such task')
   if (!DESCRIBABLE.includes(task.state))
-    throw new ConflictError(`The title is fixed in ${task.state}`, { state: task.state })
+    throw new ConflictError(`The ${what} is fixed in ${task.state}`, { state: task.state })
 }
 
 /** Rephrase title: a title run, queued; the card does not move. */
@@ -306,6 +310,139 @@ export async function decideTitle(
       await trx
         .updateTable('tasks')
         .set({ title: decision.accept.trim(), updated_at: new Date() })
+        .where('id', '=', taskId)
+        .execute()
+    await publish(trx, { topic: 'task.updated', taskId })
+  })
+}
+
+/**
+ * Rephrase: a rephrase run, queued, reading the description as it stands; the card does not
+ * move. It replaces the task's pending suggestion, which was written from an older text.
+ */
+export async function rephraseDescription(
+  db: Kysely<Database>,
+  taskId: string,
+  now: Date,
+): Promise<void> {
+  await db.transaction().execute(async (trx) => {
+    await lockForTitle(trx, taskId, 'description')
+    const runs = await trx
+      .selectFrom('runs')
+      .select(['status'])
+      .where('task_id', '=', taskId)
+      .where('kind', '=', 'rephrase')
+      .execute()
+    if (runs.some((run) => run.status === 'queued' || run.status === 'running'))
+      throw new ConflictError('The description is already being rephrased', {
+        reason: 'rephrasing',
+      })
+    const task = await trx
+      .selectFrom('tasks')
+      .select('description_md')
+      .where('id', '=', taskId)
+      .executeTakeFirstOrThrow()
+    if (blank(task.description_md))
+      throw new ValidationError('The task has no description to rephrase', {
+        field: 'description_md',
+      })
+    await trx
+      .updateTable('runs')
+      .set({ suggestion_status: 'replaced', suggestion_decided_at: now })
+      .where('task_id', '=', taskId)
+      .where('kind', '=', 'rephrase')
+      .where('suggestion_status', '=', 'pending')
+      .execute()
+    const run = await trx
+      .insertInto('runs')
+      .values({
+        task_id: taskId,
+        kind: 'rephrase',
+        number: runs.length + 1,
+        base_md: task.description_md,
+        status: 'queued',
+        queued_at: now,
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow()
+    await publish(trx, { topic: 'run.queued', runId: run.id })
+    await publish(trx, { topic: 'task.updated', taskId })
+  })
+}
+
+/** Cancel rephrase: a queued run ends at once; a running one is stopped by its runner. */
+export async function cancelRephrase(
+  db: Kysely<Database>,
+  taskId: string,
+  now: Date,
+): Promise<void> {
+  await db.transaction().execute(async (trx) => {
+    const task = await trx
+      .selectFrom('tasks')
+      .select('id')
+      .where('id', '=', taskId)
+      .forUpdate()
+      .executeTakeFirst()
+    if (task === undefined) throw new NotFoundError('No such task')
+    const run = await trx
+      .selectFrom('runs')
+      .select(['id', 'status'])
+      .where('task_id', '=', taskId)
+      .where('kind', '=', 'rephrase')
+      .where('status', 'in', ['queued', 'running'])
+      .orderBy('created_at', 'desc')
+      .executeTakeFirst()
+    if (run === undefined) throw new ConflictError('The description is not being rephrased')
+    const reason = 'cancelled by the owner'
+    await trx
+      .updateTable('runs')
+      .set(
+        run.status === 'queued'
+          ? { status: 'cancelled', ended_at: now, queued_at: null, failure_reason: reason }
+          : { cancel_requested: true, failure_reason: reason },
+      )
+      .where('id', '=', run.id)
+      .execute()
+    await publish(trx, { topic: 'task.updated', taskId })
+  })
+}
+
+/**
+ * Accept: the description becomes the given text (the suggestion as shown, edited or not);
+ * discard leaves it. Either decides the pending suggestion, in one transaction.
+ */
+export async function decideSuggestion(
+  db: Kysely<Database>,
+  taskId: string,
+  decision: { accept: string } | 'discard',
+  now: Date,
+): Promise<void> {
+  await db.transaction().execute(async (trx) => {
+    await lockForTitle(trx, taskId, 'description')
+    const run = await trx
+      .selectFrom('runs')
+      .select('id')
+      .where('task_id', '=', taskId)
+      .where('kind', '=', 'rephrase')
+      .where('suggestion_status', '=', 'pending')
+      .orderBy('created_at', 'desc')
+      .executeTakeFirst()
+    if (run === undefined)
+      throw new ConflictError('There is no suggested description to decide', {
+        reason: 'no_suggestion',
+      })
+    await trx
+      .updateTable('runs')
+      .set({
+        suggestion_status: decision === 'discard' ? 'discarded' : 'accepted',
+        suggestion_decided_at: now,
+      })
+      .where('id', '=', run.id)
+      .execute()
+    if (decision !== 'discard')
+      await trx
+        .updateTable('tasks')
+        .set({ description_md: decision.accept, updated_at: now })
         .where('id', '=', taskId)
         .execute()
     await publish(trx, { topic: 'task.updated', taskId })

@@ -41,3 +41,9 @@ export const AcceptTitleBody = Type.Object(
   { title: Type.String({ maxLength: 200 }) },
   { additionalProperties: false },
 )
+
+/** The suggestion as shown, edited or not; blank is refused here, as the description's limit. */
+export const AcceptSuggestionBody = Type.Object(
+  { description_md: Type.String({ minLength: 1, maxLength: 100_000 }) },
+  { additionalProperties: false },
+)

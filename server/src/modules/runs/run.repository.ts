@@ -170,7 +170,7 @@ export class RunRepository {
       .selectFrom('runs')
       .select(['id', 'task_id', 'current_phase', 'pr_url'])
       .where('task_id', 'in', taskIds)
-      .where('kind', '!=', 'title')
+      .where('kind', 'in', ['spec', 'delivery'])
       .distinctOn('task_id')
       .orderBy('task_id')
       .orderBy('created_at', 'desc')

@@ -26,6 +26,8 @@ export interface RunWork {
   spec_version: number | null
   /** What the owner asked a redraft to change. */
   note: string | null
+  /** A rephrase run's: the description as it stood when the run was queued. */
+  base_md: string | null
   task: {
     id: string
     key: string
@@ -79,11 +81,12 @@ export type Work =
     }
   | { kind: 'cleanup'; run: { id: string; repo_path: string; worktree_path: string | null } }
 
-/** The card states a run may start from: a title run starts beside any of its two. */
+/** The card states a run may start from: a title or rephrase run starts beside any of its two. */
 const START_STATES: Record<RunKind, readonly TaskState[]> = {
   spec: ['spec_draft'],
   delivery: ['ready'],
   title: ['backlog', 'spec_review'],
+  rephrase: ['backlog', 'spec_review'],
 }
 
 /**
@@ -323,6 +326,7 @@ export class RunnerService {
         'runs.number as run_number',
         'runs.spec_version',
         'runs.note',
+        'runs.base_md',
         'runs.test_command as run_test_command',
         'projects.id as project_id',
         'specs.version',
@@ -382,6 +386,7 @@ export class RunnerService {
       kind: row.kind,
       spec_version: row.spec_version,
       note: row.note,
+      base_md: row.base_md,
       task: {
         id: row.task_id,
         key: `${row.key}-${row.number}`,
