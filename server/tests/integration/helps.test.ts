@@ -180,7 +180,14 @@ describe('a help through its life', () => {
     const { client, call } = await tools(runId, taskId, queued.id)
     const names = (await client.listTools()).tools.map((t) => t.name).sort()
     expect(names).toEqual(
-      ['get_question', 'get_phase_record', 'get_spec', 'get_task', 'save_help_result'].sort(),
+      [
+        'get_decision',
+        'get_question',
+        'get_phase_record',
+        'get_spec',
+        'get_task',
+        'save_help_result',
+      ].sort(),
     )
 
     const read = JSON.parse((await call('get_question')).content[0]!.text)
