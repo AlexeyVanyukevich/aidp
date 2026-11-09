@@ -117,6 +117,14 @@ const SUGGEST_SECOND = {
   tool: 'suggest_title',
   args: { title: 'Retry webhook deliveries with growing delays', reason: 'Names the delay list' },
 }
+/** The rephraser's suggestion for a description. */
+const SAVE_DESCRIPTION = {
+  tool: 'save_suggestion',
+  args: {
+    body_md:
+      'Retry failed webhook deliveries with delays of 1, 2 and 4 seconds (src/retry.ts). Unsure: whether a 429 counts as a failure.',
+  },
+}
 const SCRIPT = {
   // Slice 2's and slice 3's journeys pick their script by the task's title.
   byTitle: {
@@ -125,6 +133,10 @@ const SCRIPT = {
     'Suggest slowly': { 'title-writer': [[{ sleep: 6_000 }, SUGGEST_FIRST]] },
     'Suggest twice': { 'title-writer': [[SUGGEST_FIRST], [SUGGEST_SECOND]] },
     'Suggest nothing': { 'title-writer': [[]] },
+    // A rephrase run reads the task's title from the handoff, as a title run does.
+    'Rephrase one': { rephraser: [[SAVE_DESCRIPTION]] },
+    'Rephrase slowly': { rephraser: [[{ sleep: 6_000 }, SAVE_DESCRIPTION]] },
+    'Rephrase nothing': { rephraser: [[]] },
     'Draft a retry spec': drafting,
     'Help with colours': {
       ...colours,

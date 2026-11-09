@@ -5,6 +5,7 @@ import { api } from '../api'
 import { formatUsd } from '../board/columns'
 import { Loaded } from '../Loaded'
 import type { PlanData, TaskView } from '../types'
+import { latestDeliveryRun } from './timeline'
 
 export function PlanTab({ task }: { task: TaskView }) {
   const runs = useQuery({ queryKey: ['runs', task.id], queryFn: () => api.runs(task.id) })
@@ -12,7 +13,9 @@ export function PlanTab({ task }: { task: TaskView }) {
   return (
     <Loaded query={runs} failure="The runs could not be loaded.">
       {(list) => {
-        const artifact = list[0]?.artifacts.filter((a) => a.kind === 'plan').at(-1)
+        const artifact = latestDeliveryRun(list)
+          ?.artifacts.filter((a) => a.kind === 'plan')
+          .at(-1)
         if (artifact === undefined)
           return (
             <Empty title="No plan yet">

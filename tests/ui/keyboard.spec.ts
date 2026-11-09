@@ -106,6 +106,8 @@ test('a repository, the board and a card work from the keyboard alone', async ({
   await page.keyboard.press('Tab')
   await expect(card.getByRole('button', { name: 'Save description' })).toBeFocused()
   await page.keyboard.press('Tab')
+  await expect(card.getByRole('button', { name: 'Rephrase description' })).toBeFocused()
+  await page.keyboard.press('Tab')
   // An empty card offers Write spec, which opens the editor on the template.
   await expect(card.getByRole('button', { name: 'Write spec' })).toBeFocused()
   await page.keyboard.press('Enter')

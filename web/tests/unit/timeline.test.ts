@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { phaseLabel, runLabel, stepLabel, timelineModel } from '../../src/card/timeline'
+import {
+  latestDeliveryRun,
+  phaseLabel,
+  runLabel,
+  stepLabel,
+  timelineModel,
+} from '../../src/card/timeline'
 import type { EventView, PhaseView } from '../../src/types'
 
 const phase = (id: string, name: string, attempt: number, started: string): PhaseView => ({
@@ -34,6 +40,8 @@ describe('runLabel', () => {
   it.each([
     [{ kind: 'spec', number: 2 }, 'Draft 2'],
     [{ kind: 'delivery', number: 1 }, 'Run 1'],
+    [{ kind: 'title', number: 3 }, 'Title 3'],
+    [{ kind: 'rephrase', number: 1 }, 'Rephrase 1'],
   ])('names %j "%s"', (run, label) => {
     expect(runLabel(run)).toBe(label)
   })
@@ -116,6 +124,31 @@ describe('the title run in the Timeline and the Cost tab', () => {
     ['help', 'Help'],
     ['plan', 'plan'],
   ])('names the %s phase %s', (name, label) => {
+    expect(phaseLabel(name)).toBe(label)
+  })
+})
+
+// The Plan, Cost and Pull request tabs read the newest delivery run, not a later side run.
+describe('latestDeliveryRun', () => {
+  const run = (id: string, kind: string) => ({ id, kind })
+  it.each([
+    ['no runs', [], undefined],
+    ['only side runs', [run('a', 'rephrase'), run('b', 'title'), run('c', 'spec')], undefined],
+    ['a rephrase run after a delivery run', [run('a', 'rephrase'), run('b', 'delivery')], 'b'],
+    ['two delivery runs, newest first', [run('a', 'delivery'), run('b', 'delivery')], 'a'],
+    ['a draft between delivery runs', [run('a', 'spec'), run('b', 'delivery')], 'b'],
+  ])('with %s', (_name, runs, expected) => {
+    expect(latestDeliveryRun(runs)?.id).toBe(expected)
+  })
+})
+
+describe('phaseLabel', () => {
+  it.each([
+    ['rephrase', 'Rephrase'],
+    ['title', 'Title'],
+    ['help', 'Help'],
+    ['build', 'build'],
+  ])('names %s "%s"', (name, label) => {
     expect(phaseLabel(name)).toBe(label)
   })
 })

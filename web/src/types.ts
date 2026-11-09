@@ -74,6 +74,15 @@ export interface TaskView {
   plan_to_keep: { run: number } | null
   /** The task's latest title run: working, a suggestion to decide, or its failure; else null. */
   title_suggestion: TitleSuggestion | null
+  /** The task's latest rephrase run; null before any. */
+  rephrase: RephraseView | null
+}
+export interface RephraseView {
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
+  /** Why the run failed; null otherwise. */
+  failure_reason: string | null
+  /** The pending suggestion; stale when the description changed since it was written. */
+  suggestion: { body_md: string; stale: boolean } | null
 }
 export type TitleSuggestion =
   | { status: 'working' }

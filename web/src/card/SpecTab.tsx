@@ -24,6 +24,8 @@ import {
 const NO_DESCRIPTION = 'Write a description first; the spec-writer drafts from it.'
 const NO_NOTE = 'Say what to change.'
 const NO_TITLE = 'Enter a title.'
+const NO_DESCRIPTION_TO_REPHRASE = 'Write a description first; the rephraser works from it.'
+const WAIT_FOR_REPHRASE = 'Wait for the rephrase to finish, or cancel it.'
 
 export function SpecTab({ task, onFrozen }: { task: TaskView; onFrozen: () => void }) {
   const specs = useQuery({ queryKey: ['specs', task.id], queryFn: () => api.specs(task.id) })
@@ -53,12 +55,14 @@ function SpecEditor({
   const hintId = useId()
   const lockId = useId()
   const approveId = useId()
+  const waitId = useId()
+  const suggestionHeadingId = useId()
   const controls = specControls(task.state)
   const [selected, setSelected] = useState<string | undefined>()
   const [draft, setDraft] = useState<string | undefined>()
   const [editing, setEditing] = useState(false)
   // Where focus goes once the control is on the page; kept until it is.
-  type Target = 'edit' | 'write' | 'text' | 'stop' | 'rephrase'
+  type Target = 'edit' | 'write' | 'text' | 'stop' | 'rephrase' | 'cancelRephrase'
   const pending = useRef<Target | undefined>(undefined)
   const setFocus = (target: Target) => {
     pending.current = target
@@ -79,7 +83,12 @@ function SpecEditor({
   const suggestedField = useRef<HTMLInputElement>(null)
   const rephraseButton = useRef<HTMLButtonElement>(null)
   const [description, setDescription] = useState<string | undefined>()
-  const [descriptionMissing, setDescriptionMissing] = useState(false)
+  // The Description field's error text: which button found it blank.
+  const [descriptionMissing, setDescriptionMissing] = useState<string | undefined>()
+  const [suggestedDescription, setSuggestedDescription] = useState<
+    { of: string; text: string } | undefined
+  >()
+  const rephraseDescriptionButton = useRef<HTMLButtonElement>(null)
   const [note, setNote] = useState('')
   const [noteMissing, setNoteMissing] = useState(false)
   const [message, setMessage] = useState('')
@@ -122,6 +131,26 @@ function SpecEditor({
     wasWorking.current = suggestionStatus === 'working'
   }, [suggestionStatus])
 
+  // The description rephrase: in flight, a suggestion to decide, or a failure to show.
+  const rephrasing = task.rephrase?.status === 'queued' || task.rephrase?.status === 'running'
+  const pendingSuggestion = task.rephrase?.suggestion ?? null
+  const suggestionKey = pendingSuggestion?.body_md ?? null
+  const [lastSuggestion, setLastSuggestion] = useState(suggestionKey)
+  if (lastSuggestion !== suggestionKey) {
+    setLastSuggestion(suggestionKey)
+    if (lastSuggestion === null && suggestionKey !== null)
+      setMessage('A suggested description is ready.')
+  }
+  // Cancel took focus with it when it went, and so does a run that finishes: back to Rephrase.
+  const wasRephrasing = useRef(false)
+  useEffect(() => {
+    if (wasRephrasing.current && !rephrasing) {
+      if (document.activeElement === document.body || document.activeElement === null)
+        rephraseDescriptionButton.current?.focus()
+    }
+    wasRephrasing.current = rephrasing
+  }, [rephrasing])
+
   const refresh = () =>
     Promise.all([
       client.invalidateQueries({ queryKey: ['specs', task.id] }),
@@ -143,8 +172,8 @@ function SpecEditor({
             : 'That did not work. Try again.',
     })
   /** The field's error is on the page before focus arrives, so it is read with the field. */
-  const markMissing = (which: 'description' | 'note') => {
-    flushSync(() => (which === 'description' ? setDescriptionMissing : setNoteMissing)(true))
+  const markMissing = (which: 'description' | 'note', text = NO_DESCRIPTION) => {
+    flushSync(() => (which === 'description' ? setDescriptionMissing(text) : setNoteMissing(true)))
     ;(which === 'description' ? descriptionField : noteField).current?.focus()
   }
 
@@ -288,6 +317,76 @@ function SpecEditor({
     },
     onSettled: refresh,
   })
+  // An edited description is saved first: the rephraser reads what the owner sees.
+  const rephraseDescription = useMutation({
+    mutationFn: async () => {
+      if (description !== undefined) await api.patchTask(task.id, { description_md: description })
+      return api.action(task.id, 'rephrase')
+    },
+    onMutate: () => setProblem(undefined),
+    onSuccess: () => {
+      setDescription(undefined)
+      setFocus('cancelRephrase')
+      setMessage('The rephraser is reading the code.')
+    },
+    onError: (error) => {
+      if (invalidField(error) === 'description_md')
+        markMissing('description', NO_DESCRIPTION_TO_REPHRASE)
+      else fail('draft')(error)
+    },
+    onSettled: refresh,
+  })
+  const cancelRephrase = useMutation({
+    mutationFn: () => api.action(task.id, 'cancel-rephrase'),
+    onMutate: () => setProblem(undefined),
+    onSuccess: () => setMessage('Rephrase cancelled.'),
+    onError: fail('draft'),
+    onSettled: refresh,
+  })
+  const acceptSuggestion = useMutation({
+    mutationFn: (text: string) => api.acceptSuggestion(task.id, text),
+    onMutate: () => setProblem(undefined),
+    onSuccess: () => {
+      setDescription(undefined)
+      setSuggestedDescription(undefined)
+      setMessage('Description replaced with the suggestion.')
+    },
+    onError: fail('draft'),
+    onSettled: refresh,
+  })
+  const discardSuggestion = useMutation({
+    mutationFn: () => api.discardSuggestion(task.id),
+    onMutate: () => setProblem(undefined),
+    onSuccess: () => {
+      setSuggestedDescription(undefined)
+      setMessage('Suggestion discarded.')
+    },
+    onError: fail('draft'),
+    onSettled: refresh,
+  })
+  const suggestedText =
+    pendingSuggestion === null
+      ? ''
+      : suggestedDescription?.of === pendingSuggestion.body_md
+        ? suggestedDescription.text
+        : pendingSuggestion.body_md
+  const pressRephraseDescription = () => {
+    if (describedAs.trim() === '') markMissing('description', NO_DESCRIPTION_TO_REPHRASE)
+    else rephraseDescription.mutate()
+  }
+  // Focus moves to the Description field while the controls that will go are still on the page.
+  const pressCancelRephrase = () => {
+    descriptionField.current?.focus()
+    cancelRephrase.mutate()
+  }
+  const pressAcceptSuggestion = () => {
+    descriptionField.current?.focus()
+    acceptSuggestion.mutate(suggestedText)
+  }
+  const pressDiscardSuggestion = () => {
+    descriptionField.current?.focus()
+    discardSuggestion.mutate()
+  }
   const redraft = useMutation({
     mutationFn: () => api.redraft(task.id, note.trim()),
     onMutate: () => setProblem(undefined),
@@ -406,27 +505,84 @@ function SpecEditor({
           </div>
         </>
       )}
-      <Field
-        label="Description"
-        hint="What the task is for. The spec-writer drafts from it."
-        error={descriptionMissing ? NO_DESCRIPTION : undefined}
-      >
-        <Textarea
-          ref={descriptionField}
-          value={describedAs}
-          readOnly={!controls.describe}
-          rows={4}
-          onChange={(e) => {
-            setDescription(e.target.value)
-            if (descriptionMissing) setDescriptionMissing(false)
-          }}
-        />
-      </Field>
+      <div className="description-pair">
+        <div>
+          <Field
+            label="Description"
+            hint="What the task is for. The spec-writer drafts from it."
+            error={descriptionMissing}
+          >
+            <Textarea
+              ref={descriptionField}
+              value={describedAs}
+              readOnly={!controls.describe}
+              rows={4}
+              onChange={(e) => {
+                setDescription(e.target.value)
+                if (descriptionMissing) setDescriptionMissing(undefined)
+              }}
+            />
+          </Field>
+          {controls.describe && task.rephrase?.status === 'failed' && (
+            <p>The last rephrase did not finish: {task.rephrase.failure_reason}.</p>
+          )}
+        </div>
+        {controls.describe && pendingSuggestion !== null && (
+          <section aria-labelledby={suggestionHeadingId} className="suggestion">
+            <h3 id={suggestionHeadingId}>Suggested description</h3>
+            {pendingSuggestion.stale && <p>Written from an earlier version of your description.</p>}
+            <Field label="Suggestion text">
+              <Textarea
+                value={suggestedText}
+                rows={4}
+                onChange={(e) =>
+                  setSuggestedDescription({ of: pendingSuggestion.body_md, text: e.target.value })
+                }
+              />
+            </Field>
+            <div className="actions">
+              <Button
+                variant="primary"
+                busy={acceptSuggestion.isPending}
+                onClick={pressAcceptSuggestion}
+              >
+                Accept suggestion
+              </Button>
+              <Button busy={discardSuggestion.isPending} onClick={pressDiscardSuggestion}>
+                Discard suggestion
+              </Button>
+            </div>
+          </section>
+        )}
+      </div>
       {controls.describe && (
         <div className="actions">
           <Button busy={describe.isPending} onClick={() => describe.mutate()}>
             Save description
           </Button>
+          {rephrasing ? (
+            <>
+              <span>The rephraser is reading the code.</span>
+              <Button
+                ref={focusOn('cancelRephrase')}
+                busy={cancelRephrase.isPending}
+                onClick={pressCancelRephrase}
+              >
+                Cancel rephrase
+              </Button>
+              <span id={waitId} className="muted">
+                {WAIT_FOR_REPHRASE}
+              </span>
+            </>
+          ) : (
+            <Button
+              ref={rephraseDescriptionButton}
+              busy={rephraseDescription.isPending}
+              onClick={pressRephraseDescription}
+            >
+              Rephrase description
+            </Button>
+          )}
         </div>
       )}
       {controls.drafting && (
@@ -526,8 +682,8 @@ function SpecEditor({
             <Button
               variant="primary"
               busy={approve.isPending}
-              disabled={!canApprove}
-              aria-describedby={canApprove ? undefined : approveId}
+              disabled={!canApprove || rephrasing}
+              aria-describedby={rephrasing ? waitId : canApprove ? undefined : approveId}
               onClick={() => shown && approve.mutate(shown.id)}
             >
               Approve
@@ -536,8 +692,8 @@ function SpecEditor({
           {buttons.draftSpec && (
             <Button
               busy={draftSpec.isPending}
-              disabled={changed}
-              aria-describedby={changed ? lockId : undefined}
+              disabled={changed || rephrasing}
+              aria-describedby={rephrasing ? waitId : changed ? lockId : undefined}
               onClick={startDraft}
             >
               Draft spec
@@ -548,7 +704,7 @@ function SpecEditor({
               {DRAFT_LOCK}
             </span>
           )}
-          {buttons.approve && !canApprove && (
+          {buttons.approve && !canApprove && !rephrasing && (
             <span id={approveId} className="muted">
               Approve needs the latest version saved, linting clean, with no open questions.
             </span>
@@ -580,8 +736,8 @@ function SpecEditor({
             <Button
               type="submit"
               busy={redraft.isPending}
-              disabled={changed}
-              aria-describedby={changed ? lockId : undefined}
+              disabled={changed || rephrasing}
+              aria-describedby={rephrasing ? waitId : changed ? lockId : undefined}
             >
               Redraft
             </Button>

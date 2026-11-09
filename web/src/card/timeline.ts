@@ -42,12 +42,34 @@ function withPauses(steps: EventView[]): (EventView | Pause)[] {
 /** A step's line, in words: a failure says so rather than only turning red. */
 /** A run's name: drafts and delivery runs are numbered apart (slice 3 spec, §2). */
 export function runLabel(run: { kind: string; number: number }): string {
-  return `${run.kind === 'spec' ? 'Draft' : run.kind === 'title' ? 'Title' : 'Run'} ${run.number}`
+  const word =
+    run.kind === 'spec'
+      ? 'Draft'
+      : run.kind === 'title'
+        ? 'Title'
+        : run.kind === 'rephrase'
+          ? 'Rephrase'
+          : 'Run'
+  return `${word} ${run.number}`
 }
 
-/** A phase's name as the Timeline and the Cost tab show it: the title and Help phases are capitalised. */
+/**
+ * The newest delivery run of a list ordered newest first: the Plan, Cost and Pull request tabs
+ * read it, not a draft, a title or a rephrase run that came after.
+ */
+export function latestDeliveryRun<T extends { kind: string }>(runs: readonly T[]): T | undefined {
+  return runs.find((run) => run.kind === 'delivery')
+}
+
+/** A phase's name as the Timeline and the Cost tab show it: the title, Help and Rephrase phases are capitalised. */
 export function phaseLabel(name: string): string {
-  return name === 'title' ? 'Title' : name === 'help' ? 'Help' : name
+  return name === 'title'
+    ? 'Title'
+    : name === 'help'
+      ? 'Help'
+      : name === 'rephrase'
+        ? 'Rephrase'
+        : name
 }
 
 /** The Runner line of a run that holds a plan a Re-run copied into it; null for any other. */

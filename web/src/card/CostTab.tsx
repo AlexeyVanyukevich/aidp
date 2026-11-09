@@ -5,7 +5,7 @@ import { formatUsd } from '../board/columns'
 import { Loaded } from '../Loaded'
 import type { CostLine, PlanData, TaskView } from '../types'
 import { formatPercent, formatTokens } from './format'
-import { phaseLabel, runLabel } from './timeline'
+import { latestDeliveryRun, phaseLabel, runLabel } from './timeline'
 
 function Cells({ line }: { line: CostLine }) {
   return (
@@ -34,8 +34,9 @@ export function CostTab({ task }: { task: TaskView }) {
   return (
     <Loaded query={costs} failure="The costs could not be loaded.">
       {(c) => {
-        const plan = runs.data?.[0]?.artifacts.filter((a) => a.kind === 'plan').at(-1)?.data as
-          PlanData | undefined
+        const plan = latestDeliveryRun(runs.data ?? [])
+          ?.artifacts.filter((a) => a.kind === 'plan')
+          .at(-1)?.data as PlanData | undefined
         const estimate = plan?.steps.reduce((sum, s) => sum + (s.estimate_usd ?? 0), 0)
         return (
           <div className="cost-tab">

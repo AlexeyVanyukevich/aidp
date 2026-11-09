@@ -54,3 +54,10 @@ body {
   padding: 0;
   border: 0;
 }
+/* The Description beside its suggestion; one column when the card is narrow. */
+.description-pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
+  align-items: start;
+  gap: var(--zl-space-3);
+}

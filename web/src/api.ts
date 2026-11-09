@@ -99,11 +99,24 @@ export const api = {
   ) => request<TaskView>('PATCH', `/api/tasks/${id}`, patch),
   action: (
     id: string,
-    action: 'cancel' | 'resume' | 'draft-spec' | 'rephrase-title' | 'stop-title' | 'discard-title',
+    action:
+      | 'cancel'
+      | 'resume'
+      | 'draft-spec'
+      | 'rephrase-title'
+      | 'stop-title'
+      | 'discard-title'
+      | 'rephrase'
+      | 'cancel-rephrase',
   ) => request<TaskView>('POST', `/api/tasks/${id}/actions/${action}`),
   /** Applies the suggested title, as the owner edited it. */
   acceptTitle: (id: string, title: string) =>
     request<TaskView>('POST', `/api/tasks/${id}/actions/accept-title`, { title }),
+  /** Applies the suggested description, as the owner edited it. */
+  acceptSuggestion: (id: string, description_md: string) =>
+    request<TaskView>('POST', `/api/tasks/${id}/suggestion/accept`, { description_md }),
+  discardSuggestion: (id: string) =>
+    request<TaskView>('POST', `/api/tasks/${id}/suggestion/discard`),
   /** Re-run a Failed card: keep the accepted plan, or plan again. */
   rerun: (id: string, plan: 'keep' | 'again') =>
     request<TaskView>('POST', `/api/tasks/${id}/actions/rerun`, { plan }),
