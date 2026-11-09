@@ -1,4 +1,10 @@
-import type { ApprovalKind, HelpMode, HelpResult, HelpStatus } from '../../shared/vocabulary.js'
+import type {
+  ApprovalKind,
+  HelpMode,
+  HelpResult,
+  HelpStatus,
+  QuestionHelpMode,
+} from '../../shared/vocabulary.js'
 import type { ApprovalOption, BatchQuestion, Finding } from './approval-rules.js'
 
 /**
@@ -76,7 +82,7 @@ export function questionOf(
 
 /** What a saved result must be. The first finding names the field to fix. */
 export function checkHelpResult(
-  mode: HelpMode,
+  mode: QuestionHelpMode,
   options: ApprovalOption[],
   input: HelpResultInput,
 ): Finding[] {
@@ -108,7 +114,7 @@ export function checkHelpResult(
 }
 
 /** The result as it is stored: only the fields of its mode. */
-export function resultOf(mode: HelpMode, input: HelpResultInput): HelpResult {
+export function resultOf(mode: QuestionHelpMode, input: HelpResultInput): HelpResult {
   if (mode === 'explain')
     return {
       mode,

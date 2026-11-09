@@ -1,4 +1,4 @@
-import type { BlockCause, TaskState } from '../../shared/vocabulary.js'
+import type { BlockCause, HelpSubject, TaskState } from '../../shared/vocabulary.js'
 
 /**
  * Every decision the owner makes on a card where a helper may advise (AIDP-105 spec). Pure: no
@@ -84,10 +84,7 @@ export function offeredDecisions(facts: DecisionFacts): Decision[] {
 }
 
 /** What a help recorded when it was created (R5). */
-export type Subject =
-  | { spec_version: number }
-  | { run_id: string; task_state: TaskState; block: BlockCause | null }
-  | { task_state: TaskState; spec_version: number | null; delivery_run_id: string | null }
+export type Subject = HelpSubject
 
 /** The facts a subject is compared with. */
 export interface SubjectFacts extends DecisionFacts {

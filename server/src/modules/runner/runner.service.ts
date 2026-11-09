@@ -87,6 +87,8 @@ const START_STATES: Record<RunKind, readonly TaskState[]> = {
   delivery: ['ready'],
   title: ['backlog', 'spec_review'],
   rephrase: ['backlog', 'spec_review'],
+  // A help run is never claimed as a run; its help is claimed on the help lane.
+  help: [],
 }
 
 /**
