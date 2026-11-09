@@ -154,14 +154,7 @@ export async function cleanUpHelp(git: Git, home: string, runId: string): Promis
  * be asked, the leftovers wait for a later start.
  */
 export async function clearEndedHelps(api: BoardApi, git: Git, home: string): Promise<void> {
-  let ids: string[]
-  try {
-    ids = readdirSync(join(home, 'runs')).filter((id) =>
-      existsSync(join(home, 'runs', id, HELP_FILE)),
-    )
-  } catch {
-    return
-  }
+  const ids = helpLeftovers(home)
   if (ids.length === 0) return
   let ended: string[]
   try {
@@ -173,6 +166,17 @@ export async function clearEndedHelps(api: BoardApi, git: Git, home: string): Pr
     return
   }
   for (const id of ended.filter((id) => ids.includes(id))) await cleanUpHelp(git, home, id)
+}
+
+/** The ids of the run directories under `home` that hold a `help.json`. */
+export function helpLeftovers(home: string): string[] {
+  try {
+    return readdirSync(join(home, 'runs')).filter((id) =>
+      existsSync(join(home, 'runs', id, HELP_FILE)),
+    )
+  } catch {
+    return []
+  }
 }
 
 export interface HelpDeps {
