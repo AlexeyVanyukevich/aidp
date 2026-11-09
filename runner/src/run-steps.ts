@@ -608,6 +608,8 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
       // The board must accept the end before anything is removed: a refused end keeps the
       // worktree, so Resume has something to continue from.
       try {
+        // A title or rephrase run is never resumed: a phase a stop left open ends with the run.
+        if (endsFailed) await endPhase(false)
         await deps.sink.send([
           newEvent(
             { runId: run.id, phaseId: null, type: 'run_end' },

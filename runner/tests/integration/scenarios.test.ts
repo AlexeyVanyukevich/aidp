@@ -114,7 +114,7 @@ interface RunJson {
   failure_reason: string | null
   fix_loops: number
   current_phase: string | null
-  phases: { name: string; status: string }[]
+  phases: { name: string; status: string; interrupted: boolean }[]
 }
 interface EventJson {
   type: string
@@ -1476,6 +1476,7 @@ describe('a title run end to end', () => {
     expect(await titleRunOf(taskId)).toMatchObject({
       status: 'failed',
       failure_reason: 'the runner stopped',
+      phases: [{ name: 'title', status: 'failed', interrupted: true }],
     })
     expect((await titleTask(taskId)).state).toBe('backlog')
     f.stopAll()
@@ -1563,7 +1564,10 @@ describe('a rephrase run end to end', () => {
     )
     await api('POST', `/api/tasks/${taskId}/actions/cancel-rephrase`)
     expect(await running).toBe('cancelled')
-    expect(await rephraseRunOf(taskId)).toMatchObject({ status: 'cancelled' })
+    expect(await rephraseRunOf(taskId)).toMatchObject({
+      status: 'cancelled',
+      phases: [{ name: 'rephrase', status: 'failed', interrupted: true }],
+    })
     expect(await rephraseTask(taskId)).toMatchObject({ state: 'backlog' })
   })
 
@@ -1601,6 +1605,7 @@ describe('a rephrase run end to end', () => {
     expect(await rephraseRunOf(taskId)).toMatchObject({
       status: 'failed',
       failure_reason: 'the runner stopped',
+      phases: [{ name: 'rephrase', status: 'failed', interrupted: true }],
     })
     expect((await rephraseTask(taskId)).state).toBe('backlog')
     f.stopAll()
