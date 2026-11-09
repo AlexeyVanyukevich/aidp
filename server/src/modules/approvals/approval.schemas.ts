@@ -42,6 +42,11 @@ export const HelpBody = Type.Object(
   { additionalProperties: false },
 )
 
+export const DecisionHelpBody = Type.Object(
+  { decision: Type.String(), mode: Type.String() },
+  { additionalProperties: false },
+)
+
 export const ApprovalsQuery = Type.Object(
   { status: Type.Literal('open') },
   { additionalProperties: false },

@@ -1,5 +1,6 @@
 import type { Kysely, Transaction } from 'kysely'
 import type { Database } from '../../db/schema.js'
+import { settleHelps } from '../approvals/help.service.js'
 import type { SpecCriterion } from '../../shared/vocabulary.js'
 
 export interface SpecRow {
@@ -45,6 +46,8 @@ export class SpecRepository {
   }
 
   async insertVersion(db: Db, taskId: string, body: string): Promise<SpecRow> {
+    // The task row first, as a move takes it, so a help cannot be created past `settleHelps`.
+    await db.selectFrom('tasks').select('id').where('id', '=', taskId).forUpdate().execute()
     const version = (await this.latestVersion(db, taskId)) + 1
     await db
       .updateTable('specs')
@@ -52,7 +55,7 @@ export class SpecRepository {
       .where('task_id', '=', taskId)
       .where('status', '=', 'draft')
       .execute()
-    return db
+    const row = await db
       .insertInto('specs')
       .values({
         task_id: taskId,
@@ -64,6 +67,8 @@ export class SpecRepository {
       })
       .returning(COLUMNS)
       .executeTakeFirstOrThrow()
+    if (db.isTransaction) await settleHelps(db as Transaction<Database>, taskId, new Date())
+    return row
   }
 
   /**
