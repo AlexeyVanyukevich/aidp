@@ -1,7 +1,14 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { keptPlanLine } from '../../src/card/timeline'
-import { actionsFor, blockText, initialTab, stateAnnouncement } from '../../src/card/blocks'
-import type { Block, TaskState } from '../../src/types'
+import {
+  actionsFor,
+  blockText,
+  decisionsFor,
+  initialTab,
+  stateAnnouncement,
+} from '../../src/card/blocks'
+import type { Block, TaskState, TaskView } from '../../src/types'
 
 describe('blockText', () => {
   // The words of the slice 2 spec's §8 table.
@@ -140,4 +147,47 @@ describe('stateAnnouncement', () => {
   ])('%s', (_name, change, text) => {
     expect(stateAnnouncement(change)).toBe(text)
   })
+})
+
+interface DecisionRow {
+  name: string
+  state: TaskState
+  block_cause: Block['cause'] | null
+  plan_to_keep: boolean
+  checkpoint: boolean
+  approval_current: boolean
+  offered: string[]
+  stopped_run_actions: string[]
+}
+const decisionRows = JSON.parse(
+  readFileSync(new URL('../../../tests/fixtures/decisions.json', import.meta.url), 'utf8'),
+) as DecisionRow[]
+
+const blockOf = (row: DecisionRow): Block | null =>
+  row.block_cause === null ? null : { cause: row.block_cause, stage: null }
+
+describe('the shared decision table', () => {
+  it.each(decisionRows)('$name: decisionsFor', (row) => {
+    expect(decisionsFor(row.state, blockOf(row))).toEqual(
+      row.offered.filter((decision) => decision !== 'question'),
+    )
+  })
+  it.each(decisionRows.filter((row) => ['blocked', 'failed'].includes(row.state)))(
+    '$name: actionsFor',
+    (row) => {
+      const actions = actionsFor(
+        row.state,
+        blockOf(row),
+        row.plan_to_keep ? ({} as NonNullable<TaskView['plan_to_keep']>) : null,
+      )
+      const found = [
+        actions.resume ? 'resume' : null,
+        actions.cancel ? 'cancel' : null,
+        actions.rerun ? 'rerun_again' : null,
+        actions.markDone && row.state === 'failed' ? 'mark_done' : null,
+        actions.rerunKeep ? 'rerun_keep' : null,
+      ].filter((action) => action !== null)
+      expect(found).toEqual(row.stopped_run_actions)
+    },
+  )
 })
