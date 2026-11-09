@@ -53,9 +53,23 @@
   grid-column: 2;
   align-self: end;
 }
+/* Under the form, in the first column, never stretched. */
+.board-head .prioritise {
+  grid-column: 1;
+  grid-row: 5;
+  justify-self: start;
+  align-self: start;
+  margin-block-start: var(--zl-space-3);
+}
 @media (min-width: 40rem) {
   .board-head {
-    grid-template-columns: auto 1fr auto;
+    grid-template-columns: auto 1fr auto auto;
+  }
+  .board-head .prioritise {
+    grid-column: 4;
+    grid-row: 2;
+    align-self: end;
+    margin-block-start: 0;
   }
   .board-head h1 {
     grid-row: 1 / span 2;
