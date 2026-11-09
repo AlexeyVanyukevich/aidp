@@ -49,6 +49,7 @@ async function open(page: Page, layout: Layout, request: Parameters<typeof regis
   return {
     input,
     button: page.getByRole('button', { name: 'Add task' }),
+    prioritise: page.getByRole('button', { name: 'Prioritise' }),
     heading: page.getByRole('heading', { level: 1 }),
     settings: page.getByRole('link', { name: `Settings of ${layout.key}` }),
     notice: page.getByRole('status'),
@@ -81,10 +82,13 @@ for (const layout of LAYOUTS) {
     const heading0 = await box(ui.heading)
     const head0 = await box(ui.head)
     const columns0 = await box(ui.columns)
+    const prioritise0 = await box(ui.prioritise)
     expect(Math.abs(button0.y + button0.height - (input0.y + input0.height))).toBeLessThanOrEqual(1)
     expect(Math.abs(button0.y - input0.y)).toBeLessThanOrEqual(1)
     expect(Math.abs(button0.height - input0.height)).toBeLessThanOrEqual(1)
-    expect(Math.abs(head0.y + head0.height - (input0.y + input0.height))).toBeLessThanOrEqual(1)
+    // At 320 the button has its own row under the form, so the head ends at its bottom.
+    const headEnd = layout.width === 320 ? prioritise0 : input0
+    expect(Math.abs(head0.y + head0.height - (headEnd.y + headEnd.height))).toBeLessThanOrEqual(1)
     expect(await noScroll()).toBe(true)
     // The link is as wide as its text, so the header's empty space does not open Settings.
     const [linkWidth, textWidth] = await ui.settings.evaluate((link) => {

@@ -22,6 +22,34 @@ export function Board() {
   const heading = usePage(board.data ? name : undefined, `board:${key}`)
   const [dragged, setDragged] = useState<TaskCard | undefined>()
   const [message, setMessage] = useState('')
+  // A message equal to the one shown is announced again only if the region is emptied, stays
+  // empty across a painted frame, and is then refilled: two nested frames, never flushSync.
+  // At most one write is pending; every other write to the region cancels it.
+  const pending = useRef<number | undefined>(undefined)
+  const cancelPending = () => {
+    if (pending.current !== undefined) cancelAnimationFrame(pending.current)
+    pending.current = undefined
+  }
+  const say = (text: string) => {
+    cancelPending()
+    setMessage(text)
+  }
+  const announce = (text: string) => {
+    cancelPending()
+    setMessage('')
+    pending.current = requestAnimationFrame(() => {
+      pending.current = requestAnimationFrame(() => {
+        pending.current = undefined
+        setMessage(text)
+      })
+    })
+  }
+  useEffect(
+    () => () => {
+      if (pending.current !== undefined) cancelAnimationFrame(pending.current)
+    },
+    [],
+  )
   const [title, setTitle] = useState('')
   const [titleMissing, setTitleMissing] = useState(false)
   const titleInput = useRef<HTMLInputElement>(null)
@@ -49,9 +77,9 @@ export function Board() {
       body: { position: number } | { state: 'done' }
     }) => api.patchTask(card.id, body),
     onSuccess: (_task, { card, body }) =>
-      setMessage('state' in body ? `${card.key} moved to Done.` : `${card.key} moved.`),
+      say('state' in body ? `${card.key} moved to Done.` : `${card.key} moved.`),
     onError: (error) =>
-      setMessage(
+      say(
         isConflict(error)
           ? 'That card moved meanwhile; the board is up to date again.'
           : 'The board could not save that move. Try again.',
@@ -64,11 +92,32 @@ export function Board() {
     // or the next Enter — through a busy button's cancelled click — is silently dropped.
     onSuccess: (task) => {
       setTitle('')
-      setMessage(`${task.key} added to Backlog.`)
+      say(`${task.key} added to Backlog.`)
       void refresh()
     },
-    onError: () => setMessage('The task could not be added. Try again.'),
+    onError: () => say('The task could not be added. Try again.'),
   })
+  const reorder = useMutation({
+    mutationFn: () => api.reorderTasks(key),
+    // The refetch is not awaited, so the button is free again once the outcome is announced.
+    onSuccess: ({ reordered }) => {
+      announce(
+        reordered === 0
+          ? 'The tasks were already in order.'
+          : `${reordered} ${reordered === 1 ? 'task' : 'tasks'} reordered.`,
+      )
+      void refresh()
+    },
+    onError: () => {
+      announce('The board could not be reordered. Try again.')
+      void refresh()
+    },
+  })
+  const prioritise = () => {
+    if (board.data === undefined) announce('The board has not loaded yet.')
+    else if (board.data.tasks.length === 0) announce('There are no tasks to reorder.')
+    else reorder.mutate()
+  }
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
@@ -95,6 +144,9 @@ export function Board() {
             Add task
           </Button>
         </form>
+        <Button type="button" className="prioritise" busy={reorder.isPending} onClick={prioritise}>
+          Prioritise
+        </Button>
       </div>
       <Notice className="announce">{message}</Notice>
       <Loaded query={board} failure="This board could not be loaded.">
@@ -107,7 +159,7 @@ export function Board() {
             const body = dropPatch(dragged, target, before, grouped[target])
             setDragged(undefined)
             if (body === null)
-              setMessage(
+              say(
                 'Only a card in Review can be dragged, to Done. Other moves are buttons on the card.',
               )
             else move.mutate({ card: dragged, body })
