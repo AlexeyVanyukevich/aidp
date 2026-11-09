@@ -571,7 +571,8 @@ export class RunnerService {
 
   /**
    * A rephrase run ends alone, its card not moved. A suggested end with a saved suggestion
-   * leaves that suggestion pending for the owner; one without fails the run.
+   * leaves that suggestion pending for the owner; one without fails the run. An end that arrives
+   * after the run has ended, as the sweeper fails a lost one, changes nothing.
    */
   private async endRephraseRun(
     trx: Transaction<Database>,
@@ -603,6 +604,7 @@ export class RunnerService {
         ...(status === 'succeeded' ? { suggestion_status: 'pending' as const } : {}),
       })
       .where('id', '=', runId)
+      .where('status', '=', 'running')
       .execute()
     await publish(trx, { topic: 'task.updated', taskId: run.task_id })
   }
