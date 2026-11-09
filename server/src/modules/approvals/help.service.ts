@@ -194,6 +194,31 @@ const COLUMNS = [
   'helps.created_at',
 ] as const
 
+/**
+ * Ends a decision help's own run in the transaction that ends the help. A question help's run
+ * is its asking run and is left alone: only a run of kind `help` is touched.
+ */
+export async function endHelpRun(
+  trx: Transaction<Database>,
+  runId: string,
+  status: 'succeeded' | 'failed' | 'cancelled',
+  reason: string | null,
+  now: Date,
+): Promise<void> {
+  await trx
+    .updateTable('runs')
+    .set({
+      status,
+      ended_at: now,
+      queued_at: null,
+      ...(status === 'failed' ? { failure_reason: reason } : {}),
+    })
+    .where('id', '=', runId)
+    .where('kind', '=', 'help')
+    .where('status', 'in', ['queued', 'running'])
+    .execute()
+}
+
 const TOKEN_LIFETIME_MS = 4 * 3600_000
 
 /** Marks every queued or running help `stopped`; a running process learns at its next heartbeat. */
@@ -585,6 +610,13 @@ export class HelpService {
           .where('id', '=', help.phase_id)
           .where('status', 'in', ['running', 'paused'])
           .execute()
+      await endHelpRun(
+        trx,
+        help.run_id,
+        'failed',
+        reason.slice(0, HELP_LIMITS.reason),
+        this.clock(),
+      )
       await this.announce(trx, help.run_id)
     })
   }
@@ -673,6 +705,7 @@ export class HelpService {
         })
         .where('id', '=', helpId)
         .execute()
+      await endHelpRun(trx, help.run_id, 'succeeded', null, this.clock())
       await this.announce(trx, help.run_id)
       return { ok: true as const }
     })

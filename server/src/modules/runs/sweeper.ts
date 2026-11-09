@@ -3,6 +3,7 @@ import type { Database } from '../../db/schema.js'
 import type { Block, Stage } from '../../shared/vocabulary.js'
 import { publish } from '../../shared/bus.js'
 import { HELP_LOST_AFTER_MS } from '../approvals/help-rules.js'
+import { endHelpRun } from '../approvals/help.service.js'
 import { moveTask } from '../tasks/task.moves.js'
 import {
   APPROVAL_TTL_MS,
@@ -161,6 +162,7 @@ export class Sweeper {
           .where('id', '=', help.phase_id)
           .where('status', 'in', ['running', 'paused'])
           .execute()
+      await endHelpRun(trx, help.run_id, 'failed', 'the helper stopped responding', now)
       const run = await trx
         .selectFrom('runs')
         .select('task_id')
