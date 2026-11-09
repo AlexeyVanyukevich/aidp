@@ -48,6 +48,19 @@ describe('api', () => {
     expect(JSON.parse(init.body as string)).toEqual({ note: 'Say how long.' })
   })
 
+  it('sends a reorder with no body and no content type', async () => {
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify({ reordered: 2 }), { status: 200 }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    expect(await api.reorderTasks('AIDP')).toEqual({ reordered: 2 })
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe('/api/projects/AIDP/tasks/reorder')
+    expect(init.method).toBe('POST')
+    expect(init.body).toBeUndefined()
+    expect(init.headers).toEqual({})
+  })
+
   it('reads every page of a run’s events', async () => {
     const pages = [
       { events: [{ id: 'a' }], next: 'c1' },
