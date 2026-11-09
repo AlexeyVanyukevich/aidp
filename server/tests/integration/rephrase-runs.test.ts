@@ -230,6 +230,30 @@ describe('the end of a rephrase run', () => {
     },
   )
 
+  it.each<[string, Record<string, unknown>]>([
+    ['cancelled', { outcome: 'cancelled' }],
+    ['suggested', { outcome: 'suggested' }],
+    ['failed', { outcome: 'failed', reason: 'the rephrase phase failed' }],
+  ])('a late run_end %s leaves a run that has already ended', async (_name, payload) => {
+    const { token, runId } = await rephraseSession({ state: 'backlog' })
+    await db()
+      .updateTable('runs')
+      .set({
+        status: 'failed',
+        failure_reason: 'the runner was lost',
+        ended_at: now,
+        suggestion_md: 'S',
+      })
+      .where('id', '=', runId)
+      .execute()
+    expect((await send(token, runId, payload)).statusCode).toBe(200)
+    expect(await runRow(runId)).toMatchObject({
+      status: 'failed',
+      failure_reason: 'the runner was lost',
+      suggestion_status: null,
+    })
+  })
+
   it('shows a succeeded run’s suggestion on the card', async () => {
     const { token, runId, taskId } = await rephraseSession()
     await db().updateTable('runs').set({ suggestion_md: 'S' }).where('id', '=', runId).execute()
