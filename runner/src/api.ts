@@ -102,6 +102,15 @@ export class BoardApi {
     ).help
   }
 
+  /** Which of these help runs have ended, so their leftovers can be removed. */
+  async helpsEnded(runIds: string[]): Promise<string[]> {
+    return (
+      await this.call<{ ended: string[] }>('POST', '/api/runner/helps/ended', this.runnerKey, {
+        run_ids: runIds,
+      })
+    ).ended
+  }
+
   /** A help's own heartbeat; the board names the helps to end. */
   helpHeartbeat(runnerId: string, helpIds: string[]): Promise<{ stop: string[] }> {
     return this.call('POST', '/api/runner/helps/heartbeat', this.runnerKey, {

@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { BoardApi } from './api.js'
 import type { RunnerConfig } from './config.js'
 import type { HelpWork } from './contract.js'
+import type { Git } from './git.js'
+import { LINKED_FILE, prepareLinked, readLinked, removeLinked } from './linked.js'
+import { deleteRunDirectory, removeCheckout, type LogContext } from './worktree-log.js'
 import { newEvent, EventSink } from './sink.js'
 import { PHASES } from './phases/agents.js'
 import { attr, escape } from './phases/handoff.js'
@@ -19,21 +22,162 @@ export const RESTART_REASON = 'runner restarted'
 
 const TIMING: ProcessTiming = { pauseGraceMs: 60_000, stopGraceMs: 10_000, markerPollMs: 500 }
 
-/** The first message of a helper: its mode, and the question it is for. */
-export function helpPrompt(work: HelpWork): string {
-  const asked =
-    work.question_index === null ? 'the open question' : `question ${work.question_index + 1}`
-  return [
-    `<task key="${attr(work.run.task.key)}">${escape(work.run.task.title)}</task>`,
-    `Mode: ${work.mode}.`,
-    work.mode === 'suggest'
-      ? `Suggest an answer to ${asked} of the run waiting on the owner. Read it with get_question.`
-      : `Explain ${asked} of the run waiting on the owner in plain words. Read it with get_question.`,
-  ].join('\n')
+/** The first message of a helper: its mode, and the question or decision it is for. */
+export function helpPrompt(work: HelpWork, checkout?: CheckoutMade): string {
+  const lines = [`<task key="${attr(work.run.task.key)}">${escape(work.run.task.title)}</task>`]
+  if (isQuestion(work)) {
+    const asked =
+      work.question_index === null ? 'the open question' : `question ${work.question_index + 1}`
+    lines.push(
+      `Mode: ${work.mode}.`,
+      work.mode === 'suggest'
+        ? `Suggest an answer to ${asked} of the run waiting on the owner. Read it with get_question.`
+        : `Explain ${asked} of the run waiting on the owner in plain words. Read it with get_question.`,
+    )
+    return lines.join('\n')
+  }
+  lines.push(
+    `Decision: ${work.decision ?? 'question'}. Mode: ${work.mode}. Read it with get_decision.`,
+  )
+  if (checkout !== undefined)
+    lines.push(`<checkout ref="${attr(checkout.ref)}" source="${attr(checkout.source)}"/>`)
+  return lines.join('\n')
+}
+
+/** A help from before decisions, or one for a waiting request. */
+const isQuestion = (work: HelpWork) => (work.decision ?? 'question') === 'question'
+
+/** What a decision help's checkout came to. */
+export interface CheckoutMade {
+  worktree: string
+  runDir: string
+  /** The ref the helper reads. */
+  ref: string
+  source: 'base' | 'pr_branch' | 'paused_run'
+  /** Whether the source named was not there and the base was read instead. */
+  fallback: boolean
+  madeWorktree: boolean
+}
+
+/** The file in a help's run directory that says what the help made, for its removal. */
+export const HELP_FILE = 'help.json'
+
+interface HelpMarker {
+  repo_path: string
+  made_worktree: boolean
+}
+
+function readMarker(runDir: string): HelpMarker | null {
+  try {
+    const value = JSON.parse(readFileSync(join(runDir, HELP_FILE), 'utf8')) as Partial<HelpMarker>
+    if (typeof value.repo_path === 'string' && typeof value.made_worktree === 'boolean')
+      return { repo_path: value.repo_path, made_worktree: value.made_worktree }
+  } catch {
+    // Unreadable: nothing is known to have been made, so nothing but the directory goes.
+  }
+  return null
+}
+
+/**
+ * Makes a decision help's checkout (R9). `help.json` is written before anything is made, so a
+ * killed daemon's leftovers can be cleared by what it says.
+ */
+export async function prepareHelpCheckout(
+  work: HelpWork,
+  git: Git,
+  home: string,
+  removals: LogContext,
+): Promise<CheckoutMade> {
+  const decision = work.decision_work ?? null
+  if (decision === null) throw new Error('a question help has no checkout to make')
+  const { worktree, runDir, linked } = runPaths(home, work.run.id)
+  const source = decision.checkout
+  const paused = source.source === 'paused_run' ? runPaths(home, source.run_id) : null
+  const reuse = paused !== null && existsSync(paused.worktree)
+  prepareRunDir(runDir)
+  writeFileSync(
+    join(runDir, HELP_FILE),
+    JSON.stringify({ repo_path: decision.repo_path, made_worktree: !reuse }),
+  )
+  if (reuse && paused !== null) {
+    writeFileSync(join(runDir, LINKED_FILE), JSON.stringify(readLinked(paused.runDir)))
+    return {
+      worktree: paused.worktree,
+      runDir,
+      ref: `worktree:${source.source === 'paused_run' ? source.run_id : ''}`,
+      source: 'paused_run',
+      fallback: false,
+      madeWorktree: false,
+    }
+  }
+  let ref = `origin/${decision.base_branch}`
+  let fallback = source.source === 'paused_run'
+  if (source.source === 'pr_branch') {
+    const fetched = await git.fetchBranch(decision.repo_path, source.branch)
+    if (fetched === 'fetched') ref = `origin/${source.branch}`
+    else fallback = true
+  }
+  if (ref === `origin/${decision.base_branch}`)
+    await git.fetchBase(decision.repo_path, decision.base_branch)
+  await git.prepareDetachedRef(decision.repo_path, ref, worktree)
+  await prepareLinked(git, decision.links, linked, runDir, removals)
+  return {
+    worktree,
+    runDir,
+    ref,
+    source: source.source,
+    fallback,
+    madeWorktree: true,
+  }
+}
+
+/**
+ * What the end of a decision help removes: when it made its worktree, the checkouts its
+ * `linked.json` lists, the `-linked` directory and the worktree, with the git registrations
+ * pruned; in every case, its run directory. A worktree it did not make is never touched.
+ */
+export async function cleanUpHelp(git: Git, home: string, runId: string): Promise<void> {
+  const { worktree, runDir, linked } = runPaths(home, runId)
+  const removals: LogContext = { home, runId, clock: () => new Date() }
+  const marker = readMarker(runDir)
+  if (marker !== null && marker.made_worktree) {
+    await removeLinked(git, linked, runDir, removals, 'help')
+    await removeCheckout(removals, git, marker.repo_path, 'help', worktree)
+    await git.pruneWorktrees(marker.repo_path).catch(() => undefined)
+  }
+  await deleteRunDirectory(removals, 'help', runDir)
+}
+
+/**
+ * At daemon start, before the first claim: the run directories a killed daemon left that hold a
+ * `help.json`, asked about; those whose help run has ended are cleared. When the board cannot
+ * be asked, the leftovers wait for a later start.
+ */
+export async function clearEndedHelps(api: BoardApi, git: Git, home: string): Promise<void> {
+  let ids: string[]
+  try {
+    ids = readdirSync(join(home, 'runs')).filter((id) =>
+      existsSync(join(home, 'runs', id, HELP_FILE)),
+    )
+  } catch {
+    return
+  }
+  if (ids.length === 0) return
+  let ended: string[]
+  try {
+    ended = await api.helpsEnded(ids)
+  } catch (error) {
+    console.error(
+      `board-cli: could not ask which helps have ended: ${error instanceof Error ? error.message : String(error)}`,
+    )
+    return
+  }
+  for (const id of ended.filter((id) => ids.includes(id))) await cleanUpHelp(git, home, id)
 }
 
 export interface HelpDeps {
   api: BoardApi
+  git: Git
   config: RunnerConfig
   /** The runner's code fingerprint at its start: the guard compares it with its own. */
   runnerCode: string
@@ -67,16 +211,49 @@ export async function carryHelp(work: HelpWork, deps: HelpDeps): Promise<void> {
   const runId = work.run.id
   const agent = PHASES.help.agent
   try {
-    // The asking run's own worktree: the board keeps no path for a run that has not ended.
-    const { worktree } = runPaths(config.home, runId)
-    if (!existsSync(worktree)) {
-      await api.failHelp(work.id, 'the run’s worktree is gone')
-      return
+    let worktree: string
+    let runDir: string
+    let made: CheckoutMade | undefined
+    if (isQuestion(work)) {
+      // The asking run's own worktree: the board keeps no path for a run that has not ended.
+      worktree = runPaths(config.home, runId).worktree
+      if (!existsSync(worktree)) {
+        await api.failHelp(work.id, 'the run’s worktree is gone')
+        return
+      }
+      runDir = join(config.home, 'helps', work.id)
+      prepareRunDir(runDir)
+    } else {
+      const removals: LogContext = { home: config.home, runId, clock: () => new Date() }
+      try {
+        made = await prepareHelpCheckout(work, deps.git, config.home, removals)
+      } catch (error) {
+        const detail =
+          error instanceof Error
+            ? 'output' in error && typeof error.output === 'string'
+              ? error.output
+              : error.message
+            : String(error)
+        await api.failHelp(work.id, `the help’s checkout could not be made: ${detail}`)
+        return
+      }
+      worktree = made.worktree
+      runDir = made.runDir
     }
-    const runDir = join(config.home, 'helps', work.id)
-    prepareRunDir(runDir)
     token = await api.issueHelpToken(work.id)
     const sink = new EventSink(api, join(runDir, 'events.ndjson'), () => token)
+    if (made !== undefined)
+      await sink.send([
+        newEvent(
+          { runId, phaseId: work.phase_id, agent: 'runner', type: 'tool_call' },
+          {
+            tool: 'help_checkout',
+            target: made.ref,
+            status: 'ok',
+            payload: { source: made.source, fallback: made.fallback },
+          },
+        ),
+      ])
     const sessionId = randomUUID()
     await sink.send([
       newEvent(
@@ -90,7 +267,7 @@ export async function carryHelp(work: HelpWork, deps: HelpDeps): Promise<void> {
         phaseId: work.phase_id,
         phase: 'help',
         attempt: work.attempt,
-        prompt: helpPrompt(work),
+        prompt: helpPrompt(work, made),
         sessionId,
         resume: false,
         worktree,
@@ -142,5 +319,6 @@ export async function carryHelp(work: HelpWork, deps: HelpDeps): Promise<void> {
     deps.restart?.removeEventListener('abort', onRestart)
     clearInterval(heartbeat)
     if (token !== '') await api.retire(token).catch(() => undefined)
+    if (!isQuestion(work)) await cleanUpHelp(deps.git, config.home, runId)
   }
 }

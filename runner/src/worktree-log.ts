@@ -6,7 +6,13 @@ export const LOG_FILE = 'worktree-removals.log'
 const OUTPUT_LIMIT = 4_096
 
 export type RemovalCaller =
-  'run_end' | 'delivery_prepare' | 'draft_prepare' | 'linked_prepare' | 'cleanup' | 'recreate'
+  | 'run_end'
+  | 'delivery_prepare'
+  | 'draft_prepare'
+  | 'linked_prepare'
+  | 'cleanup'
+  | 'recreate'
+  | 'help'
 export type LogCaller = RemovalCaller | 'delivery_resume' | 'draft_resume'
 export type LogAction = 'remove' | 'delete' | 'recreate' | 'keep'
 export type LogResult =
@@ -76,6 +82,25 @@ export function guardPath(home: string, runId: string, path: string): Guard {
     if (resolved === worktree || resolved === linked || dirname(resolved) === linked)
       return { ok: true, resolved }
     return { ok: false, reason: `${resolved} is not a path of run ${runId}`, resolved }
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+/**
+ * Passes exactly `<home>/runs/<run id>`, the run directory of the run id it is given, and no
+ * other path: not another run's, not a path inside it, not `runs` itself, not a worktree.
+ */
+export function guardRunDir(home: string, runId: string, path: string): Guard {
+  try {
+    if (runId === '' || runId === '.' || runId === '..' || runId.includes('/'))
+      return { ok: false, reason: `not a run id: ${runId}` }
+    const resolved = canonicalPath(path)
+    if (resolved === null) return { ok: false, reason: `no canonical path for ${path}` }
+    const root = canonicalPath(home)
+    if (root === null) return { ok: false, reason: `no canonical path for home ${home}` }
+    if (resolved === join(root, 'runs', runId)) return { ok: true, resolved }
+    return { ok: false, reason: `${resolved} is not the run directory of run ${runId}`, resolved }
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) }
   }
@@ -156,6 +181,36 @@ export async function deleteDirectory(
   path: string,
 ): Promise<LogLine> {
   const guard = guardPath(ctx.home, ctx.runId, path)
+  if (!guard.ok)
+    return finish(
+      ctx,
+      recordLine(ctx, {
+        action: 'delete',
+        caller,
+        path,
+        ...(guard.resolved === undefined ? {} : { resolved: guard.resolved }),
+        result: 'refused',
+        output: guard.reason,
+      }),
+    )
+  const base = { action: 'delete', caller, path, resolved: guard.resolved } as const
+  if (!existsSync(guard.resolved))
+    return finish(ctx, recordLine(ctx, { ...base, result: 'absent' }))
+  try {
+    rmSync(guard.resolved, { recursive: true, force: true })
+    return await finish(ctx, recordLine(ctx, { ...base, result: 'deleted' }))
+  } catch (error) {
+    return finish(ctx, recordLine(ctx, { ...base, result: 'failed', output: message(error) }))
+  }
+}
+
+/** Deletes a run directory through its own guard, logging what came of it. Never throws. */
+export async function deleteRunDirectory(
+  ctx: LogContext,
+  caller: RemovalCaller,
+  path: string,
+): Promise<LogLine> {
+  const guard = guardRunDir(ctx.home, ctx.runId, path)
   if (!guard.ok)
     return finish(
       ctx,
