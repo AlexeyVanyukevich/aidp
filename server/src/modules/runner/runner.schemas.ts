@@ -78,3 +78,8 @@ export const HelpReleaseBody = Type.Object(
 )
 
 export const RunParams = Type.Object({ id: Uuid })
+
+export const HelpEndedBody = Type.Object(
+  { run_ids: Type.Array(Type.String({ format: 'uuid' }), { maxItems: 500 }) },
+  { additionalProperties: false },
+)

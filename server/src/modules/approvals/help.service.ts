@@ -54,12 +54,37 @@ export interface HelpView {
   created_at: Date
 }
 
+/** Where a decision help reads from (R8). */
+export type CheckoutSource =
+  | { source: 'base' }
+  | { source: 'pr_branch'; branch: string }
+  | { source: 'paused_run'; run_id: string }
+
+/** What a decision help carries beyond a question help: the project, the links and the source. */
+export interface DecisionWork {
+  repo_path: string
+  base_branch: string
+  links: {
+    key: string
+    name: string
+    note: string
+    repo_path: string
+    github_repo: string
+    base_branch: string
+  }[]
+  checkout: CheckoutSource
+}
+
 /** What a claim hands the runner: one help to carry beside its run. */
 export interface HelpWork {
   id: string
   mode: HelpMode
+  decision: HelpDecision
+  subject: HelpSubject | null
   approval_id: string | null
   question_index: number | null
+  /** What a decision help works in; null for a question help. */
+  decision_work: DecisionWork | null
   /** Server-chosen, so the sweeper can close the phase of a help whose process is lost. */
   phase_id: string
   /** Counts the run's helps, the first being 1. */
@@ -483,9 +508,8 @@ export class HelpService {
     return this.db.transaction().execute(async (trx) => {
       const help = await trx
         .selectFrom('helps')
-        .select(['id', 'run_id', 'approval_id', 'question_index', 'mode'])
+        .select(['id', 'run_id', 'approval_id', 'question_index', 'mode', 'decision', 'subject'])
         .where('status', '=', 'queued')
-        .where('decision', '=', 'question')
         .orderBy('created_at')
         .limit(1)
         .forUpdate()
@@ -524,13 +548,31 @@ export class HelpService {
           'tasks.title',
           'tasks.budget_usd',
           'projects.key',
+          'projects.id as project_id',
+          'projects.repo_path',
+          'projects.base_branch',
         ])
         .where('runs.id', '=', help.run_id)
         .executeTakeFirstOrThrow()
       await publish(trx, { topic: 'help.updated', taskId: row.task_id })
+      const taskKey = `${row.key}-${row.task_number}`
+      const decisionWork =
+        help.decision === 'question'
+          ? null
+          : await this.decisionWork(trx, {
+              taskId: row.task_id,
+              taskKey,
+              projectId: row.project_id,
+              repoPath: row.repo_path,
+              baseBranch: row.base_branch,
+              subject: help.subject,
+            })
       return {
         id: help.id,
         mode: help.mode,
+        decision: help.decision,
+        subject: help.subject,
+        decision_work: decisionWork,
         approval_id: help.approval_id,
         question_index: help.question_index,
         phase_id: phaseId,
@@ -548,6 +590,67 @@ export class HelpService {
         },
       }
     })
+  }
+
+  /** The project, the links and the checkout source a decision help works from (R8). */
+  private async decisionWork(
+    trx: Transaction<Database>,
+    from: {
+      taskId: string
+      taskKey: string
+      projectId: string
+      repoPath: string
+      baseBranch: string
+      subject: HelpSubject | null
+    },
+  ): Promise<DecisionWork> {
+    const links = await trx
+      .selectFrom('project_links')
+      .innerJoin('projects', 'projects.id', 'project_links.linked_project_id')
+      .select([
+        'projects.key',
+        'projects.name',
+        'project_links.note',
+        'projects.repo_path',
+        'projects.github_repo',
+        'projects.base_branch',
+      ])
+      .where('project_links.project_id', '=', from.projectId)
+      .orderBy('projects.key')
+      .execute()
+    let checkout: CheckoutSource = { source: 'base' }
+    const subject = from.subject
+    if (subject !== null && 'run_id' in subject) {
+      if (subject.task_state === 'blocked')
+        checkout = { source: 'paused_run', run_id: subject.run_id }
+    } else if (subject !== null && 'delivery_run_id' in subject) {
+      if (subject.task_state === 'review' && subject.delivery_run_id !== null) {
+        const run = await trx
+          .selectFrom('runs')
+          .select(['number', 'branch'])
+          .where('id', '=', subject.delivery_run_id)
+          .executeTakeFirst()
+        if (run !== undefined)
+          checkout = {
+            source: 'pr_branch',
+            branch: run.branch ?? `board/${from.taskKey}-r${run.number}`,
+          }
+      }
+    }
+    return { repo_path: from.repoPath, base_branch: from.baseBranch, links, checkout }
+  }
+
+  /** Which of these run ids are help runs that have ended: their leftovers can be removed. */
+  async ended(runIds: string[]): Promise<string[]> {
+    if (runIds.length === 0) return []
+    const rows = await this.db
+      .selectFrom('runs')
+      .select('id')
+      .where('id', 'in', runIds)
+      .where('kind', '=', 'help')
+      .where('status', 'in', ['succeeded', 'failed', 'cancelled'])
+      .execute()
+    return rows.map((row) => row.id)
   }
 
   /**
