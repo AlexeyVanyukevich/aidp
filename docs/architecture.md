@@ -168,8 +168,9 @@ A title run is never paused, blocked or resumed. The runner ends it `suggested` 
 succeeded; the server then marks the run succeeded if an artifact was stored, and otherwise failed
 with "the title agent suggested no title". A failed phase fails it with "the title phase failed",
 a cancel ends it cancelled, a stopped daemon fails it with "the runner stopped", and the sweeper
-fails a run with no heartbeat for 90 seconds with "the runner was lost". None of these moves the
-card. A failed run's runner learns of it in its heartbeat's cancel list and stops its process.
+fails a run with no heartbeat for 90 seconds with "the runner was lost". A phase a cancel or a
+stop left open ends failed and interrupted with the run. None of these moves the card. A failed
+run's runner learns of it in its heartbeat's cancel list and stops its process.
 
 The task view carries `title_suggestion`, read from the latest title run: `working` while one is
 queued or running, `ready` with the title and reason while its artifact is undecided, `failed`
@@ -222,14 +223,15 @@ or fails it with "the rephraser saved no suggestion". A failed phase fails it wi
 phase failed", a cancel ends it cancelled, a stopped daemon or a failed git step fails it ("the
 runner stopped", "the rephrase run could not go on: …"), and the sweeper fails a run with no
 heartbeat for 90 seconds with "the runner was lost", interrupts its phase and queues a cleanup.
-None of these moves the card.
+A phase a cancel or a stop left open ends failed and interrupted with the run, and a `run_end` that
+arrives after the run has ended changes nothing. None of these moves the card.
 
 While a rephrase run is queued or running, `draft-spec`, `redraft` and approving a spec answer
 `409 conflict` with `details.reason` `rephrasing`; saving the description and saving a spec by
 hand stay allowed. `POST /api/tasks/:id/actions/cancel-rephrase` cancels a queued run at once, or
 sets `cancel_requested` on a running one, whose runner reports `cancelled`; it is `409` with none
 in flight. `POST /api/tasks/:id/suggestion/accept` with `{ description_md }` (1–100,000
-characters, the suggestion as shown, edited or not) sets the description and marks the pending
+characters and not blank, the suggestion as shown, edited or not) sets the description and marks the pending
 suggestion `accepted` in one transaction; `POST /api/tasks/:id/suggestion/discard` marks it
 `discarded` and leaves the description. Both are `409` outside Backlog and Spec review or with no
 pending suggestion.
@@ -246,7 +248,8 @@ Redraft and Approve are disabled and described by "Wait for the rephrase to fini
 it." A pending suggestion appears beside the Description, stacking below it at narrow widths,
 under the heading "Suggested description", in an editable "Suggestion text" field with **Accept
 suggestion** and **Discard suggestion**, and "Written from an earlier version of your
-description." when stale. A failed run shows "The last rephrase did not finish: <reason>." until
+description." when stale. Accept with the field blank sends nothing: the field is marked "Write
+the text to accept, or discard the suggestion." and takes focus. A failed run shows "The last rephrase did not finish: <reason>." until
 the next starts; a cancelled one shows nothing. The status region announces "A suggested
 description is ready.", "Description replaced with the suggestion." and "Suggestion discarded.";
 Rephrase description moves focus to Cancel rephrase, and Accept, Discard and Cancel rephrase move
