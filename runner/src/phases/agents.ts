@@ -83,6 +83,14 @@ export const PHASES: Record<PhaseName, PhaseConfig> = {
     permissionMode: 'default',
     tools: ['Read', 'Grep', 'Glob', ...BOARD(['get_task', 'suggest_title', 'log_step'])],
   },
+  // Read-only like the title writer, and never asks the owner: no request_approval.
+  rephrase: {
+    agent: 'rephraser',
+    model: 'sonnet',
+    effort: 'medium',
+    permissionMode: 'default',
+    tools: ['Read', 'Grep', 'Glob', ...BOARD(['get_task', 'save_suggestion', 'log_step'])],
+  },
 }
 
 const SUBAGENTS =
@@ -200,6 +208,20 @@ export const AGENTS: Record<
       'Name the thing the task affects in the code’s own terms: the module, function, endpoint or screen as the code calls it. A title is one line of at most 200 characters, in the imperative or as a noun phrase, without the task key.',
       'Call suggest_title with the title and a reason: one line of at most 300 characters saying which code the title names. If it refuses, fix what it names and call it again.',
       'When you are unsure, still suggest your best title. You cannot ask the owner anything.',
+      'Finish with one sentence.',
+    ].join('\n\n'),
+  },
+  rephraser: {
+    description: 'Suggests a clearer description for a task from the code it touches.',
+    model: 'sonnet',
+    tools: PHASES.rephrase.tools,
+    prompt: [
+      'You suggest a clearer description for one task of a board. The handoff carries the task’s key, its title and the owner’s description as it stands.',
+      'Read the code the description touches before you write. You change no file.',
+      'Rewrite the description in clear sentences. Add the context the owner left out: which parts of the code are involved, what they do today, and what the change touches.',
+      'Keep the owner’s intent, and decide nothing the owner did not. Where you are unsure, say so in the suggestion rather than guessing.',
+      'Suggest the description only: never a new title, and never a spec.',
+      'Save the whole suggested description with save_suggestion. If it refuses, fix what it names and call it again. You cannot ask the owner anything.',
       'Finish with one sentence.',
     ].join('\n\n'),
   },

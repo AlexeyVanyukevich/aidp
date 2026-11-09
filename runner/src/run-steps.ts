@@ -234,12 +234,15 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
   const removeWorktree = (caller: RemovalCaller, repo: string, path: string) =>
     removeCheckout(removals, deps.git, repo, caller, path)
 
-  /** A title run is never paused, blocked or resumed: it keeps no checkpoint, and fails instead. */
-  const isTitle = run.kind === 'title'
+  /**
+   * A title or rephrase run is never paused, blocked or resumed: it keeps no checkpoint, and
+   * fails instead.
+   */
+  const endsFailed = run.kind === 'title' || run.kind === 'rephrase'
   const STOPPED = 'the runner stopped'
 
   const checkpoint = async () => {
-    if (isTitle) return
+    if (endsFailed) return
     let head: string | null = null
     if (existsSync(io.worktree)) head = await deps.git.head(io.worktree).catch(() => null)
     const payload: Checkpoint = {
@@ -477,7 +480,7 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
   /** The daemon is stopping: between steps, the run is blocked where it stands. */
   const stopIfShuttingDown = async () => {
     if (deps.shutdown?.aborted === true) {
-      if (isTitle) throw new End('failed', STOPPED)
+      if (endsFailed) throw new End('failed', STOPPED)
       await block('runner_stopped')
     }
   }
@@ -540,10 +543,10 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
     await checkpoint()
     if (result.stopped === 'cancelled') throw new End('cancelled', 'cancelled by the owner')
     if (result.stopped === 'shutdown') {
-      if (isTitle) throw new End('failed', STOPPED)
+      if (endsFailed) throw new End('failed', STOPPED)
       await block('runner_stopped')
     }
-    if (result.stopped === 'paused' && !isTitle) throw new Release()
+    if (result.stopped === 'paused' && !endsFailed) throw new Release()
     if (result.codeMoved === true) throw new StartFailure(CODE_CHECK_COMMAND, CODE_CHECK_OUTPUT)
     return result
   }
@@ -580,12 +583,12 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
       outcome = done.outcome
       extra = done.extra
     } catch (error) {
-      if (error instanceof Release && !isTitle) {
+      if (error instanceof Release && !endsFailed) {
         outcome = 'released'
-      } else if (isTitle && (error instanceof GitError || error instanceof StartFailure)) {
-        // A title run is never blocked: it fails, and the owner asks again.
+      } else if (endsFailed && (error instanceof GitError || error instanceof StartFailure)) {
+        // A title or rephrase run is never blocked: it fails, and the owner asks again.
         outcome = 'failed'
-        extra = { reason: `the title run could not go on: ${error.output.slice(-500)}` }
+        extra = { reason: `the ${run.kind} run could not go on: ${error.output.slice(-500)}` }
       } else if (error instanceof GitError || error instanceof StartFailure) {
         // A git or gh step, or a Claude Code process that did not start, blocks the run where it
         // stands; Resume retries the step.
