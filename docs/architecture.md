@@ -137,8 +137,8 @@ priced like any phase.
 
 A title run has a claim lane of its own. `POST /api/runner/claim` takes an optional `kinds` list,
 which defaults to `spec` and `delivery`, so a title run goes only to a claim that names it; the
-daemon's main loop claims `spec` and `delivery`, and a second loop claims `title` only, so a
-title run starts while another task's run is in progress. A queued title run whose card has left
+daemon's main loop claims `spec` and `delivery`, and a second loop claims `title` and
+`rephrase` only, so a title or rephrase run starts while another task's run is in progress. A queued title run whose card has left
 Backlog and Spec review is cancelled at claim. Cleanup rows go to the lane of their run's kind.
 Once either loop sees the runner's code move, neither sends a new claim request; the daemon waits
 for each open claim request (at most the claim wait), hands on a main-lane start or resume,
@@ -188,6 +188,70 @@ announces "Suggesting a title.", "A title is suggested: …", "Title saved.", "S
 "Suggestion discarded." and a failure; Rephrase title moves focus to Stop, Stop and a finished run
 return it to Rephrase title, and Accept title and Discard move it to the Title field. An empty
 title shows "Enter a title.", is marked invalid and takes focus.
+
+## A rephrase run
+
+**Rephrase description** on the Spec tab suggests a clearer description from the project's code.
+`POST /api/tasks/:id/actions/rephrase` queues a run of kind `rephrase` for a card in Backlog or
+Spec review; it holds the description as it stood in `runs.base_md`, is numbered among the task's
+rephrase runs ("Rephrase 1" in the Timeline, whose phase band and Cost row read "Rephrase"), and is
+priced and bound by `budget_usd` like any run. The card does not move, and every lookup of "the
+task's latest run" reads only spec and delivery runs, as for a title run. The request is `409` in
+any other state or while a rephrase run is queued or running, and `400 validation_error` with
+`details.field` `description_md` when the description is blank. Queuing marks the task's pending
+suggestion `replaced`.
+
+A rephrase run uses the title lane (claim `kinds` accepts `rephrase`) and the title run's rules:
+a queued run whose card has left Backlog and Spec review is cancelled at claim; the run is never
+paused, blocked or resumed. The runner checks out a detached worktree of `origin/<base_branch>`
+with the linked checkouts and no setup (stages `prepare`, then `rephrase`), creates no branch,
+pushes nothing and removes the worktree when the run ends. It runs one phase, `rephrase`, with the
+agent `rephraser` on Sonnet at medium effort in default permission mode. Its tools are Read, Grep,
+Glob and the board's `get_task`, `save_suggestion` and `log_step`: no edit, Bash, Agent or
+`request_approval`. The handoff carries the key, the title and `base_md` as the description. The
+prompt tells it to read the code, rewrite the description clearly, add which code is involved,
+what it does today and what the change touches, keep the owner's intent and decide nothing the
+owner did not, say where it is unsure, suggest the description only, change no file and finish
+with one sentence.
+
+`save_suggestion` takes `body_md` (1–100,000 characters), is refused outside a rephrase run and
+when its phase is not running, and writes `runs.suggestion_md`; a later call overwrites it. It
+answers "Saved the suggestion." and changes no task field. The runner ends the run `suggested`
+when the phase succeeds; the server then marks it succeeded with `suggestion_status` `pending`,
+or fails it with "the rephraser saved no suggestion". A failed phase fails it with "the rephrase
+phase failed", a cancel ends it cancelled, a stopped daemon or a failed git step fails it ("the
+runner stopped", "the rephrase run could not go on: …"), and the sweeper fails a run with no
+heartbeat for 90 seconds with "the runner was lost", interrupts its phase and queues a cleanup.
+None of these moves the card.
+
+While a rephrase run is queued or running, `draft-spec`, `redraft` and approving a spec answer
+`409 conflict` with `details.reason` `rephrasing`; saving the description and saving a spec by
+hand stay allowed. `POST /api/tasks/:id/actions/cancel-rephrase` cancels a queued run at once, or
+sets `cancel_requested` on a running one, whose runner reports `cancelled`; it is `409` with none
+in flight. `POST /api/tasks/:id/suggestion/accept` with `{ description_md }` (1–100,000
+characters, the suggestion as shown, edited or not) sets the description and marks the pending
+suggestion `accepted` in one transaction; `POST /api/tasks/:id/suggestion/discard` marks it
+`discarded` and leaves the description. Both are `409` outside Backlog and Spec review or with no
+pending suggestion.
+
+The task view carries `rephrase`, read from the latest rephrase run: its `status`, its
+`failure_reason` when it failed, and while a suggestion is pending `suggestion` with `body_md` and
+`stale`, true when the description now differs from the run's `base_md`.
+
+The Spec tab shows **Rephrase description** beside Save description in Backlog and Spec review. An
+edited, unsaved description is saved first; a blank one is marked invalid with "Write a
+description first; the rephraser works from it." and takes focus. While a run is in flight the
+button gives way to "The rephraser is reading the code." and **Cancel rephrase**, and Draft spec,
+Redraft and Approve are disabled and described by "Wait for the rephrase to finish, or cancel
+it." A pending suggestion appears beside the Description, stacking below it at narrow widths,
+under the heading "Suggested description", in an editable "Suggestion text" field with **Accept
+suggestion** and **Discard suggestion**, and "Written from an earlier version of your
+description." when stale. A failed run shows "The last rephrase did not finish: <reason>." until
+the next starts; a cancelled one shows nothing. The status region announces "A suggested
+description is ready.", "Description replaced with the suggestion." and "Suggestion discarded.";
+Rephrase description moves focus to Cancel rephrase, and Accept, Discard and Cancel rephrase move
+it to the Description field. These controls have not been tried with a screen reader or at 200%
+zoom.
 
 ## A delivery run
 
