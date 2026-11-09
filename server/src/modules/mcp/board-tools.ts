@@ -1,9 +1,10 @@
-import type { Kysely } from 'kysely'
+import { sql, type Kysely } from 'kysely'
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { Database } from '../../db/schema.js'
 import { publish } from '../../shared/bus.js'
 import { AppError, ConflictError } from '../../shared/errors.js'
+import type { HelpSubject } from '../../shared/vocabulary.js'
 import {
   LIMITS,
   type ApprovalOption,
@@ -12,15 +13,21 @@ import {
   type MigrationSiblings,
 } from '../approvals/approval-rules.js'
 import { questionOf } from '../approvals/help-rules.js'
-import { HelpService } from '../approvals/help.service.js'
+import {
+  recommendableActions,
+  specRead,
+  stoppedRunActions,
+  type CardDecision,
+} from '../approvals/decision-rules.js'
+import { HelpService, readSubjectFacts } from '../approvals/help.service.js'
 import type { Bus } from '../../shared/bus.js'
 import { readMigrationSiblings } from '../projects/migration-siblings.js'
 import { openApproval } from '../approvals/approval.service.js'
-import { lintReply } from '../specs/spec-lint-text.js'
+import { lintReply, lintText } from '../specs/spec-lint-text.js'
 import { parseSpec } from '../specs/spec-parser.js'
 import { SpecRepository } from '../specs/spec.repository.js'
 import { acceptedPlanOf, planAnswers } from '../tasks/plan-history.js'
-import { loadPlanHistory } from '../tasks/plan-history.queries.js'
+import { loadPlanHistory, planToKeepFor } from '../tasks/plan-history.queries.js'
 import { checkSuggestion, suggestionRefusal } from './title-rules.js'
 import {
   checkPlan,
@@ -201,6 +208,220 @@ async function helpQuestion(ctx: ToolContext, helpId: string) {
   return { row, asked }
 }
 
+/** How many of a phase's newest entries a stopped-run help reads. */
+const PHASE_RECORD_LIMIT = 300
+
+interface HelpHead {
+  decision: CardDecision | 'question'
+  mode: string
+  subject: HelpSubject | null
+  status: string
+}
+
+async function helpHead(ctx: ToolContext, helpId: string): Promise<HelpHead> {
+  const row = await ctx.db
+    .selectFrom('helps')
+    .select(['decision', 'mode', 'subject', 'status'])
+    .where('id', '=', helpId)
+    .executeTakeFirstOrThrow()
+  return row as HelpHead
+}
+
+/** A stopped run's latest non-help phase: its newest entries, and how many earlier were left out. */
+async function stoppedPhaseRecord(ctx: ToolContext, runId: string) {
+  const phase = await ctx.db
+    .selectFrom('phases')
+    .select('id')
+    .where('run_id', '=', runId)
+    .where('name', '!=', 'help')
+    .orderBy('started_at', 'desc')
+    .limit(1)
+    .executeTakeFirst()
+  if (phase === undefined) return { entries: [], earlier_left_out: 0 }
+  const entriesOf = () =>
+    ctx.db
+      .selectFrom('events')
+      .where('run_id', '=', runId)
+      .where('phase_id', '=', phase.id)
+      .where((eb) =>
+        eb.or([
+          eb('type', '=', 'tool_call'),
+          eb.and([eb('type', '=', 'message'), eb(sql`payload->>'declared'`, '=', 'true')]),
+        ]),
+      )
+  const total = await entriesOf()
+    .select((eb) => eb.fn.countAll<string>().as('n'))
+    .executeTakeFirstOrThrow()
+  const newest = await entriesOf()
+    .select(['type', 'ts', 'tool', 'target', 'status', 'payload'])
+    .orderBy('ts', 'desc')
+    .orderBy('id', 'desc')
+    .limit(PHASE_RECORD_LIMIT)
+    .execute()
+  return {
+    entries: newest
+      .reverse()
+      .map((e) =>
+        e.type === 'tool_call'
+          ? { type: 'tool_call', ts: e.ts, tool: e.tool, target: e.target, status: e.status }
+          : { type: 'log_step', ts: e.ts, summary: e.payload.summary ?? null },
+      ),
+    earlier_left_out: Math.max(0, Number(total.n) - PHASE_RECORD_LIMIT),
+  }
+}
+
+async function latestReport(ctx: ToolContext, runId: string) {
+  const report = await ctx.db
+    .selectFrom('artifacts')
+    .select(['body_md', 'data'])
+    .where('run_id', '=', runId)
+    .where('kind', '=', 'verify_report')
+    .orderBy('created_at', 'desc')
+    .limit(1)
+    .executeTakeFirst()
+  return report === undefined ? null : { body_md: report.body_md, data: report.data }
+}
+
+/** What `get_decision` returns (R11). */
+async function decisionRecord(ctx: ToolContext, helpId: string, head: HelpHead) {
+  const task = await ctx.db
+    .selectFrom('tasks')
+    .innerJoin('projects', 'projects.id', 'tasks.project_id')
+    .select(['tasks.number', 'tasks.title', 'tasks.description_md', 'projects.key'])
+    .where('tasks.id', '=', ctx.taskId)
+    .executeTakeFirstOrThrow()
+  const facts = await readSubjectFacts(ctx.db, ctx.taskId)
+  const common = {
+    decision: head.decision,
+    mode: head.mode,
+    subject: head.subject,
+    task: {
+      key: `${task.key}-${task.number}`,
+      title: task.title,
+      description_md: task.description_md,
+    },
+  }
+  const subject = head.subject
+  if (head.decision === 'spec_review' && subject !== null && 'spec_version' in subject) {
+    const spec = await ctx.db
+      .selectFrom('specs')
+      .select(['version', 'body_md'])
+      .where('task_id', '=', ctx.taskId)
+      .where('version', '=', subject.spec_version)
+      .executeTakeFirst()
+    const parsed = spec === undefined ? null : parseSpec(spec.body_md)
+    return {
+      ...common,
+      spec: spec ?? null,
+      lint:
+        parsed === null
+          ? null
+          : {
+              approvable: parsed.approvable,
+              findings: parsed.findings.map(lintText),
+              open_questions: parsed.openQuestions,
+            },
+    }
+  }
+  if (head.decision === 'stopped_run' && subject !== null && 'run_id' in subject) {
+    const run = await ctx.db
+      .selectFrom('runs')
+      .select(['id', 'kind', 'number', 'block', 'failure_reason', 'checkpoint'])
+      .where('id', '=', subject.run_id)
+      .executeTakeFirstOrThrow()
+    const phases = await ctx.db
+      .selectFrom('phases')
+      .select(['name', 'attempt', 'status', 'summary_md'])
+      .where('run_id', '=', run.id)
+      .where('name', '!=', 'help')
+      .orderBy('started_at')
+      .execute()
+    const actions = stoppedRunActions(facts)
+    const kept = actions.includes('rerun_keep')
+      ? await planToKeepFor(ctx.db, ctx.taskId)
+      : undefined
+    const plan =
+      kept === undefined
+        ? null
+        : await ctx.db
+            .selectFrom('artifacts')
+            .select('body_md')
+            .where('id', '=', kept.id)
+            .executeTakeFirstOrThrow()
+    const resumable = run.checkpoint !== null
+    return {
+      ...common,
+      run: { kind: run.kind, number: run.number },
+      block: run.block,
+      failure_reason: run.failure_reason,
+      checkpoint:
+        run.checkpoint === null
+          ? null
+          : { stage: run.checkpoint.stage, attempt: run.checkpoint.attempt },
+      phases,
+      verify_report: await latestReport(ctx, run.id),
+      actions,
+      recommendable_actions: recommendableActions(facts),
+      ...(kept === undefined || plan === null
+        ? {}
+        : { plan_to_keep: { run_number: kept.runNumber, body_md: plan.body_md } }),
+      resumable,
+      ...(resumable
+        ? {}
+        : {
+            not_resumable:
+              'Resume would answer 409 no_checkpoint: this run left no checkpoint to resume from.',
+          }),
+    }
+  }
+  const read = specRead(facts)
+  const spec =
+    read.version === null
+      ? null
+      : await ctx.db
+          .selectFrom('specs')
+          .select(['version', 'body_md'])
+          .where('task_id', '=', ctx.taskId)
+          .where('version', '=', read.version)
+          .executeTakeFirst()
+  const runs = await ctx.db
+    .selectFrom('runs')
+    .select(['id', 'number', 'status', 'branch', 'pr_number', 'pr_url', 'failure_reason'])
+    .where('task_id', '=', ctx.taskId)
+    .where('kind', '=', 'delivery')
+    .orderBy('number')
+    .execute()
+  const delivery = await Promise.all(
+    runs.map(async (run) => ({
+      number: run.number,
+      status: run.status,
+      verify_report: await latestReport(ctx, run.id),
+      pull_request:
+        run.pr_number === null
+          ? null
+          : {
+              number: run.pr_number,
+              url: run.pr_url,
+              state:
+                run.id !== facts.latestDeliveryRunId ||
+                run.failure_reason !== null ||
+                facts.taskState === 'failed'
+                  ? 'closed'
+                  : facts.taskState === 'done'
+                    ? 'merged'
+                    : 'open',
+            },
+    })),
+  )
+  return {
+    ...common,
+    checked_against: read.checkedAgainst,
+    spec: spec ?? null,
+    delivery_runs: delivery,
+    branch_produced: runs.some((run) => run.branch !== null),
+  }
+}
+
 /** The tools of a helper: it reads the task, its question and the asking phase, and saves. */
 function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string): void {
   const service = new HelpService(ctx.db, undefined as unknown as Bus, ctx.clock)
@@ -211,6 +432,8 @@ function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string):
         'Read the question you were asked to help with: the question, its context, its options with the recommendation, and for a request to change files the files, for a migration request the path and the whole file, and for a plan the plan.',
     },
     async () => {
+      if ((await helpHead(ctx, helpId)).decision !== 'question')
+        return reply('This help is for a decision, not a question: use get_decision.', true)
       const { row, asked } = await helpQuestion(ctx, helpId)
       if (asked === null) return reply('This question is gone.', true)
       const files = (row.files ?? null) as string[] | null
@@ -234,6 +457,11 @@ function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string):
         'Read what the asking phase did, in order: its log_step lines and its tool calls.',
     },
     async () => {
+      const head = await helpHead(ctx, helpId)
+      if (head.decision === 'stopped_run' && head.subject !== null && 'run_id' in head.subject)
+        return json(await stoppedPhaseRecord(ctx, head.subject.run_id))
+      if (head.decision !== 'question')
+        return reply('This help has no phase record: use get_decision.', true)
       const { row } = await helpQuestion(ctx, helpId)
       if (row.phase_id === null) return json([])
       const events = await ctx.db
@@ -259,10 +487,24 @@ function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string):
   )
 
   server.registerTool(
+    'get_decision',
+    {
+      description:
+        'Read the decision you were asked to help with: the decision, the mode, what it is about, the task, and what the decision reads (the spec and its lint, or the stopped run and its actions, or the spec and the delivery runs).',
+    },
+    async () => {
+      const head = await helpHead(ctx, helpId)
+      if (head.decision === 'question')
+        return reply('This help is for a question, not a decision: use get_question.', true)
+      return json(await decisionRecord(ctx, helpId, head))
+    },
+  )
+
+  server.registerTool(
     'save_help_result',
     {
       description:
-        'Save your result. A suggestion: option_id (one the question offers), text, or both, with reasoning and unsure (what you are unsure of). An explanation: asked (what is being asked), matters (why it matters to the task) and leads_to (what each option, or an answer in words, would lead to), and no option. Refused with the field to fix when it does not fit; fix it and save again.',
+        'Save your result. A suggestion: option_id (one the question offers), text, or both, with reasoning and unsure (what you are unsure of). An explanation: asked (what is being asked), matters (why it matters to the task) and leads_to (what each option, or an answer in words, would lead to), and no option. For a decision help the fields depend on the mode. review: verdict (changes or nothing_to_change), findings (kind, where, text) and unsure. restate: changes, requirements and left_out. recommend: why_stopped, action, reasoning and unsure. check: checked_against, produced, unfinished (where, text) and unsure. Refused with the field to fix when it does not fit; fix it and save again.',
       inputSchema: {
         option_id: z.string().optional(),
         text: z.string().optional(),
@@ -271,6 +513,20 @@ function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string):
         asked: z.string().optional(),
         matters: z.string().optional(),
         leads_to: z.string().optional(),
+        verdict: z.string().optional(),
+        findings: z
+          .array(z.object({ kind: z.string(), where: z.string().optional(), text: z.string() }))
+          .optional(),
+        changes: z.string().optional(),
+        requirements: z.string().optional(),
+        left_out: z.string().optional(),
+        why_stopped: z.string().optional(),
+        action: z.string().optional(),
+        checked_against: z.string().optional(),
+        produced: z.string().optional(),
+        unfinished: z
+          .array(z.object({ where: z.string().optional(), text: z.string() }))
+          .optional(),
       },
     },
     async (input) => {

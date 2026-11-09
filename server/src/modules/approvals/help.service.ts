@@ -19,18 +19,23 @@ import type { ApprovalOption, BatchQuestion } from './approval-rules.js'
 import {
   DECISION_MODES,
   offered,
+  recommendableActions,
+  specRead,
   stands,
   subjectOf,
   type CardDecision,
   type SubjectFacts,
 } from './decision-rules.js'
 import {
+  checkDecisionResult,
   checkHelpResult,
+  decisionResultOf,
   HELP_LIMITS,
   hasInFlight,
   isCurrent,
   questionOf,
   resultOf,
+  type DecisionResultInput,
   type HelpResultInput,
 } from './help-rules.js'
 
@@ -166,11 +171,18 @@ export async function settleHelps(
       await db.updateTable('helps').set({ retired_at: now }).where('id', '=', help.id).execute()
       continue
     }
-    await db
+    const stopped = await db
       .updateTable('helps')
       .set({ status: 'stopped', ended_at: now })
       .where('id', '=', help.id)
-      .execute()
+      .where('status', 'in', ['queued', 'running'])
+      .returning('id')
+      .executeTakeFirst()
+    if (stopped === undefined) {
+      // It saved its result while this ran: it is retired like any succeeded help.
+      await db.updateTable('helps').set({ retired_at: now }).where('id', '=', help.id).execute()
+      continue
+    }
     await db
       .updateTable('runs')
       .set({ status: 'cancelled', ended_at: now, queued_at: null })
@@ -653,8 +665,28 @@ export class HelpService {
   }
 
   /** The helper's save. Refused for a help that is not running, and for an invalid result. */
-  async save(helpId: string, input: HelpResultInput): Promise<{ ok: true } | { error: string }> {
+  async save(
+    helpId: string,
+    input: HelpResultInput & DecisionResultInput,
+  ): Promise<{ ok: true } | { error: string }> {
     return this.db.transaction().execute(async (trx) => {
+      const own = await trx
+        .selectFrom('helps')
+        .innerJoin('runs', 'runs.id', 'helps.run_id')
+        .select([
+          'helps.id',
+          'helps.run_id',
+          'helps.status',
+          'helps.mode',
+          'helps.decision',
+          'helps.subject',
+          'runs.task_id',
+        ])
+        .where('helps.id', '=', helpId)
+        .forUpdate('helps')
+        .executeTakeFirst()
+      if (own === undefined) return { error: 'No such help.' }
+      if (own.decision !== 'question') return this.saveDecision(trx, own, input)
       const help = await trx
         .selectFrom('helps')
         .innerJoin('approval_requests', 'approval_requests.id', 'helps.approval_id')
@@ -709,6 +741,65 @@ export class HelpService {
       await this.announce(trx, help.run_id)
       return { ok: true as const }
     })
+  }
+
+  /**
+   * A decision help's save. `stands` is checked before the status: a subject that no longer
+   * stands saves nothing, and stops a help that is still running.
+   */
+  private async saveDecision(
+    trx: Transaction<Database>,
+    help: {
+      id: string
+      run_id: string
+      status: HelpStatus
+      mode: HelpMode
+      decision: HelpDecision
+      subject: HelpSubject | null
+      task_id: string
+    },
+    input: DecisionResultInput,
+  ): Promise<{ ok: true } | { error: string }> {
+    const facts = await readSubjectFacts(trx, help.task_id)
+    const now = this.clock()
+    if (help.subject === null || !stands(help.decision as CardDecision, help.subject, facts)) {
+      if (help.status === 'running') {
+        await trx
+          .updateTable('helps')
+          .set({ status: 'stopped', ended_at: now })
+          .where('id', '=', help.id)
+          .execute()
+        await endHelpRun(trx, help.run_id, 'cancelled', null, now)
+        await publish(trx, { topic: 'help.updated', taskId: help.task_id })
+      }
+      return { error: 'This decision is no longer offered; nothing was saved. End your turn now.' }
+    }
+    if (help.status !== 'running')
+      return { error: `This help is ${help.status}; nothing was saved. End your turn now.` }
+    const mode = help.mode as 'review' | 'restate' | 'recommend' | 'check'
+    const findings = checkDecisionResult(mode, input, {
+      recommendable: recommendableActions(facts),
+      checkedAgainst: specRead(facts).checkedAgainst,
+    })
+    if (findings.length > 0)
+      return {
+        error: [
+          'The result was not saved:',
+          ...findings.map((f) => `- ${f.field}: ${f.code.replaceAll('_', ' ')}`),
+        ].join('\n'),
+      }
+    await trx
+      .updateTable('helps')
+      .set({
+        status: 'succeeded',
+        result: JSON.stringify(decisionResultOf(mode, input)),
+        ended_at: now,
+      })
+      .where('id', '=', help.id)
+      .execute()
+    await endHelpRun(trx, help.run_id, 'succeeded', null, now)
+    await publish(trx, { topic: 'help.updated', taskId: help.task_id })
+    return { ok: true as const }
   }
 
   private async announce(trx: Transaction<Database>, runId: string): Promise<void> {

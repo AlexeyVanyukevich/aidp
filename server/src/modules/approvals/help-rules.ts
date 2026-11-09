@@ -160,3 +160,199 @@ export function lostHelps(
     )
     .map((help) => help.id)
 }
+
+/** What a decision help's save may carry; every field optional, the mode says which are needed. */
+export interface DecisionResultInput {
+  verdict?: string | undefined
+  findings?: { kind: string; where?: string | undefined; text: string }[] | undefined
+  unsure?: string | undefined
+  changes?: string | undefined
+  requirements?: string | undefined
+  left_out?: string | undefined
+  why_stopped?: string | undefined
+  action?: string | undefined
+  reasoning?: string | undefined
+  checked_against?: string | undefined
+  produced?: string | undefined
+  unfinished?: { where?: string | undefined; text: string }[] | undefined
+  // The question fields: never allowed in a decision help.
+  option_id?: string | undefined
+  text?: string | undefined
+  asked?: string | undefined
+  matters?: string | undefined
+  leads_to?: string | undefined
+}
+
+/** What the board knows when it checks a decision help's result. */
+export interface DecisionCheckFacts {
+  /** Actions `recommendableActions` gives now. */
+  recommendable: readonly string[]
+  /** What Mark done reads for the task's state (R11). */
+  checkedAgainst: string
+}
+
+const DECISION_FIELDS = {
+  review: ['verdict', 'findings', 'unsure'],
+  restate: ['changes', 'requirements', 'left_out'],
+  recommend: ['why_stopped', 'action', 'reasoning', 'unsure'],
+  check: ['checked_against', 'produced', 'unfinished', 'unsure'],
+} as const
+
+const ALL_RESULT_FIELDS = [
+  'verdict',
+  'findings',
+  'unsure',
+  'changes',
+  'requirements',
+  'left_out',
+  'why_stopped',
+  'action',
+  'reasoning',
+  'checked_against',
+  'produced',
+  'unfinished',
+  'option_id',
+  'text',
+  'asked',
+  'matters',
+  'leads_to',
+] as const
+
+const ACTION_IDS = ['resume', 'cancel', 'rerun_again', 'rerun_keep', 'mark_done']
+const FINDING_KINDS = ['missing', 'contradiction', 'uncheckable', 'risk']
+const LIST_LIMIT = 30
+const WHERE_LIMIT = 100
+
+/** A field to fix in a decision help's result, and why. */
+export interface DecisionFinding {
+  field: string
+  code:
+    | 'required'
+    | 'not_allowed'
+    | 'too_long'
+    | 'too_many'
+    | 'unknown_kind'
+    | 'unknown_verdict'
+    | 'unknown_action'
+    | 'not_offered'
+    | 'wrong_source'
+}
+
+/** What a decision help's saved result must be. Each finding names the field to fix. */
+export function checkDecisionResult(
+  mode: 'review' | 'restate' | 'recommend' | 'check',
+  input: DecisionResultInput,
+  facts: DecisionCheckFacts,
+): DecisionFinding[] {
+  const findings: DecisionFinding[] = []
+  const allowed: readonly string[] = DECISION_FIELDS[mode]
+  for (const field of ALL_RESULT_FIELDS)
+    if (input[field] !== undefined && !allowed.includes(field))
+      findings.push({ field, code: 'not_allowed' })
+  const text = (field: keyof DecisionResultInput, required: boolean) => {
+    const value = input[field] as string | undefined
+    if (value === undefined) {
+      if (required) findings.push({ field, code: 'required' })
+      return
+    }
+    if (blank(value)) findings.push({ field, code: 'required' })
+    else if (value.trim().length > HELP_LIMITS.text) findings.push({ field, code: 'too_long' })
+  }
+  const items = (
+    field: 'findings' | 'unfinished',
+    list: { kind?: string; where?: string | undefined; text: string }[] | undefined,
+  ) => {
+    if (list === undefined) return
+    if (list.length > LIST_LIMIT) findings.push({ field, code: 'too_many' })
+    for (const item of list) {
+      if (field === 'findings' && !FINDING_KINDS.includes(item.kind ?? ''))
+        findings.push({ field, code: 'unknown_kind' })
+      if (blank(item.text)) findings.push({ field, code: 'required' })
+      else if (item.text.trim().length > HELP_LIMITS.text)
+        findings.push({ field, code: 'too_long' })
+      if (item.where !== undefined && item.where.trim().length > WHERE_LIMIT)
+        findings.push({ field, code: 'too_long' })
+    }
+  }
+
+  if (mode === 'review') {
+    if (input.verdict !== 'changes' && input.verdict !== 'nothing_to_change')
+      findings.push({
+        field: 'verdict',
+        code: input.verdict === undefined ? 'required' : 'unknown_verdict',
+      })
+    items('findings', input.findings)
+    const count = input.findings?.length ?? 0
+    if (input.verdict === 'changes' && count === 0)
+      findings.push({ field: 'findings', code: 'required' })
+    if (input.verdict === 'nothing_to_change' && count > 0)
+      findings.push({ field: 'findings', code: 'not_allowed' })
+    text('unsure', true)
+  } else if (mode === 'restate') {
+    for (const field of ['changes', 'requirements', 'left_out'] as const) text(field, true)
+  } else if (mode === 'recommend') {
+    text('why_stopped', true)
+    text('reasoning', true)
+    text('unsure', true)
+    if (input.action === undefined) findings.push({ field: 'action', code: 'required' })
+    else if (!ACTION_IDS.includes(input.action))
+      findings.push({ field: 'action', code: 'unknown_action' })
+    else if (!facts.recommendable.includes(input.action))
+      findings.push({ field: 'action', code: 'not_offered' })
+  } else {
+    if (input.checked_against === undefined)
+      findings.push({ field: 'checked_against', code: 'required' })
+    else if (input.checked_against !== facts.checkedAgainst)
+      findings.push({ field: 'checked_against', code: 'wrong_source' })
+    text('produced', true)
+    items('unfinished', input.unfinished)
+    text('unsure', true)
+  }
+  return findings
+}
+
+/** The decision result as it is stored: only the fields of its mode, trimmed. */
+export function decisionResultOf(
+  mode: 'review' | 'restate' | 'recommend' | 'check',
+  input: DecisionResultInput,
+): HelpResult {
+  const t = (value: string | undefined) => (value ?? '').trim()
+  const where = (value: string | undefined) =>
+    value === undefined || blank(value) ? {} : { where: value.trim() }
+  if (mode === 'review')
+    return {
+      mode,
+      verdict: input.verdict === 'changes' ? 'changes' : 'nothing_to_change',
+      findings: (input.findings ?? []).map((item) => ({
+        kind: item.kind as 'missing' | 'contradiction' | 'uncheckable' | 'risk',
+        ...where(item.where),
+        text: item.text.trim(),
+      })),
+      unsure: t(input.unsure),
+    }
+  if (mode === 'restate')
+    return {
+      mode,
+      changes: t(input.changes),
+      requirements: t(input.requirements),
+      left_out: t(input.left_out),
+    }
+  if (mode === 'recommend')
+    return {
+      mode,
+      why_stopped: t(input.why_stopped),
+      action: t(input.action),
+      reasoning: t(input.reasoning),
+      unsure: t(input.unsure),
+    }
+  return {
+    mode,
+    checked_against: input.checked_against as 'approved_spec' | 'latest_spec' | 'description',
+    produced: t(input.produced),
+    unfinished: (input.unfinished ?? []).map((item) => ({
+      ...where(item.where),
+      text: item.text.trim(),
+    })),
+    unsure: t(input.unsure),
+  }
+}
