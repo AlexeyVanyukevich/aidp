@@ -238,12 +238,17 @@ describe('suggestion/accept and suggestion/discard', () => {
     expect(await runsOf(taskId)).toMatchObject([{ suggestion_status: 'pending' }])
   })
 
-  it('refuses a blank accepted text', async () => {
+  it.each([
+    ['empty', ''],
+    ['spaces', '   '],
+    ['line breaks', '\n\t\n'],
+  ])('refuses a blank accepted text: %s', async (_name, description_md) => {
     const id = await seed()
     await pending(id)
-    expect(
-      (await post(`/api/tasks/${id}/suggestion/accept`, { description_md: '' })).statusCode,
-    ).toBe(400)
+    expect((await post(`/api/tasks/${id}/suggestion/accept`, { description_md })).statusCode).toBe(
+      400,
+    )
+    expect(await runsOf(id)).toMatchObject([{ suggestion_status: 'pending' }])
   })
 })
 
