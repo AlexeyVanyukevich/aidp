@@ -85,8 +85,8 @@ export class Sweeper {
         .returning(['task_id', 'kind'])
         .executeTakeFirst()
       if (run === undefined) return
-      if (run.kind === 'title') {
-        await this.loseTitle(trx, runId, now)
+      if (run.kind === 'title' || run.kind === 'rephrase') {
+        await this.loseSideRun(trx, runId, now)
         return
       }
       const block: Block = { cause: 'runner_lost', stage: await stageOf(trx, runId) }
@@ -114,8 +114,8 @@ export class Sweeper {
     })
   }
 
-  /** A title run is never blocked or resumed: it fails, and its card stays where it is. */
-  private async loseTitle(trx: Transaction<Database>, runId: string, now: Date): Promise<void> {
+  /** A title or rephrase run is never blocked or resumed: it fails, and its card stays put. */
+  private async loseSideRun(trx: Transaction<Database>, runId: string, now: Date): Promise<void> {
     await trx
       .updateTable('runs')
       .set({
