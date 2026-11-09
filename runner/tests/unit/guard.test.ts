@@ -558,9 +558,52 @@ describe('the guard for a helper', () => {
     ['Glob', { pattern: '**/*.ts' }],
     ['mcp__board__get_question', {}],
     ['mcp__board__get_phase_record', {}],
+    ['mcp__board__get_decision', {}],
     ['mcp__board__save_help_result', { text: 'x' }],
   ])('allows %s', (tool_name, tool_input) => {
     expect(decide({ tool_name, tool_input }, help())).toEqual({ allow: true })
+  })
+
+  const linked = [{ key: 'ZLC', repo_path: '/owner/zlc', path: '/runs/help-linked/ZLC' }]
+  it.each([
+    {
+      name: 'a read inside a linked checkout',
+      tool: 'Read',
+      input: { file_path: '/runs/help-linked/ZLC/a.css' },
+      allow: true,
+    },
+    {
+      name: 'a search of a linked checkout',
+      tool: 'Grep',
+      input: { path: '/runs/help-linked/ZLC', pattern: 'x' },
+      allow: true,
+    },
+    {
+      name: 'a read of the linked repo_path',
+      tool: 'Read',
+      input: { file_path: '/owner/zlc/a.css' },
+      allow: false,
+    },
+    {
+      name: 'a read beside the linked checkout',
+      tool: 'Read',
+      input: { file_path: '/runs/help-linked/OTHER/a' },
+      allow: false,
+    },
+    {
+      name: 'an Edit in a linked checkout',
+      tool: 'Edit',
+      input: { file_path: '/runs/help-linked/ZLC/a.css' },
+      allow: false,
+    },
+    {
+      name: 'a Bash call',
+      tool: 'Bash',
+      input: { command: 'ls /runs/help-linked/ZLC' },
+      allow: false,
+    },
+  ])('$name (AC18)', ({ tool, input, allow }) => {
+    expect(decide({ tool_name: tool, tool_input: input }, { ...help(), linked }).allow).toBe(allow)
   })
 
   it('refuses a read outside the worktree', () => {

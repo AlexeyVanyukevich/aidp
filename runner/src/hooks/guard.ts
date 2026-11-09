@@ -178,9 +178,14 @@ const HELP_TOOLS = new Set([
   'Read',
   'Grep',
   'Glob',
-  ...['get_task', 'get_spec', 'get_question', 'get_phase_record', 'save_help_result'].map(
-    (tool) => `mcp__board__${tool}`,
-  ),
+  ...[
+    'get_task',
+    'get_spec',
+    'get_question',
+    'get_decision',
+    'get_phase_record',
+    'save_help_result',
+  ].map((tool) => `mcp__board__${tool}`),
 ])
 
 /** A path a helper's search or read names, when it names one. */
@@ -216,8 +221,10 @@ export function decide(
     for (const key of READ_PATH_KEYS) {
       const raw = input.tool_input[key]
       if (typeof raw !== 'string') continue
-      const inside = relative(ctx.cwd, isAbsolute(raw) ? resolve(raw) : resolve(ctx.cwd, raw))
-      if (inside.startsWith('..') || isAbsolute(inside))
+      const absolute = isAbsolute(raw) ? resolve(raw) : resolve(ctx.cwd, raw)
+      // The helper's working directory, and the linked checkouts its `linked.json` lists.
+      const roots = [ctx.cwd, ...(ctx.linked ?? []).map((l) => l.path)]
+      if (!roots.some((root) => within(root, absolute)))
         return deny('this path is outside the worktree')
     }
     return { allow: true }

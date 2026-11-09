@@ -86,6 +86,28 @@ export class Git {
     })
   }
 
+  /**
+   * Fetches one branch of origin. `missing` when origin has no such branch; any other failure
+   * (no network, no remote) throws, so a gone branch is told from a fetch that failed.
+   */
+  fetchBranch(repo: string, branch: string): Promise<'fetched' | 'missing'> {
+    return this.exclusive(repo, async () => {
+      const result = await this.exec('git', ['-C', repo, 'fetch', 'origin', branch], {})
+      if (result.code === 0) return 'fetched' as const
+      const output = (result.stderr || result.stdout).trim()
+      if (/couldn't find remote ref/i.test(output)) return 'missing' as const
+      throw new GitError(`git -C ${repo} fetch origin ${branch}`, output)
+    })
+  }
+
+  /** A detached worktree of a ref already fetched, such as `origin/<branch>`. */
+  prepareDetachedRef(repo: string, ref: string, dir: string): Promise<void> {
+    return this.exclusive(repo, async () => {
+      await this.prune(repo)
+      await this.run('git', ['-C', repo, 'worktree', 'add', '--detach', dir, ref])
+    })
+  }
+
   async newCommits(dir: string, base: string): Promise<number> {
     return Number(
       (await this.run('git', ['-C', dir, 'rev-list', '--count', `origin/${base}..HEAD`])).trim(),

@@ -8,7 +8,7 @@ import { draftSpec } from './drafting.js'
 import { realExec } from './exec.js'
 import { checkExecutable } from './executable.js'
 import { runnerCode } from './fingerprint.js'
-import { carryHelp, HELP_SLOTS } from './help.js'
+import { carryHelp, clearEndedHelps, HELP_SLOTS } from './help.js'
 import { rephraseDescription } from './rephrase.js'
 import { suggestTitle } from './titling.js'
 import { Git } from './git.js'
@@ -395,6 +395,8 @@ export class Daemon {
    * has moved is given back to the board, queued again, and the new daemon claims it as usual.
    */
   async helpLoop(stop: AbortSignal): Promise<void> {
+    // What a killed daemon left behind is cleared before the first claim.
+    await clearEndedHelps(this.api, this.git, this.config.home).catch(() => undefined)
     const running = new Set<Promise<void>>()
     const idle = () => stop.aborted || this.exiting || this.moved || this.helpStop.signal.aborted
     while (!idle()) {
@@ -412,6 +414,7 @@ export class Daemon {
         }
         const carried: Promise<void> = carryHelp(work, {
           api: this.api,
+          git: this.git,
           config: this.config,
           runnerCode: this.startCode,
           shutdown: stop,

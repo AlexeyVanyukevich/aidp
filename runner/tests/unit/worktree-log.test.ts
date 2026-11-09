@@ -17,6 +17,7 @@ import {
   canonicalPath,
   deleteDirectory,
   guardPath,
+  guardRunDir,
   recordLine,
   removeCheckout,
   type LogLine,
@@ -45,6 +46,7 @@ function fixture(): Fixture {
   const outside = join(root, 'outside')
   mkdirSync(join(home, 'worktrees', RUN), { recursive: true })
   mkdirSync(join(home, 'worktrees', OTHER))
+  mkdirSync(join(home, 'runs', RUN), { recursive: true })
   mkdirSync(join(home, 'worktrees', `${RUN}-linked`, 'ZLC', 'deep'), { recursive: true })
   mkdirSync(outside)
   symlinkSync(home, link)
@@ -333,5 +335,58 @@ describe('the removal log', () => {
     )
     expect(line).toMatchObject({ action: 'keep', result: 'kept', output: 'boom' })
     expect(readLog(f.home)).toHaveLength(1)
+  })
+})
+
+// ── The run-directory guard ────────────────────────────────────────────────────────────────
+
+describe('guardRunDir', () => {
+  const rows: {
+    name: string
+    path: (f: Fixture) => string
+    runId?: string
+    expected: (f: Fixture) => string | null
+  }[] = [
+    {
+      name: 'its own run directory',
+      path: (f) => join(f.home, 'runs', RUN),
+      expected: (f) => join(f.real, 'real-home', 'runs', RUN),
+    },
+    {
+      name: 'its own run directory through the symlinked home',
+      path: (f) => join(f.link, 'runs', RUN),
+      expected: (f) => join(f.real, 'real-home', 'runs', RUN),
+    },
+    {
+      name: 'another run directory',
+      path: (f) => join(f.home, 'runs', 'other'),
+      expected: () => null,
+    },
+    {
+      name: 'a path inside its own',
+      path: (f) => join(f.home, 'runs', RUN, 'events.ndjson'),
+      expected: () => null,
+    },
+    { name: 'runs itself', path: (f) => join(f.home, 'runs'), expected: () => null },
+    { name: 'its own worktree', path: (f) => join(f.home, 'worktrees', RUN), expected: () => null },
+    { name: 'a relative path', path: () => `runs/${RUN}`, expected: () => null },
+    {
+      name: 'a path with a .. segment',
+      path: (f) => `${f.home}/runs/other/../${RUN}`,
+      expected: () => null,
+    },
+    {
+      name: 'a run id with a slash',
+      path: (f) => join(f.home, 'runs', RUN),
+      runId: `a/${RUN}`,
+      expected: () => null,
+    },
+  ]
+  it.each(rows)('$name (AC45)', (row) => {
+    const f = fixture()
+    const verdict = guardRunDir(f.link, row.runId ?? RUN, row.path(f))
+    const expected = row.expected(f)
+    if (expected === null) expect(verdict.ok).toBe(false)
+    else expect(verdict).toEqual({ ok: true, resolved: expected })
   })
 })
