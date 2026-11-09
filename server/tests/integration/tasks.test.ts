@@ -1,3 +1,4 @@
+import { sql } from 'kysely'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { buildTestApp, closeTestDb, getTestDb, resetDb } from './helpers.js'
@@ -362,5 +363,224 @@ describe('the test command a task chose', () => {
         })
         .execute()
     expect((await get(id)).tested_with).toBe(expected)
+  })
+})
+
+describe('POST /api/projects/:key/tasks/reorder', () => {
+  const reorder = (key = 'PAY') =>
+    app.inject({ method: 'POST', url: `/api/projects/${key}/tasks/reorder` })
+
+  async function positions(): Promise<Record<string, number>> {
+    const rows = await getTestDb().selectFrom('tasks').select(['title', 'position']).execute()
+    return Object.fromEntries(rows.map((row) => [row.title, row.position]))
+  }
+
+  async function seedMessy(): Promise<void> {
+    const db = getTestDb()
+    await seedTask(db, projectId, { number: 1, title: 'b1', position: 0.5 })
+    await seedTask(db, projectId, { number: 2, title: 'b2', position: 0.75 })
+    await seedTask(db, projectId, { number: 3, title: 'b3', position: 3 })
+    await seedTask(db, projectId, { number: 4, title: 'd1', state: 'done', position: 2 })
+    await seedTask(db, projectId, { number: 5, title: 'd2', state: 'done', position: 7 })
+    await seedTask(db, projectId, { number: 6, title: 'f1', state: 'failed', position: 1 })
+    // b3 and f1 are already where they belong; pin their updated_at in the past.
+    await db
+      .updateTable('tasks')
+      .set({ updated_at: new Date('2020-01-01T00:00:00Z') })
+      .where('title', 'in', ['b3', 'f1'])
+      .execute()
+  }
+
+  function collect(): { ids: string[]; stop: () => void } {
+    const ids: string[] = []
+    const stop = app.bus.subscribe((message) => {
+      if (message.topic === 'task.updated') ids.push(message.taskId)
+    })
+    return { ids, stop }
+  }
+
+  it('renumbers every column, keeps states, and touches only the rows that change', async () => {
+    await seedMessy()
+    const spy = collect()
+    const response = await reorder()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    spy.stop()
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ reordered: 4 })
+    expect(await positions()).toEqual({ b1: 1, b2: 2, b3: 3, d1: 1, d2: 2, f1: 1 })
+    const rows = await getTestDb()
+      .selectFrom('tasks')
+      .select(['id', 'title', 'state', 'updated_at'])
+      .execute()
+    const by = Object.fromEntries(rows.map((row) => [row.title, row]))
+    expect(by.b1?.state).toBe('backlog')
+    expect(by.d1?.state).toBe('done')
+    expect(by.f1?.state).toBe('failed')
+    expect(by.b3?.updated_at.toISOString()).toBe('2020-01-01T00:00:00.000Z')
+    expect(by.f1?.updated_at.toISOString()).toBe('2020-01-01T00:00:00.000Z')
+    expect(spy.ids.sort()).toEqual(['b1', 'b2', 'd1', 'd2'].map((t) => by[t]!.id).sort())
+  })
+
+  it('answers 0 and writes and publishes nothing when every column is in order', async () => {
+    const db = getTestDb()
+    await seedTask(db, projectId, { number: 1, title: 'a', position: 1 })
+    await seedTask(db, projectId, { number: 2, title: 'b', position: 2 })
+    await seedTask(db, projectId, { number: 3, title: 'c', state: 'done', position: 1 })
+    await db
+      .updateTable('tasks')
+      .set({ updated_at: new Date('2020-01-01T00:00:00Z') })
+      .execute()
+    const spy = collect()
+    const response = await reorder()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    spy.stop()
+    expect(response.json()).toEqual({ reordered: 0 })
+    expect(spy.ids).toEqual([])
+    const rows = await db.selectFrom('tasks').select('updated_at').execute()
+    expect(rows.every((row) => row.updated_at.toISOString() === '2020-01-01T00:00:00.000Z')).toBe(
+      true,
+    )
+  })
+
+  it('answers 404 for an unknown project', async () => {
+    const response = await reorder('NOPE')
+    expect(response.statusCode).toBe(404)
+    expect(response.json().error).toBe('not_found')
+  })
+
+  const BODIES: [
+    string,
+    { payload?: string; headers?: Record<string, string> },
+    number,
+    string?,
+  ][] = [
+    ['no body and no content type', {}, 200],
+    ['an empty object', { payload: '{}', headers: { 'content-type': 'application/json' } }, 200],
+    [
+      'a field',
+      { payload: '{"x":1}', headers: { 'content-type': 'application/json' } },
+      400,
+      'validation_error',
+    ],
+    [
+      'a JSON content type with an empty body',
+      { payload: '', headers: { 'content-type': 'application/json' } },
+      400,
+      'bad_request',
+    ],
+  ]
+  it.each(BODIES)('%s', async (_name, request, status, error) => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/projects/PAY/tasks/reorder',
+      ...request,
+    })
+    expect(response.statusCode).toBe(status)
+    if (error !== undefined) expect(response.json().error).toBe(error)
+  })
+
+  it('rolls everything back when a write fails partway', async () => {
+    await seedMessy()
+    const db = getTestDb()
+    await sql`create function fail_on_d2() returns trigger as $$
+      begin if new.title = 'd2' then raise exception 'boom'; end if; return new; end $$
+      language plpgsql`.execute(db)
+    await sql`create trigger fail_on_d2 before update on tasks
+      for each row execute function fail_on_d2()`.execute(db)
+    const spy = collect()
+    try {
+      const response = await reorder()
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      expect(response.statusCode).toBe(500)
+      expect(response.json().error).toBe('internal_error')
+    } finally {
+      spy.stop()
+      await sql`drop trigger fail_on_d2 on tasks`.execute(db)
+      await sql`drop function fail_on_d2()`.execute(db)
+    }
+    expect(await positions()).toEqual({ b1: 0.5, b2: 0.75, b3: 3, d1: 2, d2: 7, f1: 1 })
+    expect(spy.ids).toEqual([])
+  })
+
+  it('waits for a concurrent move and numbers the moved card last', async () => {
+    const db = getTestDb()
+    await seedTask(db, projectId, { number: 1, title: 'a', position: 0.5 })
+    await seedTask(db, projectId, { number: 2, title: 'b', position: 4 })
+    await seedTask(db, projectId, { number: 3, title: 'm', state: 'spec_review', position: 1 })
+    await seedTask(db, projectId, { number: 4, title: 'z', position: 9 })
+    let release!: () => void
+    const hold = new Promise<void>((resolve) => (release = resolve))
+    let locked!: () => void
+    const ready = new Promise<void>((resolve) => (locked = resolve))
+    const mover = db.transaction().execute(async (trx) => {
+      const row = await trx
+        .selectFrom('tasks')
+        .select('id')
+        .where('title', '=', 'm')
+        .forUpdate()
+        .executeTakeFirstOrThrow()
+      const { last } = await trx
+        .selectFrom('tasks')
+        .select(sql<number>`coalesce(max(position), 0)`.as('last'))
+        .where('state', '=', 'backlog')
+        .executeTakeFirstOrThrow()
+      await trx
+        .updateTable('tasks')
+        .set({ state: 'backlog', position: last + 1 })
+        .where('id', '=', row.id)
+        .execute()
+      locked()
+      await hold
+    })
+    await ready
+    let answered = false
+    const pending = reorder().then((response) => {
+      answered = true
+      return response
+    })
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    expect(answered).toBe(false)
+    release()
+    await mover
+    const response = await pending
+    expect(response.statusCode).toBe(200)
+    expect(await positions()).toEqual({ a: 1, b: 2, z: 3, m: 4 })
+  })
+
+  it('waits for a task being created and numbers it last', async () => {
+    const db = getTestDb()
+    await seedTask(db, projectId, { number: 1, title: 'a', position: 0.5 })
+    await seedTask(db, projectId, { number: 2, title: 'b', position: 4 })
+    let release!: () => void
+    const hold = new Promise<void>((resolve) => (release = resolve))
+    let created!: () => void
+    const ready = new Promise<void>((resolve) => (created = resolve))
+    // What TaskRepository.insert does: takes the project row, then adds the task after the last.
+    const creator = db.transaction().execute(async (trx) => {
+      await trx
+        .updateTable('projects')
+        .set((eb) => ({ next_task_number: eb('next_task_number', '+', 1) }))
+        .where('id', '=', projectId)
+        .execute()
+      await seedTask(trx, projectId, { number: 3, title: 'new', position: 5 })
+      created()
+      await hold
+    })
+    await ready
+    let answered = false
+    const pending = reorder().then((response) => {
+      answered = true
+      return response
+    })
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 500))
+      expect(answered).toBe(false)
+    } finally {
+      release()
+      await creator
+    }
+    const response = await pending
+    expect(response.statusCode).toBe(200)
+    expect(await positions()).toEqual({ a: 1, b: 2, new: 3 })
   })
 })

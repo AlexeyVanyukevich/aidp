@@ -25,6 +25,7 @@ import {
   PatchTaskBody,
   ProjectKeyParams,
   RedraftBody,
+  ReorderBody,
   TaskParams,
 } from './task.schemas.js'
 import { TaskService } from './task.service.js'
@@ -50,6 +51,12 @@ export function registerTasks(instance: FastifyInstance): void {
       reply.status(201)
       return service.create(request.params.key, request.body)
     },
+  )
+
+  app.post(
+    '/api/projects/:key/tasks/reorder',
+    { schema: { params: ProjectKeyParams, body: ReorderBody } },
+    async (request) => service.reorder(request.params.key),
   )
 
   app.get('/api/tasks/:id', { schema: { params: TaskParams } }, async (request) =>

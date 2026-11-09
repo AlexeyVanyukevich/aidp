@@ -47,3 +47,9 @@ export const AcceptSuggestionBody = Type.Object(
   { description_md: NonBlankString({ maxLength: 100_000 }) },
   { additionalProperties: false },
 )
+
+/** Reorder takes no input: no body, or an empty object. */
+export const ReorderBody = Type.Union([
+  Type.Object({}, { additionalProperties: false }),
+  Type.Null(),
+])

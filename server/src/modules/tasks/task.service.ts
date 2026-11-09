@@ -7,6 +7,7 @@ import type { CostService } from '../costs/cost.service.js'
 import type { ProjectRepository, ProjectView } from '../projects/project.repository.js'
 import type { RunRepository } from '../runs/run.repository.js'
 import { moveTask } from './task.moves.js'
+import { renumber } from './task.reorder.js'
 import type { TaskCard, TaskRepository, TaskView } from './task.repository.js'
 
 /** Where the description and the title may change: before a draft, and between drafts (slice 3 spec, §8). */
@@ -108,5 +109,23 @@ export class TaskService {
       await publish(this.db, { topic: 'task.updated', taskId: id })
     }
     return this.get(id)
+  }
+
+  /** Renumbers every column to 1, 2, … n in its current order; returns how many tasks changed. */
+  async reorder(key: string): Promise<{ reordered: number }> {
+    const project = await this.project(key)
+    return this.db.transaction().execute(async (trx) => {
+      const rows = await this.tasks.lockForReorder(trx, project.id)
+      const positions = renumber(rows)
+      let reordered = 0
+      for (const row of rows) {
+        const next = positions.get(row.id)
+        if (next === undefined || next === row.position) continue
+        await this.tasks.setPosition(trx, row.id, next)
+        await publish(trx, { topic: 'task.updated', taskId: row.id })
+        reordered += 1
+      }
+      return { reordered }
+    })
   }
 }
