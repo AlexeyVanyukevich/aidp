@@ -25,6 +25,7 @@ const NO_DESCRIPTION = 'Write a description first; the spec-writer drafts from i
 const NO_NOTE = 'Say what to change.'
 const NO_TITLE = 'Enter a title.'
 const NO_DESCRIPTION_TO_REPHRASE = 'Write a description first; the rephraser works from it.'
+const NO_SUGGESTION = 'Write the text to accept, or discard the suggestion.'
 const WAIT_FOR_REPHRASE = 'Wait for the rephrase to finish, or cancel it.'
 
 export function SpecTab({ task, onFrozen }: { task: TaskView; onFrozen: () => void }) {
@@ -88,6 +89,8 @@ function SpecEditor({
   const [suggestedDescription, setSuggestedDescription] = useState<
     { of: string; text: string } | undefined
   >()
+  const [suggestionMissing, setSuggestionMissing] = useState(false)
+  const suggestionField = useRef<HTMLTextAreaElement>(null)
   const rephraseDescriptionButton = useRef<HTMLButtonElement>(null)
   const [note, setNote] = useState('')
   const [noteMissing, setNoteMissing] = useState(false)
@@ -380,8 +383,13 @@ function SpecEditor({
     cancelRephrase.mutate()
   }
   const pressAcceptSuggestion = () => {
-    descriptionField.current?.focus()
-    acceptSuggestion.mutate(suggestedText)
+    if (suggestedText.trim() === '') {
+      flushSync(() => setSuggestionMissing(true))
+      suggestionField.current?.focus()
+    } else {
+      descriptionField.current?.focus()
+      acceptSuggestion.mutate(suggestedText)
+    }
   }
   const pressDiscardSuggestion = () => {
     descriptionField.current?.focus()
@@ -531,13 +539,15 @@ function SpecEditor({
           <section aria-labelledby={suggestionHeadingId} className="suggestion">
             <h3 id={suggestionHeadingId}>Suggested description</h3>
             {pendingSuggestion.stale && <p>Written from an earlier version of your description.</p>}
-            <Field label="Suggestion text">
+            <Field label="Suggestion text" error={suggestionMissing ? NO_SUGGESTION : undefined}>
               <Textarea
+                ref={suggestionField}
                 value={suggestedText}
                 rows={4}
-                onChange={(e) =>
+                onChange={(e) => {
                   setSuggestedDescription({ of: pendingSuggestion.body_md, text: e.target.value })
-                }
+                  if (suggestionMissing) setSuggestionMissing(false)
+                }}
               />
             </Field>
             <div className="actions">
