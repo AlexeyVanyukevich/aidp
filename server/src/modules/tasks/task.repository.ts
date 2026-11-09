@@ -1,4 +1,4 @@
-import { sql, type Kysely } from 'kysely'
+import { sql, type Kysely, type Transaction } from 'kysely'
 import type { Database } from '../../db/schema.js'
 import { planToKeepFor } from './plan-history.queries.js'
 import {
@@ -300,6 +300,37 @@ export class TaskRepository {
     await this.db
       .updateTable('tasks')
       .set({ ...fields, updated_at: new Date() })
+      .where('id', '=', id)
+      .execute()
+  }
+
+  /**
+   * Locks and reads every task of the project, so a concurrent move waits for the renumbering.
+   * The project row comes first: `insert` updates it, so a task being created is numbered too.
+   */
+  async lockForReorder(
+    trx: Transaction<Database>,
+    projectId: string,
+  ): Promise<{ id: string; state: TaskState; position: number; number: number }[]> {
+    await trx
+      .selectFrom('projects')
+      .select('id')
+      .where('id', '=', projectId)
+      .forNoKeyUpdate()
+      .execute()
+    return trx
+      .selectFrom('tasks')
+      .select(['id', 'state', 'position', 'number'])
+      .where('project_id', '=', projectId)
+      .orderBy('id')
+      .forUpdate()
+      .execute()
+  }
+
+  async setPosition(trx: Transaction<Database>, id: string, position: number): Promise<void> {
+    await trx
+      .updateTable('tasks')
+      .set({ position, updated_at: new Date() })
       .where('id', '=', id)
       .execute()
   }
