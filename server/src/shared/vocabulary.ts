@@ -23,8 +23,9 @@ export const RUN_STATUSES = [
 ] as const
 export type RunStatus = (typeof RUN_STATUSES)[number]
 
-/** A run's kind: a spec run drafts, a delivery run delivers, a title run suggests a title. */
-export const RUN_KINDS = ['spec', 'delivery', 'title'] as const
+/** A run's kind: a spec run drafts, a delivery run delivers, a title run suggests a title, a rephrase
+ * run suggests a clearer description. */
+export const RUN_KINDS = ['spec', 'delivery', 'title', 'rephrase'] as const
 export type RunKind = (typeof RUN_KINDS)[number]
 
 export const SUGGESTION_STATUSES = ['pending', 'accepted', 'discarded', 'replaced'] as const

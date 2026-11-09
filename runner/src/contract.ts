@@ -4,8 +4,8 @@
  */
 export type PhaseName = 'spec' | 'plan' | 'build' | 'verify' | 'title' | 'help' | 'rephrase'
 
-/** A run's kind: a title run suggests a title for the task and makes no move. */
-export type RunKind = 'spec' | 'delivery' | 'title'
+/** A run's kind: a title or rephrase run suggests text for the task and makes no move. */
+export type RunKind = 'spec' | 'delivery' | 'title' | 'rephrase'
 
 /** One helper session beside a paused run, as the board's help claim hands it over. */
 export interface HelpWork {
@@ -67,7 +67,8 @@ export interface SpecCriterion {
 }
 
 /** A delivery run's stages, and a spec run's `prepare` then `spec`. */
-export type Stage = 'prepare' | 'spec' | 'rephrase' | 'plan' | 'build' | 'tests' | 'verify' | 'push' | 'pr'
+export type Stage =
+  'prepare' | 'spec' | 'rephrase' | 'plan' | 'build' | 'tests' | 'verify' | 'push' | 'pr'
 
 export interface SessionTotals {
   input: number
@@ -111,6 +112,8 @@ export interface RunWork {
   spec_version: number | null
   /** What the owner asked a redraft to change. */
   note: string | null
+  /** A rephrase run's: the description as it stood when queued; absent from an older board. */
+  base_md?: string | null
   task: {
     id: string
     key: string

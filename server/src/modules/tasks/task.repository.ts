@@ -6,7 +6,13 @@ import {
   type TitleSuggestion,
   type TitleRunFacts,
 } from './title-suggestion.js'
-import type { ApprovalKind, ApprovalStatus, Block, TaskState } from '../../shared/vocabulary.js'
+import type {
+  ApprovalKind,
+  ApprovalStatus,
+  Block,
+  RunStatus,
+  TaskState,
+} from '../../shared/vocabulary.js'
 
 export interface TaskView {
   id: string
@@ -32,6 +38,16 @@ export interface TaskView {
   plan_to_keep: { run: number } | null
   /** The task's latest title run, read for the card; null when there is nothing to show. */
   title_suggestion: TitleSuggestion | null
+  /** The task's latest rephrase run, with its suggestion while one is pending; null before any. */
+  rephrase: RephraseView | null
+}
+
+export interface RephraseView {
+  status: RunStatus
+  /** Why the run failed; null while it did not. */
+  failure_reason: string | null
+  /** The pending suggestion; `stale` when the description has changed since it was written. */
+  suggestion: { body_md: string; stale: boolean } | null
 }
 
 export interface TaskCard {
@@ -88,6 +104,31 @@ export async function latestTitleRun(
   }
 }
 
+/** The task's latest rephrase run, as the card shows it. */
+async function latestRephrase(
+  db: Kysely<Database>,
+  taskId: string,
+  description: string,
+): Promise<RephraseView | null> {
+  const run = await db
+    .selectFrom('runs')
+    .select(['status', 'failure_reason', 'base_md', 'suggestion_md', 'suggestion_status'])
+    .where('task_id', '=', taskId)
+    .where('kind', '=', 'rephrase')
+    .orderBy('created_at', 'desc')
+    .orderBy('number', 'desc')
+    .executeTakeFirst()
+  if (run === undefined) return null
+  return {
+    status: run.status,
+    failure_reason: run.status === 'failed' ? run.failure_reason : null,
+    suggestion:
+      run.suggestion_status === 'pending' && run.suggestion_md !== null
+        ? { body_md: run.suggestion_md, stale: run.base_md !== description }
+        : null,
+  }
+}
+
 export class TaskRepository {
   constructor(private readonly db: Kysely<Database>) {}
 
@@ -115,7 +156,7 @@ export class TaskRepository {
       .selectFrom('runs')
       .select(['id', 'kind', 'status', 'block', 'failure_reason'])
       .where('task_id', '=', id)
-      .where('kind', '!=', 'title')
+      .where('kind', 'in', ['spec', 'delivery'])
       .orderBy('created_at', 'desc')
       .executeTakeFirst()
     const tested = await this.db
@@ -163,6 +204,7 @@ export class TaskRepository {
       draft_failure: run?.kind === 'spec' && run.status === 'failed' ? run.failure_reason : null,
       plan_to_keep: kept === undefined ? null : { run: kept.runNumber },
       title_suggestion: readTitleSuggestion(title),
+      rephrase: await latestRephrase(this.db, id, row.description_md),
     }
   }
 

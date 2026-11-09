@@ -37,13 +37,18 @@ export const ClaimBody = Type.Object(
   {
     runner_id: NonBlankString({ maxLength: 100 }),
     wait_ms: Type.Optional(Type.Integer({ minimum: 0, maximum: 60_000 })),
-    /** The run kinds to claim; absent means `spec` and `delivery`. A title lane asks for `title`. */
+    /** The run kinds to claim; absent means `spec` and `delivery`. A title lane asks for `title` and `rephrase`. */
     kinds: Type.Optional(
       Type.Array(
-        Type.Union([Type.Literal('spec'), Type.Literal('delivery'), Type.Literal('title')]),
+        Type.Union([
+          Type.Literal('spec'),
+          Type.Literal('delivery'),
+          Type.Literal('title'),
+          Type.Literal('rephrase'),
+        ]),
         {
           minItems: 1,
-          maxItems: 3,
+          maxItems: 4,
           uniqueItems: true,
         },
       ),
