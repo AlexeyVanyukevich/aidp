@@ -15,6 +15,7 @@ import type {
   PhaseStatus,
   RunStatus,
   SpecCriterion,
+  SuggestionStatus,
   TaskState,
 } from '../shared/vocabulary.js'
 
@@ -109,6 +110,16 @@ export interface RunsTable {
   resume_message: ColumnType<string | null, string | null | undefined, string | null>
   /** Set while work for this run waits to be claimed; the oldest is claimed first. */
   queued_at: NullableTimestamp
+  /** A rephrase run's: the description as it stood when queued. */
+  base_md: ColumnType<string | null, string | null | undefined, string | null>
+  /** A rephrase run's latest saved suggestion. */
+  suggestion_md: ColumnType<string | null, string | null | undefined, string | null>
+  suggestion_status: ColumnType<
+    SuggestionStatus | null,
+    SuggestionStatus | null | undefined,
+    SuggestionStatus | null
+  >
+  suggestion_decided_at: NullableTimestamp
 }
 
 export interface RunTokensTable {
