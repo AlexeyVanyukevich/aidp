@@ -27,8 +27,11 @@ export type RunStatus = (typeof RUN_STATUSES)[number]
 export const RUN_KINDS = ['spec', 'delivery', 'title'] as const
 export type RunKind = (typeof RUN_KINDS)[number]
 
+export const SUGGESTION_STATUSES = ['pending', 'accepted', 'discarded', 'replaced'] as const
+export type SuggestionStatus = (typeof SUGGESTION_STATUSES)[number]
+
 /** `help` is a read-only helper's session beside a paused run; it is never a run's current phase. */
-export const PHASE_NAMES = ['spec', 'plan', 'build', 'verify', 'title', 'help'] as const
+export const PHASE_NAMES = ['spec', 'plan', 'build', 'verify', 'title', 'help', 'rephrase'] as const
 export type PhaseName = (typeof PHASE_NAMES)[number]
 
 /** A paused phase waits for an answer or a Resume; the same session carries on after it. */
@@ -74,10 +77,20 @@ export const BLOCK_CAUSES = [
 export type BlockCause = (typeof BLOCK_CAUSES)[number]
 
 /**
- * A run's stages: a delivery run's, in order, and a spec run's `prepare` then `spec`. A
- * checkpoint names the one it resumes from.
+ * A run's stages: a delivery run's, in order, a spec run's `prepare` then `spec`, and a rephrase
+ * run's `prepare` then `rephrase`. A checkpoint names the one it resumes from.
  */
-export const STAGES = ['prepare', 'spec', 'plan', 'build', 'tests', 'verify', 'push', 'pr'] as const
+export const STAGES = [
+  'prepare',
+  'spec',
+  'rephrase',
+  'plan',
+  'build',
+  'tests',
+  'verify',
+  'push',
+  'pr',
+] as const
 export type Stage = (typeof STAGES)[number]
 
 export const PENDING_WORK = ['resume', 'cleanup'] as const
