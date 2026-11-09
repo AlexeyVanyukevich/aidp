@@ -98,6 +98,29 @@ test('a discard leaves the description alone, and focus returns to it', async ({
   await expect(spec.getByRole('textbox', { name: 'Suggestion text' })).toHaveCount(0)
 })
 
+test('an emptied suggestion is marked, focused, and sends no request', async ({
+  page,
+  request,
+}) => {
+  const { key } = await newTask(request, 'Rephrase one: emptied')
+  const { spec } = await openCard(page, key)
+  await spec.getByRole('button', { name: 'Rephrase description' }).click()
+  const suggestion = spec.getByRole('textbox', { name: 'Suggestion text' })
+  await expect(suggestion).toHaveValue(SUGGESTED, RUN)
+  await suggestion.fill('   ')
+  const sent: string[] = []
+  page.on('request', (r) => {
+    if (r.method() !== 'GET') sent.push(r.url())
+  })
+  await spec.getByRole('button', { name: 'Accept suggestion' }).click()
+  await expect(spec.getByText('Write the text to accept, or discard the suggestion.')).toBeVisible()
+  await expect(suggestion).toHaveAttribute('aria-invalid', 'true')
+  await expect(suggestion).toBeFocused()
+  expect(sent).toEqual([])
+  await suggestion.fill('Written by hand.')
+  await expect(suggestion).not.toHaveAttribute('aria-invalid', 'true')
+})
+
 test('a description typed and not saved is saved before the run starts', async ({
   page,
   request,
