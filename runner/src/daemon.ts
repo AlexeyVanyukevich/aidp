@@ -9,6 +9,7 @@ import { realExec } from './exec.js'
 import { checkExecutable } from './executable.js'
 import { runnerCode } from './fingerprint.js'
 import { carryHelp, HELP_SLOTS } from './help.js'
+import { rephraseDescription } from './rephrase.js'
 import { suggestTitle } from './titling.js'
 import { Git } from './git.js'
 import { continuePhase, endPhase, restartPhase, startPhase } from './phases/phase.js'
@@ -22,9 +23,9 @@ const SETTLE_MS = 2_000
 /** A claim older than this is the sweeper's: the run is blocked as `runner_lost`. */
 const HANDOFF_FRESH_MS = 60_000
 
-/** The main loop claims these; the title loop claims `title` and nothing else. */
+/** The main loop claims these; the title loop claims `title` and `rephrase`, nothing else. */
 const MAIN_KINDS: readonly RunKind[] = ['spec', 'delivery']
-const TITLE_KINDS: readonly RunKind[] = ['title']
+const TITLE_KINDS: readonly RunKind[] = ['title', 'rephrase']
 
 const PHASES: Phases = {
   start: startPhase,
@@ -304,6 +305,10 @@ export class Daemon {
       if (work.run.kind === 'title') {
         if (work.kind !== 'start') throw new Error('a title run is never resumed')
         return await suggestTitle(work, deps)
+      }
+      if (work.run.kind === 'rephrase') {
+        if (work.kind !== 'start') throw new Error('a rephrase run is never resumed')
+        return await rephraseDescription(work, deps)
       }
       return work.run.kind === 'spec'
         ? await draftSpec(work, deps)

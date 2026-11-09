@@ -83,6 +83,7 @@ const RETURNS: Record<HandoffInput['phase'], string> = {
     '<build_report status="done|blocked" files="…" tests="…" confidence="high|medium|low"/> and one paragraph.',
   verify: 'Call save_report with a verdict on every criterion, then reply with one paragraph.',
   title: 'Call suggest_title, then reply with one sentence.',
+  rephrase: 'Call save_suggestion, then reply with one sentence.',
   help: 'Call save_help_result, then end your turn.',
 }
 

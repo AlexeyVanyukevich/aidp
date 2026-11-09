@@ -1482,6 +1482,131 @@ describe('a title run end to end', () => {
   })
 })
 
+// A rephrase run: the title lane's read-only machinery, suggesting a description, never a move.
+const SAVE_SUGGESTION = {
+  tool: 'save_suggestion',
+  args: {
+    body_md: 'Retry failed webhook deliveries with delays of 1, 2 and 4 seconds (src/retry.ts).',
+  },
+}
+
+describe('a rephrase run end to end', () => {
+  interface RephraseTask {
+    state: string
+    description_md: string
+    rephrase: {
+      status: string
+      failure_reason: string | null
+      suggestion: { body_md: string; stale: boolean } | null
+    } | null
+  }
+  const rephraseTask = (id: string) => api<RephraseTask>('GET', `/api/tasks/${id}`)
+  const backlogTask = async () =>
+    (
+      await api<{ id: string }>('POST', '/api/projects/PAY/tasks', {
+        title: 'Retries',
+        description_md: 'Retry webhooks.',
+      })
+    ).id
+  const rephraseRunOf = async (taskId: string) => (await runs(taskId))[0]!
+  const queue = (taskId: string) => api('POST', `/api/tasks/${taskId}/actions/rephrase`)
+
+  it('suggests a description, leaves the card and the text, and removes the worktree', async () => {
+    const taskId = await backlogTask()
+    await queue(taskId)
+    const f = fleet({ rephraser: [[SAVE_SUGGESTION]] })
+    expect(await f.daemon().runTitleOnce()).toBe('suggested')
+
+    expect(await rephraseTask(taskId)).toMatchObject({
+      state: 'backlog',
+      description_md: 'Retry webhooks.',
+      rephrase: {
+        status: 'succeeded',
+        suggestion: { body_md: SAVE_SUGGESTION.args.body_md, stale: false },
+      },
+    })
+    const run = await rephraseRunOf(taskId)
+    expect(run).toMatchObject({ status: 'succeeded', branch: null })
+    expect(run.phases.map((p) => `${p.name}:${p.status}`)).toEqual(['rephrase:succeeded'])
+    expect(existsSync(join(f.home, 'worktrees', run.id))).toBe(false)
+    const [call] = f.calls().filter((c) => c.agent === 'rephraser')
+    expect(call!.prompt).toContain('<task id="PAY-1" phase="rephrase"')
+    expect(call!.prompt).toContain('Retry webhooks.')
+    expect(call!.prompt).toContain('Call save_suggestion, then reply with one sentence.')
+  })
+
+  it('fails a run whose agent saved nothing', async () => {
+    const taskId = await backlogTask()
+    await queue(taskId)
+    await fleet({ rephraser: [[]] })
+      .daemon()
+      .runTitleOnce()
+    expect(await rephraseRunOf(taskId)).toMatchObject({
+      status: 'failed',
+      failure_reason: 'the rephraser saved no suggestion',
+    })
+    expect(await rephraseTask(taskId)).toMatchObject({
+      state: 'backlog',
+      rephrase: { status: 'failed', failure_reason: 'the rephraser saved no suggestion' },
+    })
+  })
+
+  it('stops within a heartbeat when the owner cancels it', async () => {
+    const taskId = await backlogTask()
+    await queue(taskId)
+    const running = fleet({ rephraser: [[{ sleep: 30_000 }]] })
+      .daemon()
+      .runTitleOnce()
+    await until(
+      async () => (await rephraseRunOf(taskId)).current_phase === 'rephrase',
+      'the Rephrase phase',
+    )
+    await api('POST', `/api/tasks/${taskId}/actions/cancel-rephrase`)
+    expect(await running).toBe('cancelled')
+    expect(await rephraseRunOf(taskId)).toMatchObject({ status: 'cancelled' })
+    expect(await rephraseTask(taskId)).toMatchObject({ state: 'backlog' })
+  })
+
+  it('fails, and does not block, when a git step fails', async () => {
+    const taskId = await backlogTask()
+    await db
+      .updateTable('projects')
+      .set({ base_branch: 'no-such-branch' })
+      .where('key', '=', 'PAY')
+      .execute()
+    await queue(taskId)
+    expect(
+      await fleet({ rephraser: [[SAVE_SUGGESTION]] })
+        .daemon()
+        .runTitleOnce(),
+    ).toBe('failed')
+    const run = await rephraseRunOf(taskId)
+    expect(run).toMatchObject({ status: 'failed' })
+    expect(run.failure_reason).toContain('the rephrase run could not go on')
+    expect((await rephraseTask(taskId)).state).toBe('backlog')
+  })
+
+  it('fails a run whose daemon is stopped, and moves nothing', async () => {
+    const taskId = await backlogTask()
+    await queue(taskId)
+    const f = fleet({ rephraser: [[{ sleep: 60_000 }]] })
+    const child = f.child()
+    await until(
+      async () => (await rephraseRunOf(taskId)).current_phase === 'rephrase',
+      'the Rephrase phase',
+    )
+    await new Promise((done) => setTimeout(done, 1_000))
+    child.kill('SIGTERM')
+    await child.exited()
+    expect(await rephraseRunOf(taskId)).toMatchObject({
+      status: 'failed',
+      failure_reason: 'the runner stopped',
+    })
+    expect((await rephraseTask(taskId)).state).toBe('backlog')
+    f.stopAll()
+  })
+})
+
 describe('helps across a restart on moved code', () => {
   it('fails a running help, queues a claimed one again and carries a handed-on resume out', async () => {
     const f = fleet({

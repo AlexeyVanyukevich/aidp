@@ -53,7 +53,7 @@ function setUp(options: {
     ...h.deps.api,
     claim: async (_runnerId: string, _waitMs: number, kinds?: readonly string[]) => {
       asked.push(kinds)
-      const title = kinds?.length === 1 && kinds[0] === 'title'
+      const title = kinds?.some((kind) => kind === 'title' || kind === 'rephrase') === true
       events.push(title ? 'claim:title' : 'claim')
       await new Promise((done) => setTimeout(done, title ? (options.titleClaimMs ?? 2) : 2))
       return (title ? titleClaims : claims).shift() ?? null
@@ -344,7 +344,7 @@ describe('the title lane', () => {
     await run
     const kinds = new Set(t.asked.map((k) => JSON.stringify(k)))
     expect(kinds).toEqual(
-      new Set([JSON.stringify(['spec', 'delivery']), JSON.stringify(['title'])]),
+      new Set([JSON.stringify(['spec', 'delivery']), JSON.stringify(['title', 'rephrase'])]),
     )
   })
 
