@@ -38,6 +38,28 @@ writes `tasks.state`. Where a destination depends on the latest run's kind or on
 has a spec, the caller reads those facts (`moveFacts`) and the table picks the state. The
 description can change only in Backlog and Spec review.
 
+## Prioritising the board
+
+The board head has a **Prioritise** button, after the New task form. `POST
+/api/projects/:key/tasks/reorder` takes no body (an empty object is accepted; any field answers 400
+`validation_error`) and renumbers every column, Done, Blocked and Failed included, to the positions
+1, 2, … n, keeping each column's order by position and then by task number. The rule is the pure
+`renumber` in `server/src/modules/tasks/task.reorder.ts`. It runs in one transaction that first
+locks the project row, so a task being created is numbered too, then the project's task rows
+`FOR UPDATE`. It writes `position` and `updated_at` only on the rows whose position changes, and
+never writes `state`. It publishes `task.updated` for each changed row inside
+the transaction, so the notices go out at commit and never after a rollback, and answers
+`{ "reordered": n }`, the number of rows changed. An unknown project answers 404.
+
+The button sends no confirmation and sets `busy` while the request runs; it is always enabled and
+focus stays on it. The outcome goes to the board's status region: "n tasks reordered.", "1 task
+reordered.", "The tasks were already in order.", or "The board could not be reordered. Try again.";
+the board is refetched either way. With no cards it sends nothing and says "There are no tasks to
+reorder."; before the board has loaded it says "The board has not loaded yet.". Each of these is
+announced again on a repeated press: the region is emptied, stays empty across two animation
+frames, and is then refilled, with at most one write pending and any other write to the region
+cancelling it.
+
 ## Linked projects
 
 A project can link to the projects it references, so the agents of its runs can read their code.
