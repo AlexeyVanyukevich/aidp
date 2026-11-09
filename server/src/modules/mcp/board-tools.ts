@@ -514,6 +514,28 @@ function registerRunTools(server: McpServer, ctx: ToolContext): void {
   )
 
   server.registerTool(
+    'save_suggestion',
+    {
+      description:
+        'Save the suggested description for the task: the whole text, in Markdown, saying where you are unsure. Every call of this run rewrites its one suggestion. The description is not changed: the owner accepts, edits or discards the suggestion.',
+      inputSchema: { body_md: z.string().min(1).max(100_000) },
+    },
+    async (input) => {
+      if ((await runKind(ctx)) !== 'rephrase')
+        return reply('save_suggestion belongs to a rephrase run; this run is not one.', true)
+      if ((await runningPhase(ctx)) === undefined)
+        return reply('No phase of this run is running; nothing was saved.', true)
+      await ctx.db
+        .updateTable('runs')
+        .set({ suggestion_md: input.body_md })
+        .where('id', '=', ctx.runId)
+        .execute()
+      await publish(ctx.db, { topic: 'run.event', runId: ctx.runId, taskId: ctx.taskId })
+      return reply('Saved the suggestion.')
+    },
+  )
+
+  server.registerTool(
     'log_step',
     {
       description: 'Record a step you took, in one line, with your confidence in it.',

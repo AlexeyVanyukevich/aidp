@@ -446,9 +446,9 @@ export class RunnerService {
             !mine(row) ||
             row.status === 'blocked' ||
             row.status === 'cancelled' ||
-            // A title run is never paused or blocked: once it is not running (the sweeper may
-            // have failed it), its process is stopped.
-            (row.kind === 'title' && row.status !== 'running'),
+            // A title or rephrase run is never paused or blocked: once it is not running (the
+            // sweeper may have failed it), its process is stopped.
+            ((row.kind === 'title' || row.kind === 'rephrase') && row.status !== 'running'),
         )
         .map((row) => row.id),
       pause: rows
@@ -566,6 +566,44 @@ export class RunnerService {
       .select('task_id')
       .where('id', '=', runId)
       .executeTakeFirstOrThrow()
+    await publish(trx, { topic: 'task.updated', taskId: run.task_id })
+  }
+
+  /**
+   * A rephrase run ends alone, its card not moved. A suggested end with a saved suggestion
+   * leaves that suggestion pending for the owner; one without fails the run.
+   */
+  private async endRephraseRun(
+    trx: Transaction<Database>,
+    runId: string,
+    effect: Extract<Effect, { kind: 'run_end' }>,
+  ): Promise<void> {
+    const run = await trx
+      .selectFrom('runs')
+      .select(['task_id', 'suggestion_md'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow()
+    const suggested = effect.outcome === 'suggested'
+    const saved = run.suggestion_md !== null
+    const status =
+      effect.outcome === 'cancelled' ? 'cancelled' : suggested && saved ? 'succeeded' : 'failed'
+    const reason =
+      suggested && !saved
+        ? 'the rephraser saved no suggestion'
+        : effect.outcome === 'failed'
+          ? (effect.reason ?? 'the rephrase phase failed')
+          : effect.reason
+    await trx
+      .updateTable('runs')
+      .set({
+        status,
+        ended_at: effect.at,
+        failure_reason: reason,
+        worktree_path: effect.worktreePath,
+        ...(status === 'succeeded' ? { suggestion_status: 'pending' as const } : {}),
+      })
+      .where('id', '=', runId)
+      .execute()
     await publish(trx, { topic: 'task.updated', taskId: run.task_id })
   }
 
@@ -692,6 +730,10 @@ export class RunnerService {
           .executeTakeFirstOrThrow()
         if (kind.kind === 'title') {
           await this.endTitleRun(trx, context.runId, effect)
+          return
+        }
+        if (kind.kind === 'rephrase') {
+          await this.endRephraseRun(trx, context.runId, effect)
           return
         }
         // A draft that ended well but saved nothing failed: there is nothing to review.

@@ -49,7 +49,7 @@ export type Effect =
       kind: 'run_end'
       /**
        * `drafted`: a spec run's phase succeeded; the server checks it saved a version.
-       * `suggested`: a title run's phase succeeded; the server checks it stored a suggestion.
+       * `suggested`: a title or rephrase run's phase succeeded; the server checks it stored a suggestion.
        */
       outcome: 'review' | 'drafted' | 'suggested' | 'failed' | 'cancelled'
       reason: string | null
