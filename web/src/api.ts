@@ -86,6 +86,8 @@ export const api = {
     request<{ project: ProjectView; tasks: TaskCard[] }>('GET', `/api/projects/${key}/tasks`),
   createTask: (key: string, input: { title: string; description_md?: string }) =>
     request<TaskView>('POST', `/api/projects/${key}/tasks`, input),
+  reorderTasks: (key: string) =>
+    request<{ reordered: number }>('POST', `/api/projects/${key}/tasks/reorder`),
   task: (id: string) => request<TaskView>('GET', `/api/tasks/${id}`),
   patchTask: (
     id: string,
