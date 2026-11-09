@@ -5,6 +5,7 @@ import { api } from '../api'
 import { Loaded } from '../Loaded'
 import { prStatus } from './blocks'
 import { ownerSentence } from './lint'
+import { latestDeliveryRun } from './timeline'
 import type { ReportData, TaskView } from '../types'
 
 const VERDICT_TONE = {
@@ -16,7 +17,7 @@ const VERDICT_TONE = {
 
 export function PrTab({ task }: { task: TaskView }) {
   const runs = useQuery({ queryKey: ['runs', task.id], queryFn: () => api.runs(task.id) })
-  const run = runs.data?.[0]
+  const run = latestDeliveryRun(runs.data ?? [])
   const files = useQuery({
     queryKey: ['pr-files', run?.id],
     queryFn: () => api.prFiles(run!.id),
@@ -26,7 +27,7 @@ export function PrTab({ task }: { task: TaskView }) {
   return (
     <Loaded query={runs} failure="The runs could not be loaded.">
       {(list) => {
-        const latest = list[0]
+        const latest = latestDeliveryRun(list)
         if (latest === undefined || latest.pr_url === null)
           return task.state === 'done' ? (
             <Empty title="Closed without a pull request." />
