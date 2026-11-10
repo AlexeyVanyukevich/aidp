@@ -482,6 +482,75 @@ owner sends. Each help is a phase named `help` on the asking run: its usage is p
 task's cost, and it is never the run's current phase, a checkpoint's phase, or in a handoff's
 summaries. Approving a plan with words is refused, naming `text`.
 
+**Decision helps.** The card's own decisions offer help beside a question's. The registry is
+`server/src/modules/approvals/decision-rules.ts`, pure and free of the database; it lists each
+decision, its modes and when it is offered, and `tests/fixtures/decisions.json` is the table that
+the server's rules and the web's `actionsFor` and `decisionsFor` are all tested against.
+`spec_review` (modes `review`, `restate`) is offered in Spec review; `stopped_run` (`recommend`)
+on a Failed card, or a Blocked one whose cause is not `approval_expired`; `mark_done` (`check`) in
+Backlog, Spec review, Review and Failed. `POST /api/tasks/:id/helps` takes `{ decision, mode }`:
+inside one transaction it takes the task row lock that `moveTask` takes, checks the decision is
+offered (`409 not_offered` when it is not), and records a `helps` row with a **subject** (the spec
+version; or the stopped run, the task state and the block; or the task state, spec version and
+delivery run) and a run of its own of kind `help`. A press while a help of that decision and mode
+is queued or running answers with it.
+
+A `help` run never has status `running` and is never claimed through `POST /api/runner/claim`
+(which refuses `help` in `kinds`): it is `queued` with a null `queued_at`, and it ends in the
+transaction that ends its help — `succeeded` on a result, `failed` with the help's reason, or
+`cancelled` when the help is stopped. Its liveness is its help's heartbeat. Every lookup of a
+task's latest run ignores kind `help`, as it ignores `title` and `rephrase`. A question help is
+unchanged: it keeps the asking run, its worktree and its words.
+
+`settleHelps` runs in the transaction of every task move and every insert of a spec version, with
+the task row locked. A queued or running help whose subject no longer stands (the decision is no
+longer offered, or the version, run, block or delivery run moved on) becomes `stopped` and its run
+`cancelled`; a succeeded one gets `retired_at`. The usage already recorded stays in the task's
+cost. `save_help_result` checks `stands` before the help's status: a stale save writes nothing and
+answers "This decision is no longer offered; nothing was saved. End your turn now." The listing
+(`GET /api/tasks/:id/helps`) returns for each decision and mode the latest help, and the latest
+succeeded one while it is not retired and still stands.
+
+The helper reads a decision with `get_decision` (the decision, mode, subject, task, and by
+decision the spec and its lint; or the stopped run's block or failure, checkpoint, phase summaries,
+latest Verify report, the actions offered now, `recommendable_actions` — Resume is left out when the
+run left no checkpoint — and the plan a Re-run would keep; or what Mark done checks against, every
+delivery run with its report and pull request). For a stopped run, `get_phase_record` reads the
+run's latest non-help phase: the newest 300 entries in time order and `earlier_left_out`, the
+number before them. A question help's `get_phase_record` still takes the first 300 events, as the
+backlog says. `save_help_result` checks a result by mode and names the field to fix: `review` (a
+verdict, findings that are empty exactly when nothing is to change, what it is unsure of),
+`restate` (what changes, what it requires, what it leaves out), `recommend` (why it stopped, an
+action among the recommendable ones, reasoning, unsure) and `check` (what it checked against,
+which must equal the source for the card's state, what the runs produced, the unfinished items,
+unsure).
+
+A decision help is claimed on the help lane (`POST /api/runner/helps/claim`) and shares its three
+slots with question helps. The work carries the project's `repo_path` and `base_branch`, the
+links, and a checkout source: `pr_branch` for Mark done in Review (the latest delivery run's
+branch), `paused_run` for a Blocked stopped run, `base` otherwise. The runner writes `help.json`
+(`repo_path`, `made_worktree`) in the help's run directory `~/.aidp/runs/<help run id>` before it
+makes anything. `pr_branch` fetches the branch and makes a detached worktree of it, falling back
+to `origin/<base>` when origin no longer has it; `paused_run` uses the paused run's own worktree
+when it exists — copying its `linked.json`, making and removing nothing — and a detached
+`origin/<base>` worktree when it does not; `base` makes that worktree. A worktree it makes comes
+with linked checkouts under `~/.aidp/worktrees/<help run id>-linked/`, and no setup command runs.
+A `help_checkout` event records the ref read, the source and whether it fell back; the helper's
+first message carries a `<checkout ref source/>` element. A failed fetch or worktree add fails the
+help with "the help's checkout could not be made: …". The guard lets the helper read inside its
+working directory and inside the linked checkouts of its `linked.json`.
+
+When a decision help ends, whatever the outcome, the runner reads `help.json`: when it made the
+worktree it removes the linked checkouts, the `-linked` directory and the worktree through
+`guardPath` and prunes the registrations; when it did not, it removes no worktree and no
+checkout, whatever `linked.json` lists. It then removes the run directory through its own guard,
+`guardRunDir`, which passes exactly `~/.aidp/runs/<run id>` of the id it is given and nothing
+else. Every removal is logged with caller `help`. At daemon start, before its first claim, the help
+lane lists the run directories that hold a `help.json` and sends their ids to
+`POST /api/runner/helps/ended`; the board answers the ids of help runs that have ended, and the
+lane removes what the end of a help removes. When that call fails the lane logs it and goes on,
+and the leftovers wait for a later start.
+
 **The plan gate.** A plan not marked `confidence: high` stops at the end of the planner's process:
 the runner raises a `plan` approval with the plan as its context, inside the still-open Plan
 phase. Approve plan ends the phase and starts Build; an answer in words resumes the planner's
@@ -1065,6 +1134,27 @@ the helper is unsure of, and **Use this answer**, which selects the option and f
 sends nothing) and "In plain words". A result that arrives, or a help that fails with its reason, is
 written into the card's status region as "Suggested answer ready for question 2 of 3", "Explanation
 ready for the open question" or the failure, whichever tab is showing.
+
+Decision helps add buttons. In Spec review the Spec tab's action row reads Edit, Approve, Review
+spec, Explain simply, then the Redraft note field and Redraft; Approve and Redraft are enabled and
+disabled as without help. The results sit in a section under an `h3` "Help with v<n>", after the
+Lint section and before the tab's status region, each under an `h4` ("Spec review of v<n>": Nothing
+to change or the findings, then Unsure about; "v<n> in plain words": What changes, What it
+requires, What it leaves out), with a failure line "No spec review for v<n>: <reason>". The card's
+action bar reads Move up, Move down, Mark done, Check what is unfinished, Resume, Cancel run,
+Re-run with this plan, Re-run and plan again, Suggest what to do, each where it is shown. Their
+results ("Suggested next step", "What is unfinished") sit in one region after the status region and
+problem notice and before the Test command field, each under an `h3`, with no control in them and
+no button that acts on a result. Every help button is busy while its help runs and stays focusable,
+and focus stays on the button pressed. A refused or failed request shows the problem notice with
+focus moved to it: "This card changed meanwhile; its latest state is shown." for a 409, else "That
+did not work. Try again." The card's status region announces each decision help that ends,
+whichever tab shows: "Spec review ready for v<n>.", "Plain-words spec ready for v<n>.", "Suggested
+next step ready for the stopped run.", "Unfinished-work check ready for Mark done.", or the failure
+sentence of its mode with the reason; a stopped help announces nothing. A result that goes away
+with a move is covered by the state announcement; one that goes away with the state unchanged is
+announced as "<its heading> no longer applies." The Timeline names a help run "Help <n>" and shows
+its help's status in the run selector; it opens on the newest run that is not a help run.
 
 A batch is one form: per question a `section` under an `h4`, "Question <i> of <n>", holding the
 kit's `RadioGroup` named by the question when it has options, and a field "Your answer to
