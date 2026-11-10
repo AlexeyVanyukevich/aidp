@@ -220,6 +220,7 @@ describe('the helper', () => {
         'mcp__board__get_task',
         'mcp__board__get_spec',
         'mcp__board__get_question',
+        'mcp__board__get_decision',
         'mcp__board__get_phase_record',
         'mcp__board__save_help_result',
       ].toSorted(),
