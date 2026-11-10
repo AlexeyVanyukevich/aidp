@@ -32,6 +32,16 @@ its sync hook, backlog rule included.
 UI components come from the `@zellige/react` package, on `@zellige/core`'s tokens and CSS. A
 widget the kit lacks is added to the kit, in its own repository, never written in `web/`.
 
+## Decision controls
+
+A decision control is one that commits a task's direction on the owner's judgement, which the
+board cannot check for them.
+
+Such a control offers AI help through the shared helper: the decision registry
+`server/src/modules/approvals/decision-rules.ts`, `runner/src/help.ts` and
+`web/src/card/HelpPanel.tsx`. A slice that adds one says in its spec how help works there, or why
+there is none.
+
 ## Findings
 
 **Anything found and not fixed becomes a task on the board, in the AIDP project** — a bug
