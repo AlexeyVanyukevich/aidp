@@ -41,6 +41,8 @@ export interface RunView {
   ended_at: Date | null
   phases: PhaseView[]
   artifacts: ArtifactView[]
+  /** For a help run, its help's status; null for any other run. */
+  help_status: string | null
 }
 export interface EventView {
   id: string
@@ -108,8 +110,15 @@ export class RunRepository {
       .where('run_id', 'in', runIds)
       .orderBy('created_at')
       .execute()
+    const helps = await this.db
+      .selectFrom('helps')
+      .select(['run_id', 'status'])
+      .where('run_id', 'in', runIds)
+      .where('decision', '!=', 'question')
+      .execute()
     return runs.map((run) => ({
       ...run,
+      help_status: helps.find((h) => h.run_id === run.id)?.status ?? null,
       phases: phases.filter((p) => p.run_id === run.id).map(({ run_id: _r, ...phase }) => phase),
       artifacts: artifacts
         .filter((a) => a.run_id === run.id)

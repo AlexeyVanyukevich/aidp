@@ -49,8 +49,28 @@ export function runLabel(run: { kind: string; number: number }): string {
         ? 'Title'
         : run.kind === 'rephrase'
           ? 'Rephrase'
-          : 'Run'
+          : run.kind === 'help'
+            ? 'Help'
+            : 'Run'
   return `${word} ${run.number}`
+}
+
+/** A run's line in the selector: a help run shows its help's status, not its run status. */
+export function runOption(run: {
+  kind: string
+  number: number
+  status: string
+  help_status?: string | null
+}): string {
+  return `${runLabel(run)} · ${run.kind === 'help' ? (run.help_status ?? run.status) : run.status}`
+}
+
+/**
+ * The run the Timeline opens on, runs ordered newest first: the newest that is not a help run,
+ * and the newest help run only when there is no other.
+ */
+export function defaultRun<T extends { kind: string }>(runs: T[]): T | undefined {
+  return runs.find((run) => run.kind !== 'help') ?? runs[0]
 }
 
 /**

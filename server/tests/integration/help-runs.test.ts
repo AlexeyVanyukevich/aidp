@@ -140,3 +140,22 @@ describe('the sweeper', () => {
     expect(task.state).toBe('failed')
   })
 })
+
+describe('the runs list (AC44)', () => {
+  it('gives a help run its help status', async () => {
+    const { taskId, runId } = await failedCard()
+    const help = await ask(taskId)
+    await db()
+      .updateTable('helps')
+      .set({ status: 'running', runner_id: 'r1' })
+      .where('id', '=', help.id)
+      .execute()
+    const runs = (await app.inject({ url: `/api/tasks/${taskId}/runs` })).json() as {
+      id: string
+      kind: string
+      help_status: string | null
+    }[]
+    expect(runs.find((run) => run.kind === 'help')?.help_status).toBe('running')
+    expect(runs.find((run) => run.id === runId)?.help_status).toBeNull()
+  })
+})
