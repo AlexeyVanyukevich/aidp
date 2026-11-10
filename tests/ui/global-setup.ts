@@ -157,6 +157,44 @@ const SCRIPT = {
       ],
     },
     'Help that fails': { ...colours, helper: [[]] },
+    // Decision helps: one script per press, in order.
+    'Help at Spec review': {
+      helper: [
+        SUGGEST({
+          verdict: 'changes',
+          findings: [{ kind: 'missing', where: 'R1', text: 'No retry limit' }],
+          unsure: 'Whether 429 counts.',
+        }),
+        SUGGEST({
+          changes: 'Retries back off.',
+          requirements: 'Delays of 1, 2 and 4 seconds.',
+          left_out: 'A retry limit.',
+        }),
+      ],
+    },
+    'Help at Spec review that fails': { helper: [[]] },
+    'Help at a stop': {
+      planner: [[{ tool: 'save_plan', args: PLAN }]],
+      builder: [1, 2, 3].map((n) => [
+        { edit: 'src/retry.ts', content: `export const delays = [${n}]\n` },
+        { commit: `attempt ${n}` },
+      ]),
+      verifier: [1, 2, 3].map(() => [FAIL]),
+      helper: [
+        SUGGEST({
+          why_stopped: 'The verifier failed AC1 three times.',
+          action: 'rerun_keep',
+          reasoning: 'The plan was sound.',
+          unsure: 'Whether the delays are right.',
+        }),
+        SUGGEST({
+          checked_against: 'approved_spec',
+          produced: 'Three commits on a branch.',
+          unfinished: [{ where: 'src/retry.ts', text: 'Delays are not 1, 2, 4.' }],
+          unsure: 'Whether the branch was pushed.',
+        }),
+      ],
+    },
     'Help with a batch': {
       ...drafting,
       helper: [
