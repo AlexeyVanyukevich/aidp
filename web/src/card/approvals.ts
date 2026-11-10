@@ -6,9 +6,12 @@ import type {
   ApprovalView,
   BatchAnswer,
   BatchQuestion,
+  HelpDecision,
   HelpMode,
   HelpResult,
+  HelpSubject,
   HelpView,
+  QuestionHelpMode,
   TaskState,
 } from '../types'
 
@@ -122,6 +125,8 @@ export interface ModeHelp {
   shown: HelpResult | undefined
   /** The reason the latest help failed, when it did. */
   failure: string | undefined
+  /** The subject of the help that is shown, or else of the latest one: a decision help's version. */
+  subject?: HelpSubject | null
 }
 export interface QuestionHelp {
   suggest: ModeHelp
@@ -134,7 +139,7 @@ export function questionHelp(
   approvalId: string,
   index: number | null,
 ): QuestionHelp {
-  const of = (mode: HelpMode): ModeHelp => {
+  const of = (mode: QuestionHelpMode): ModeHelp => {
     const mine = helps
       .filter((h) => h.approval_id === approvalId && h.question_index === index && h.mode === mode)
       .sort((a, b) => b.created_at.localeCompare(a.created_at))
@@ -148,7 +153,7 @@ export function questionHelp(
   return { suggest: of('suggest'), explain: of('explain') }
 }
 
-export const failureText = (mode: HelpMode, reason: string) =>
+export const failureText = (mode: QuestionHelpMode, reason: string) =>
   `${mode === 'suggest' ? 'No suggestion' : 'No explanation'}: ${reason}`
 
 /** What the card's status region says of a help that ended. */
@@ -201,4 +206,83 @@ export function singleAnswer(choice: Choice): ApprovalAnswer | null {
     ...(choice.option === undefined ? {} : { option_id: choice.option }),
     ...(text === '' ? {} : { text }),
   }
+}
+
+// Decision helps: advice on a decision of the card, beside the question helps above.
+
+/** The helps of one decision, by mode: busy while one is in flight, the result and the failure. */
+export function decisionHelp(
+  helps: HelpView[],
+  decision: Exclude<HelpDecision, 'question'>,
+): Partial<Record<HelpMode, ModeHelp>> {
+  return Object.fromEntries(
+    (['review', 'restate', 'recommend', 'check'] as const).map((mode) => {
+      const mine = helps
+        .filter((h) => h.decision === decision && h.mode === mode)
+        .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      const latest = mine[0]
+      const done = mine.find((h) => h.status === 'succeeded')
+      const state: ModeHelp = {
+        busy: latest?.status === 'queued' || latest?.status === 'running',
+        shown: done?.result ?? undefined,
+        failure: latest?.status === 'failed' ? (latest.reason ?? 'the helper failed') : undefined,
+        subject: (latest?.status === 'failed' ? latest : (done ?? latest))?.subject ?? null,
+      }
+      return [mode, state] as const
+    }),
+  )
+}
+
+/** The mode state of one mode, empty when nothing was asked. */
+export const NO_HELP: ModeHelp = { busy: false, shown: undefined, failure: undefined }
+
+/** The words a decision help's result is shown under. */
+export function resultHeading(mode: HelpMode, subject: HelpSubject | null): string {
+  const version = `v${subject?.spec_version ?? '?'}`
+  if (mode === 'review') return `Spec review of ${version}`
+  if (mode === 'restate') return `${version} in plain words`
+  if (mode === 'recommend') return 'Suggested next step'
+  return 'What is unfinished'
+}
+
+/** A failed decision help's sentence, without the final full stop. */
+export function decisionFailure(mode: HelpMode, subject: HelpSubject | null, reason: string) {
+  const version = `v${subject?.spec_version ?? '?'}`
+  if (mode === 'review') return `No spec review for ${version}: ${reason}`
+  if (mode === 'restate') return `No plain-words spec for ${version}: ${reason}`
+  if (mode === 'recommend') return `No suggested next step for the stopped run: ${reason}`
+  return `No unfinished-work check for Mark done: ${reason}`
+}
+
+/** What the card's status region says of a decision help that ended; null for a stopped one. */
+export function decisionAnnouncement(help: HelpView): string | null {
+  if (help.status === 'failed')
+    return `${decisionFailure(help.mode, help.subject, help.reason ?? 'the helper failed')}.`
+  if (help.status !== 'succeeded') return null
+  const version = `v${help.subject?.spec_version ?? '?'}`
+  if (help.mode === 'review') return `Spec review ready for ${version}.`
+  if (help.mode === 'restate') return `Plain-words spec ready for ${version}.`
+  if (help.mode === 'recommend') return 'Suggested next step ready for the stopped run.'
+  return 'Unfinished-work check ready for Mark done.'
+}
+
+/**
+ * The sentences for results or failure lines that were shown and are gone while the card's state
+ * stayed the same: "<heading> no longer applies." A move is covered by the state announcement.
+ */
+export function goneResults(
+  before: HelpView[],
+  after: HelpView[],
+  stateChanged: boolean,
+): string[] {
+  if (stateChanged) return []
+  const kept = new Set(after.map((h) => h.id))
+  return before
+    .filter(
+      (h) =>
+        h.decision !== 'question' &&
+        (h.status === 'succeeded' || h.status === 'failed') &&
+        !kept.has(h.id),
+    )
+    .map((h) => `${resultHeading(h.mode, h.subject)} no longer applies.`)
 }

@@ -136,15 +136,54 @@ export interface ApprovalView {
   created_at: string
   answered_at: string | null
 }
-export type HelpMode = 'suggest' | 'explain'
+export type QuestionHelpMode = 'suggest' | 'explain'
+export type HelpMode = QuestionHelpMode | 'review' | 'restate' | 'recommend' | 'check'
+export type HelpDecision = 'question' | 'spec_review' | 'stopped_run' | 'mark_done'
 export type HelpStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'stopped'
-/** What a helper saved: a suggestion, or a plain restatement in three parts. */
+export type StoppedRunAction = 'resume' | 'cancel' | 'rerun_again' | 'rerun_keep' | 'mark_done'
+/** What a helper saved: a suggestion, a plain restatement, or advice on a decision of the card. */
 export type HelpResult =
   | { mode: 'suggest'; option_id?: string; text?: string; reasoning: string; unsure: string }
   | { mode: 'explain'; asked: string; matters: string; leads_to: string }
+  | {
+      mode: 'review'
+      verdict: 'changes' | 'nothing_to_change'
+      findings: {
+        kind: 'missing' | 'contradiction' | 'uncheckable' | 'risk'
+        where?: string
+        text: string
+      }[]
+      unsure: string
+    }
+  | { mode: 'restate'; changes: string; requirements: string; left_out: string }
+  | {
+      mode: 'recommend'
+      why_stopped: string
+      action: StoppedRunAction
+      reasoning: string
+      unsure: string
+    }
+  | {
+      mode: 'check'
+      checked_against: 'approved_spec' | 'latest_spec' | 'description'
+      produced: string
+      unfinished: { where?: string; text: string }[]
+      unsure: string
+    }
+/** What a decision help recorded when it was created. */
+export interface HelpSubject {
+  spec_version?: number
+  run_id?: string
+  task_state?: TaskState
+  block?: string | null
+  delivery_run_id?: string | null
+}
 export interface HelpView {
   id: string
-  approval_id: string
+  /** Set exactly for a question help. */
+  approval_id: string | null
+  decision: HelpDecision
+  subject: HelpSubject | null
   /** The question of a batch; null for a single request. */
   question_index: number | null
   mode: HelpMode
@@ -213,6 +252,8 @@ export interface RunView {
   pr_url: string | null
   failure_reason: string | null
   fix_loops: number
+  /** For a help run, its help's status. */
+  help_status?: HelpStatus | null
   created_at: string
   started_at: string | null
   ended_at: string | null

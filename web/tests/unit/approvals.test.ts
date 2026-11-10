@@ -215,6 +215,8 @@ describe('a migration request', () => {
 const help = (change: Partial<HelpView>): HelpView => ({
   id: 'h1',
   approval_id: 'a1',
+  decision: 'question',
+  subject: null,
   question_index: null,
   mode: 'suggest',
   status: 'succeeded',
