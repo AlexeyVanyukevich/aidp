@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  defaultRun,
   latestDeliveryRun,
   phaseLabel,
   runLabel,
+  runOption,
   stepLabel,
   timelineModel,
 } from '../../src/card/timeline'
@@ -150,5 +152,44 @@ describe('phaseLabel', () => {
     ['build', 'build'],
   ])('names %s "%s"', (name, label) => {
     expect(phaseLabel(name)).toBe(label)
+  })
+})
+
+describe('help runs in the Timeline', () => {
+  it.each([
+    { name: 'a help run is named Help', run: { kind: 'help', number: 1 }, label: 'Help 1' },
+    { name: 'a delivery run is named Run', run: { kind: 'delivery', number: 2 }, label: 'Run 2' },
+  ])('$name', ({ run, label }) => {
+    expect(runLabel(run)).toBe(label)
+  })
+
+  it.each([
+    {
+      name: 'a help run shows its help status (AC44)',
+      run: { kind: 'help', number: 1, status: 'queued', help_status: 'running' as const },
+      text: 'Help 1 · running',
+    },
+    {
+      name: 'a delivery run shows its status',
+      run: { kind: 'delivery', number: 1, status: 'failed' },
+      text: 'Run 1 · failed',
+    },
+  ])('$name', ({ run, text }) => {
+    expect(runOption(run)).toBe(text)
+  })
+
+  it.each([
+    {
+      name: 'a help run beside a delivery run (AC48)',
+      kinds: ['help', 'delivery'],
+      expected: 'delivery',
+    },
+    { name: 'only a help run', kinds: ['help'], expected: 'help' },
+    { name: 'help runs, then a draft', kinds: ['help', 'help', 'spec'], expected: 'spec' },
+  ])('opens on the right run for $name', ({ kinds, expected }) => {
+    const runs = kinds.map((kind, index) => ({ kind, index }))
+    const run = defaultRun(runs)
+    expect(run?.kind).toBe(expected)
+    if (kinds.length === 2 && expected === 'delivery') expect(run?.index).toBe(1)
   })
 })

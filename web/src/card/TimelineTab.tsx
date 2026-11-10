@@ -5,7 +5,15 @@ import { api } from '../api'
 import { Loaded } from '../Loaded'
 import type { EventView, RunView, TaskView } from '../types'
 import { formatDuration, formatTokens } from './format'
-import { keptPlanLine, phaseLabel, runLabel, stepLabel, timelineModel, type Band } from './timeline'
+import {
+  defaultRun,
+  keptPlanLine,
+  phaseLabel,
+  runOption,
+  stepLabel,
+  timelineModel,
+  type Band,
+} from './timeline'
 
 const tokensOf = (event: EventView) =>
   event.usage.input + event.usage.output + event.usage.cache_read + event.usage.cache_write
@@ -62,7 +70,7 @@ function BandView({ band }: { band: Band }) {
 function RunTimeline({ runs }: { runs: RunView[] }) {
   const [chosen, setChosen] = useState<string | undefined>()
   const looseId = useId()
-  const run = runs.find((r) => r.id === chosen) ?? runs[0]!
+  const run = runs.find((r) => r.id === chosen) ?? defaultRun(runs)!
   const events = useQuery({ queryKey: ['events', run.id], queryFn: () => api.events(run.id) })
   return (
     <div className="timeline">
@@ -71,7 +79,7 @@ function RunTimeline({ runs }: { runs: RunView[] }) {
           <Select value={run.id} onChange={(e) => setChosen(e.target.value)}>
             {runs.map((r) => (
               <option key={r.id} value={r.id}>
-                {runLabel(r)} · {r.status}
+                {runOption(r)}
               </option>
             ))}
           </Select>
