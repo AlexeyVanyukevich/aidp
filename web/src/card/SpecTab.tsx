@@ -5,7 +5,9 @@ import { Button, Field, Input, Markdown, Notice, Select, Textarea } from '@zelli
 import { api, ApiError } from '../api'
 import { invalidField, isConflict } from '../errors'
 import { Loaded } from '../Loaded'
-import type { SpecView, TaskView } from '../types'
+import type { HelpMode, SpecView, TaskView } from '../types'
+import { decisionHelp, NO_HELP } from './approvals'
+import { decisionMode, decisionRenderers, HelpButtons, HelpResults } from './HelpPanel'
 import {
   DRAFT_LOCK,
   editable,
@@ -58,6 +60,7 @@ function SpecEditor({
   const approveId = useId()
   const waitId = useId()
   const suggestionHeadingId = useId()
+  const helpHeadingId = useId()
   const controls = specControls(task.state)
   const [selected, setSelected] = useState<string | undefined>()
   const [draft, setDraft] = useState<string | undefined>()
@@ -153,6 +156,33 @@ function SpecEditor({
     }
     wasRephrasing.current = rephrasing
   }, [rephrasing])
+
+  // The helps of Spec review: Review spec and Explain simply, asked of the latest version.
+  const inReview = task.state === 'spec_review'
+  const helps = useQuery({
+    queryKey: ['helps', task.id],
+    queryFn: () => api.helps(task.id),
+    enabled: inReview,
+  })
+  const reviewHelp = decisionHelp(helps.data ?? [], 'spec_review')
+  const reviewModes = [
+    decisionMode('review', 'Review spec', reviewHelp.review ?? NO_HELP),
+    decisionMode('restate', 'Explain simply', reviewHelp.restate ?? NO_HELP),
+  ]
+  const hasHelpResults = reviewModes.some(
+    (mode) => mode.state.shown !== undefined || mode.state.failure !== undefined,
+  )
+  const askReview = useMutation({
+    mutationFn: (mode: HelpMode) => api.askDecisionHelp(task.id, 'spec_review', mode),
+    onMutate: () => setProblem(undefined),
+    onError: (error) =>
+      setProblem({
+        text: isConflict(error)
+          ? 'This card changed meanwhile; its latest state is shown.'
+          : 'That did not work. Try again.',
+      }),
+    onSettled: () => client.invalidateQueries({ queryKey: ['helps', task.id] }),
+  })
 
   const refresh = () =>
     Promise.all([
@@ -654,6 +684,12 @@ function SpecEditor({
           )}
         </section>
       )}
+      {inReview && hasHelpResults && (
+        <section aria-labelledby={helpHeadingId} className="help-results">
+          <h3 id={helpHeadingId}>Help with v{latest?.version ?? '?'}</h3>
+          <HelpResults level={4} modes={reviewModes} renderers={decisionRenderers(null)} />
+        </section>
+      )}
       <Notice className="announce">{message}</Notice>
       <Notice tone="danger" className="announce" ref={problemBox} tabIndex={-1}>
         {problem?.text}
@@ -698,6 +734,9 @@ function SpecEditor({
             >
               Approve
             </Button>
+          )}
+          {inReview && buttons.approve && (
+            <HelpButtons modes={reviewModes} onAsk={(mode) => askReview.mutate(mode)} />
           )}
           {buttons.draftSpec && (
             <Button
