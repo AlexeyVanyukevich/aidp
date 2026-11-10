@@ -2,7 +2,7 @@ import { useId, useRef, useState, type FormEvent } from 'react'
 import { flushSync } from 'react-dom'
 import { Button, Field, Markdown, Radio, RadioGroup, Textarea } from '@zellige/react'
 import { HelpPanel } from './HelpPanel'
-import type { BatchAnswer, BatchQuestion, HelpMode, HelpView } from '../types'
+import type { BatchAnswer, BatchQuestion, QuestionHelpMode, HelpView } from '../types'
 import {
   answerFieldHint,
   answerFieldLabel,
@@ -33,7 +33,7 @@ export function BatchForm({
   questions: BatchQuestion[]
   approvalId: string
   helps: HelpView[]
-  onAsk: (mode: HelpMode, index: number | null) => void
+  onAsk: (mode: QuestionHelpMode, index: number | null) => void
   sending: boolean
   onSend: (body: BatchAnswer) => void
 }) {
