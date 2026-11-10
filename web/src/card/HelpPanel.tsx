@@ -1,7 +1,19 @@
 import { useId, type ReactNode } from 'react'
 import { Button } from '@zellige/react'
-import type { ApprovalOption, HelpMode, HelpResult, QuestionHelpMode } from '../types'
-import { failureText, type ModeHelp, type QuestionHelp } from './approvals'
+import type {
+  ApprovalOption,
+  HelpMode,
+  HelpResult,
+  QuestionHelpMode,
+  StoppedRunAction,
+} from '../types'
+import {
+  decisionFailure,
+  failureText,
+  resultHeading,
+  type ModeHelp,
+  type QuestionHelp,
+} from './approvals'
 
 type Suggestion = Extract<HelpResult, { mode: 'suggest' }>
 
@@ -188,4 +200,96 @@ export function HelpPanel({
       />
     </div>
   )
+}
+
+/** The mode of a decision help: its label, state and the words of its heading and failure. */
+export function decisionMode(
+  id: 'review' | 'restate' | 'recommend' | 'check',
+  label: string,
+  state: ModeHelp,
+): PanelMode {
+  const subject = state.subject ?? null
+  return {
+    id,
+    label,
+    state,
+    heading: resultHeading(id, subject),
+    failureLine: (reason) => decisionFailure(id, subject, reason),
+  }
+}
+
+/** The label of the card's own button for each action a stopped run offers. */
+export const ACTION_LABEL: Record<StoppedRunAction, string> = {
+  resume: 'Resume',
+  cancel: 'Cancel run',
+  rerun_again: 'Re-run and plan again',
+  rerun_keep: 'Re-run with this plan',
+  mark_done: 'Mark done',
+}
+
+const Part = ({ title, children }: { title: string; children: ReactNode }) => (
+  <p>
+    <strong>{title}:</strong> {children}
+  </p>
+)
+
+/** Renderers for the modes of the card's decisions. A result holds no focusable control. */
+export function decisionRenderers(checkedVersion: number | null): Renderers {
+  return {
+    review: (result) => (
+      <>
+        {result.verdict === 'nothing_to_change' ? (
+          <p>Nothing to change.</p>
+        ) : (
+          <ul>
+            {result.findings.map((finding, index) => (
+              <li key={index}>
+                <strong>{finding.kind}</strong>
+                {finding.where === undefined ? '' : ` (${finding.where})`}: {finding.text}
+              </li>
+            ))}
+          </ul>
+        )}
+        <Part title="Unsure about">{result.unsure}</Part>
+      </>
+    ),
+    restate: (result) => (
+      <>
+        <Part title="What changes">{result.changes}</Part>
+        <Part title="What it requires">{result.requirements}</Part>
+        <Part title="What it leaves out">{result.left_out}</Part>
+      </>
+    ),
+    recommend: (result) => (
+      <>
+        <Part title="Why it stopped">{result.why_stopped}</Part>
+        <Part title="Suggested action">{ACTION_LABEL[result.action] ?? result.action}</Part>
+        <Part title="Why">{result.reasoning}</Part>
+        <Part title="Unsure about">{result.unsure}</Part>
+      </>
+    ),
+    check: (result) => (
+      <>
+        <Part title="Checked against">
+          {result.checked_against === 'description'
+            ? 'the description'
+            : `the ${result.checked_against === 'approved_spec' ? 'approved' : 'latest'} spec v${checkedVersion ?? '?'}`}
+        </Part>
+        <Part title="What the runs produced">{result.produced}</Part>
+        {result.unfinished.length === 0 ? (
+          <p>Nothing unfinished found.</p>
+        ) : (
+          <ul>
+            {result.unfinished.map((item, index) => (
+              <li key={index}>
+                {item.where === undefined ? '' : `${item.where}: `}
+                {item.text}
+              </li>
+            ))}
+          </ul>
+        )}
+        <Part title="Unsure about">{result.unsure}</Part>
+      </>
+    ),
+  }
 }

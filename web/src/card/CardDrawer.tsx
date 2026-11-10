@@ -8,10 +8,18 @@ import { isConflict } from '../errors'
 import { Loaded } from '../Loaded'
 import { useDocumentTitle } from '../page'
 import { testCommandsKey } from '../stream'
-import type { ApprovalView, TaskState, TaskView } from '../types'
+import type { ApprovalView, HelpMode, HelpView, TaskState, TaskView } from '../types'
 import { ApprovalsTab } from './ApprovalsTab'
-import { helpAnnouncement, newlyEnded } from './approvals'
-import { actionsFor, blockText, initialTab, stateAnnouncement } from './blocks'
+import {
+  decisionAnnouncement,
+  decisionHelp,
+  goneResults,
+  helpAnnouncement,
+  NO_HELP,
+  newlyEnded,
+} from './approvals'
+import { actionsFor, blockText, decisionsFor, initialTab, stateAnnouncement } from './blocks'
+import { decisionMode, decisionRenderers, HelpButtons, HelpResults } from './HelpPanel'
 import { CostTab } from './CostTab'
 import { PlanTab } from './PlanTab'
 import { PrTab } from './PrTab'
@@ -38,28 +46,40 @@ export function CardDrawer() {
   // A help that ends is announced here, whichever tab is showing: the status region is the
   // card's, and a result arrives without navigation.
   const waiting = task.data?.state === 'needs_approval' || task.data?.state === 'blocked'
+  const offeredDecisions =
+    task.data === undefined ? [] : decisionsFor(task.data.state, task.data.block)
   const helps = useQuery({
     queryKey: ['helps', taskId],
     queryFn: () => api.helps(taskId),
-    enabled: waiting,
+    enabled: waiting || offeredDecisions.length > 0,
   })
   const seenHelps = useRef(new Map<string, string>())
+  const lastHelps = useRef<{ helps: HelpView[]; state: TaskState } | undefined>(undefined)
   useEffect(() => {
-    if (helps.data === undefined) return
+    if (helps.data === undefined || task.data === undefined) return
+    const state = task.data.state
+    const before = lastHelps.current
+    lastHelps.current = { helps: helps.data, state }
     const ended = newlyEnded(seenHelps.current, helps.data)
-    if (ended.length === 0) return
     const approvals = client.getQueryData<ApprovalView[]>(['approvals', taskId])
-    setMessage(
-      ended
-        .map((help) =>
-          helpAnnouncement(
-            help,
-            approvals?.find((a) => a.id === help.approval_id),
-          ),
-        )
-        .join('. '),
-    )
-  }, [helps.data, client, taskId])
+    const questions = ended
+      .filter((help) => help.decision === 'question')
+      .map((help) =>
+        helpAnnouncement(
+          help,
+          approvals?.find((a) => a.id === help.approval_id),
+        ),
+      )
+      .join('. ')
+    const decisions = ended
+      .filter((help) => help.decision !== 'question')
+      .map((help) => decisionAnnouncement(help))
+      .filter((text) => text !== null)
+    const gone =
+      before === undefined ? [] : goneResults(before.helps, helps.data, before.state !== state)
+    const text = [questions, ...decisions, ...gone].filter((part) => part !== '').join(' ')
+    if (text !== '') setMessage(text)
+  }, [helps.data, task.data, client, taskId])
 
   // A card waiting on a question opens on it, once, when it first loads.
   const opened = useRef(false)
@@ -139,6 +159,14 @@ export function CardDrawer() {
     onSettled: refresh,
   })
 
+  const askDecision = useMutation({
+    mutationFn: ({ decision, mode }: { decision: 'stopped_run' | 'mark_done'; mode: HelpMode }) =>
+      api.askDecisionHelp(taskId, decision, mode),
+    onMutate: () => setProblem(undefined),
+    onError: fail,
+    onSettled: () => client.invalidateQueries({ queryKey: ['helps', taskId] }),
+  })
+
   const step = (direction: 'up' | 'down') => {
     const card = board.data?.tasks.find((c) => c.id === taskId)
     if (board.data === undefined || card === undefined) return
@@ -195,6 +223,19 @@ export function CardDrawer() {
       <Loaded query={task} failure="This card could not be loaded.">
         {(t) => {
           const offered = actionsFor(t.state, t.block, t.plan_to_keep)
+          const decisions = decisionsFor(t.state, t.block)
+          const check = decisionMode(
+            'check',
+            'Check what is unfinished',
+            decisionHelp(helps.data ?? [], 'mark_done').check ?? NO_HELP,
+          )
+          const recommend = decisionMode(
+            'recommend',
+            'Suggest what to do',
+            decisionHelp(helps.data ?? [], 'stopped_run').recommend ?? NO_HELP,
+          )
+          const ask = (decision: 'stopped_run' | 'mark_done') => (mode: HelpMode) =>
+            askDecision.mutate({ decision, mode })
           return (
             <div className="card-body">
               <p className="state-line" ref={stateLine} tabIndex={-1}>
@@ -225,6 +266,9 @@ export function CardDrawer() {
                   <Button onClick={() => move.mutate({ state: 'done' }, { onSuccess: leave })}>
                     Mark done
                   </Button>
+                )}
+                {decisions.includes('mark_done') && (
+                  <HelpButtons modes={[check]} onAsk={ask('mark_done')} />
                 )}
                 {offered.resume && (
                   <Button
@@ -271,11 +315,26 @@ export function CardDrawer() {
                     Re-run and plan again
                   </Button>
                 )}
+                {decisions.includes('stopped_run') && (
+                  <HelpButtons modes={[recommend]} onAsk={ask('stopped_run')} />
+                )}
               </div>
               <Notice className="announce">{message}</Notice>
               <Notice tone="danger" className="announce" ref={problemBox} tabIndex={-1}>
                 {problem?.text}
               </Notice>
+              {decisions.some((decision) => decision !== 'spec_review') && (
+                <div className="help-results">
+                  <HelpResults
+                    level={3}
+                    modes={[
+                      ...(decisions.includes('mark_done') ? [check] : []),
+                      ...(decisions.includes('stopped_run') ? [recommend] : []),
+                    ]}
+                    renderers={decisionRenderers(check.state.subject?.spec_version ?? null)}
+                  />
+                </div>
+              )}
               <TestCommandChoice
                 task={t}
                 onChoose={(id, said) => choose.mutate(id, { onSuccess: () => setMessage(said) })}
