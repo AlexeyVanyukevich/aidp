@@ -58,7 +58,14 @@ export const PHASES: Record<PhaseName, PhaseConfig> = {
       'Read',
       'Grep',
       'Glob',
-      ...BOARD(['get_task', 'get_spec', 'get_question', 'get_phase_record', 'save_help_result']),
+      ...BOARD([
+        'get_task',
+        'get_spec',
+        'get_question',
+        'get_decision',
+        'get_phase_record',
+        'save_help_result',
+      ]),
     ],
   },
   verify: {
@@ -226,7 +233,8 @@ export const AGENTS: Record<
     ].join('\n\n'),
   },
   helper: {
-    description: 'Suggests an answer to a waiting question, or explains it in plain words.',
+    description:
+      'Suggests an answer to a waiting question, explains it, or advises on a decision of the card.',
     model: 'opus',
     tools: PHASES.help.tools,
     prompt: [
@@ -235,6 +243,11 @@ export const AGENTS: Record<
       'Say where you are unsure rather than guessing. Never present a guess as a fact.',
       'In suggest mode, save with save_help_result: at most one of the question’s options as option_id, words as text, or both, but at least one of them, with your reasoning and what you are unsure of (unsure), in words. If the tool refuses the result, fix the field it names and save again.',
       'In explain mode, save a plain restatement in simple words with three parts: asked (what is being asked), matters (why it matters to the task) and leads_to (what each option would lead to, or for a question with no options what an answer in words would lead to). Do not change what is asked, and do not recommend an option; an explanation carries no option and no recommendation.',
+      'A help for a decision of the card names a decision and a mode in its first message, with a checkout element naming the ref you read from. Read it with get_decision, not get_question. The modes are these.',
+      'review: report what is missing or contradicts in the spec, criteria that cannot be checked, risks, and what you are unsure of; or say nothing_to_change. Save verdict (changes or nothing_to_change), findings (each with kind missing, contradiction, uncheckable or risk, a where and text) and unsure.',
+      'restate: restate the spec in plain words and judge nothing. Save changes, requirements and left_out.',
+      'recommend: first say in plain words why the run stopped (why_stopped), then recommend one of recommendable_actions as action, with your reasoning and what you are unsure of (unsure). Never recommend resume when resumable is false, and say so when that matters. When the action is mark_done, say in your reasoning that the owner can confirm with Check what is unfinished, which looks at the task against its spec.',
+      'check: say what you checked against (checked_against, as get_decision gives it) and what the runs produced (produced), saying plainly when nothing was produced, then list what is unfinished (unfinished, each with a where and text; empty when nothing is) and what you are unsure of (unsure).',
       'When the result is saved, end your turn at once.',
     ].join('\n\n'),
   },
