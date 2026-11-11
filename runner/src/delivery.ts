@@ -21,7 +21,6 @@ import {
   readExcluded,
   readUndone,
   clearUndone,
-  addUndone,
   readMark,
   readPendingAnswer,
   readUntested,
@@ -112,26 +111,9 @@ export async function carryOut(
   const uncommitted = async () =>
     (await deps.git.changedPaths(worktree, project.base_branch)).uncommitted
 
-  /**
-   * Undoes the builder's uncommitted paths (those not in `excluded-paths.json`) so the test
-   * command judges only committed work. Called from `tests()` alone.
-   */
-  const undoBuilders = async (): Promise<void> => {
-    const excluded = new Set(readExcluded(runDir))
-    const mine = (await uncommitted()).filter((p) => !excluded.has(p)).sort()
-    if (mine.length === 0) return
-    await deps.git.undoUncommitted(worktree, project.base_branch, mine)
-    addUndone(runDir, mine)
-    await steps.runnerEvent({
-      tool: 'undo_uncommitted',
-      target: `undid ${mine.length} paths the build left uncommitted`,
-      status: 'ok',
-      payload: { paths: mine },
-    })
-  }
-
   const tests = async () => {
-    await undoBuilders()
+    // The test command judges only committed work: the builder's leftovers go first.
+    await steps.undoUncommitted(project.base_branch, 'builders')
     // What the test command itself writes is the runner's doing, not the builder's.
     const before = await uncommitted()
     const result = await deps.runTests(project.test_command, worktree, {
