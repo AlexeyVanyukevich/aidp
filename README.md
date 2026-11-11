@@ -34,9 +34,10 @@ app, giving each up to 30 s before SIGKILL. A process `./run dev` did not record
 before this rule, or from the directory under another name — is yours to end by hand.
 
 Register a repository on the Projects page (give it a setup command, such as `npm ci`, if the
-repository needs its dependencies installed in each run's fresh checkout). This repository is
-registered with a test command `./run check`, so a board run checks Types, Lint and Formatting
-as well as the suites. A new project starts with the test command `npm test`; its test commands
+repository needs its dependencies installed in each run's fresh checkout). In this repository
+`npm test` runs the full check (Types, Lint, Formatting and the suites), so the project's default
+test command, `npm test`, already covers all of them; `./run test` runs the suites alone. A new
+project starts with the test command `npm test`; its test commands
 are added, changed and chosen on its settings page, linked from its board. Then record the price of each model the phases
 use, from Anthropic's price list, in USD per million tokens — the spec-writer runs on Opus
 (`claude-opus-5-5`), the other phases on Sonnet, Claude Code's own calls on Haiku:

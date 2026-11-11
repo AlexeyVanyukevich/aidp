@@ -15,7 +15,7 @@
   },
   "prettier": "charter/stacks/typescript/prettier",
   "scripts": {
-    "test": "./run test",
+    "test": "./run check",
     "check": "./run check",
     "format": "prettier --write ."
   },
