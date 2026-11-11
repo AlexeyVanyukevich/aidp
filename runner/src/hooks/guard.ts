@@ -1,5 +1,6 @@
-import { isAbsolute, relative, resolve, sep, basename, posix } from 'node:path'
+import { isAbsolute, relative, resolve, sep, basename, dirname, posix } from 'node:path'
 import { fenceMigration, sameMigrationContent } from '../migration-content.js'
+import { PHASES } from '../phases/agents.js'
 import { migrationOrder } from './migration-order.js'
 
 export type Verdict = { allow: true } | { allow: false; reason: string }
@@ -174,22 +175,45 @@ function orderReason(path: string, after: string): string {
 }
 
 /** What a helper may call: it reads, and saves its one result. Nothing else. */
-const HELP_TOOLS = new Set([
-  'Read',
-  'Grep',
-  'Glob',
-  ...[
-    'get_task',
-    'get_spec',
-    'get_question',
-    'get_decision',
-    'get_phase_record',
-    'save_help_result',
-  ].map((tool) => `mcp__board__${tool}`),
-])
+export const HELP_TOOLS: ReadonlySet<string> = new Set(PHASES.help.tools)
 
 /** A path a helper's search or read names, when it names one. */
 const READ_PATH_KEYS = ['file_path', 'path', 'notebook_path'] as const
+
+/**
+ * Claude Code saves a large tool result under `<config>/projects/`. Only a Read of the calling
+ * session's own `tool-results` directory is allowed there; Grep and Glob never reach it, and no
+ * other session's files are read. Null when the call names nothing under that directory.
+ */
+function savedResultsVerdict(
+  input: { tool_name: string; tool_input: Record<string, unknown> },
+  ctx: { configDir?: string; transcriptPath?: string; cwd: string },
+): Verdict | null {
+  if (ctx.configDir === undefined || !READ_TOOLS.has(input.tool_name)) return null
+  const projects = resolve(ctx.configDir, 'projects')
+  const abs = (raw: string) => (isAbsolute(raw) ? resolve(raw) : resolve(ctx.cwd, raw))
+  const own =
+    ctx.transcriptPath === undefined
+      ? null
+      : resolve(dirname(ctx.transcriptPath), basename(ctx.transcriptPath, '.jsonl'), 'tool-results')
+  const refusal = deny(
+    'only your own session’s saved tool results can be read, and only with Read, not Grep or Glob',
+  )
+  const tool = input.tool_input
+  if (input.tool_name === 'Read') {
+    const raw = tool.file_path
+    if (typeof raw !== 'string' || !within(projects, abs(raw))) return null
+    return own !== null && within(own, abs(raw)) ? { allow: true } : refusal
+  }
+  const pattern = tool.pattern
+  const paths = [
+    tool.path,
+    input.tool_name === 'Glob' && typeof pattern === 'string' && isAbsolute(pattern)
+      ? pattern
+      : undefined,
+  ]
+  return paths.some((raw) => typeof raw === 'string' && within(projects, abs(raw))) ? refusal : null
+}
 
 export function decide(
   input: { tool_name: string; tool_input: Record<string, unknown> },
@@ -212,9 +236,15 @@ export function decide(
     exists: (path: string) => boolean
     /** File names directly in a migrations directory (relative path), here and on the base. */
     migrationSiblings?: (directory: string) => string[]
+    /** Claude Code's configuration directory (see `configDir`); absent turns the saved-results rule off. */
+    configDir?: string
+    /** The hook input's `transcript_path`: where the session's saved results are found. */
+    transcriptPath?: string
   },
 ): Verdict {
   if (ctx.paused) return deny('The run is paused; end your turn.')
+  const saved = savedResultsVerdict(input, ctx)
+  if (saved !== null) return saved
   if (ctx.phase === 'help') {
     if (!HELP_TOOLS.has(input.tool_name))
       return deny('a helper only reads and saves its result; it writes nothing and runs nothing')

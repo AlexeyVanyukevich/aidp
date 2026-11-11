@@ -2,6 +2,9 @@ import type { PhaseName } from '../contract.js'
 
 const BOARD = (tools: string[]) => tools.map((tool) => `mcp__board__${tool}`)
 
+/** Tools that read the whole board: the spec writer, planner and helper have them. */
+const READ_BOARD = ['list_projects', 'list_tasks', 'read_task']
+
 export interface PhaseConfig {
   agent: string
   model: string
@@ -20,7 +23,14 @@ export const PHASES: Record<PhaseName, PhaseConfig> = {
       'Read',
       'Grep',
       'Glob',
-      ...BOARD(['get_task', 'get_spec', 'save_spec', 'log_step', 'request_approval']),
+      ...BOARD([
+        'get_task',
+        'get_spec',
+        ...READ_BOARD,
+        'save_spec',
+        'log_step',
+        'request_approval',
+      ]),
     ],
   },
   plan: {
@@ -33,7 +43,14 @@ export const PHASES: Record<PhaseName, PhaseConfig> = {
       'Grep',
       'Glob',
       'Agent',
-      ...BOARD(['get_task', 'get_spec', 'save_plan', 'log_step', 'request_approval']),
+      ...BOARD([
+        'get_task',
+        'get_spec',
+        ...READ_BOARD,
+        'save_plan',
+        'log_step',
+        'request_approval',
+      ]),
     ],
   },
   build: {
@@ -61,6 +78,7 @@ export const PHASES: Record<PhaseName, PhaseConfig> = {
       ...BOARD([
         'get_task',
         'get_spec',
+        ...READ_BOARD,
         'get_question',
         'get_decision',
         'get_phase_record',
@@ -146,6 +164,7 @@ export const AGENTS: Record<
     prompt: [
       'You write the spec for one task of a board, from its description and the code of the repository you are in. The handoff carries the task; for a redraft it also carries the version to redraft and the owner’s note on what to change.',
       'Read the code the task touches before writing. You change no file: you write only the spec.',
+      'Read the board before writing, to find tasks that touch the same code or the same problem. Search with list_tasks and its filter (list_projects lists the project keys; read_task reads one task with its latest spec). Search the task’s own project, every project in the handoff’s <linked_projects>, and every project key the task’s description names. In ## Context name each related task by key and state, and say which projects you searched. A task whose spec or description is large may be saved to a file by Claude Code: read that file with Read.',
       'Collect every question the description and the code leave open, and ask them together: one request_approval call with kind questions, each question with up to five options, the one you recommend, and the context the owner needs to choose. Do not guess an answer, and do not leave a question in the spec for the owner to find. When the tool answers that the run is paused, end your turn at once; the answers arrive as your next message. If the answers raise a new question, ask it in another batch.',
       `Write the spec in this template. Keep its headings, and the form of its ids exactly: a requirement is a numbered item that starts with its id; a criterion is an item that starts with its id and, in parentheses, the requirements it checks. Never put an id in bold.\n\n${SPEC_TEMPLATE}`,
       'Under Requirements and Acceptance criteria write only items, with no lead-in sentence, and indent a line that continues an item under that item; any other line fails the lint.',
@@ -160,6 +179,7 @@ export const AGENTS: Record<
     tools: PHASES.plan.tools,
     prompt: [
       'You plan one task of a board. The handoff in the first message carries the approved spec; get_spec and get_task return it again if needed.',
+      'Read the board before planning, in the same way: search with list_tasks and its filter the task’s own project, every project in the handoff’s <linked_projects> and every project key the task’s description names, for tasks that touch the same code. Your plan summary names each such task by key and says whether the plan takes it in or leaves it out (takes in or leaves out, knowingly). read_task reads one task with its latest spec.',
       'Read the code before planning. Use the explorer agent for searching and reading so that your own context stays small.',
       SUBAGENTS,
       'Save the plan with save_plan. Every step names the requirements it serves (R1, R2…) and every file it will touch, by path relative to the repository root. Every criterion that is not withdrawn gets a check. Estimate each step in USD.',
@@ -240,6 +260,7 @@ export const AGENTS: Record<
     prompt: [
       'You help the owner of a board with one question that an agent asked and is waiting on. The first message names the mode: suggest or explain. You answer this one question only.',
       'You write nothing: you have no tool to edit a file or run a command, and you cannot ask the owner anything. Read the code, the task and the spec as you need. get_question returns the question with its context and options, and for a request to change files the files, for a migration the path and the whole file, and for a plan the plan. get_phase_record returns what the asking phase did, in order.',
+      'list_projects, list_tasks and read_task read the whole board. Use them to check whether a task exists or is already recorded, and settle such a point from the board instead of reporting it as unsure.',
       'Say where you are unsure rather than guessing. Never present a guess as a fact.',
       'In suggest mode, save with save_help_result: at most one of the question’s options as option_id, words as text, or both, but at least one of them, with your reasoning and what you are unsure of (unsure), in words. If the tool refuses the result, fix the field it names and save again.',
       'In explain mode, save a plain restatement in simple words with three parts: asked (what is being asked), matters (why it matters to the task) and leads_to (what each option would lead to, or for a question with no options what an answer in words would lead to). Do not change what is asked, and do not recommend an option; an explanation carries no option and no recommendation.',

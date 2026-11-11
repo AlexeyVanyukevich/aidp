@@ -1,12 +1,18 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { CLI_PATH } from '../self.js'
 import { AGENTS } from './agents.js'
+import { configDir } from './config-dir.js'
 
 const quote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`
 
 /** Everything a phase needs that must not end up in the target repository. */
-export function prepareRunDir(dir: string): void {
+export function prepareRunDir(
+  dir: string,
+  env: { CLAUDE_CONFIG_DIR?: string | undefined } = process.env,
+  home: string = homedir(),
+): void {
   mkdirSync(dir, { recursive: true })
   const command = (args: string) => ({ type: 'command', command: `${quote(CLI_PATH)} ${args}` })
   writeFileSync(join(dir, 'agents.json'), JSON.stringify(AGENTS))
@@ -17,6 +23,9 @@ export function prepareRunDir(dir: string): void {
         // Empty text turns off the Co-Authored-By trailer and the pull request line; the
         // repository's commit convention has no place for them.
         attribution: { commit: '', pr: '' },
+        // Claude Code saves a large tool result under the config directory and refuses a Read of
+        // it unless allowed here; the guard narrows this to the session's own results.
+        permissions: { allow: [`Read(/${configDir(env, home)}/projects/**/tool-results/**)`] },
         hooks: {
           PreToolUse: [{ matcher: '*', hooks: [command('guard')] }],
           PostToolUse: [{ matcher: '*', hooks: [command('event PostToolUse')] }],
