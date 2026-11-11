@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
+import { expect, test, type APIRequestContext, type Locator, type Page } from '@playwright/test'
 import {
   appUrl,
   approvedTask,
@@ -14,6 +14,7 @@ import {
 const RUN = { timeout: 90_000 }
 const draft = () => ({ key: 'DFT', name: 'Drafts', path: runtime().draftPath, repo: 'owner/draft' })
 const ask = () => ({ key: 'ASK', name: 'Asks', path: runtime().askPath, repo: 'owner/ask' })
+const stuck = () => ({ key: 'STK', name: 'Stuck', path: runtime().stuckPath, repo: 'owner/stuck' })
 
 /** A refusal as the server words one: its code in `error`, as the card's error helpers read it. */
 const refusal = (status: number) => ({
@@ -48,6 +49,16 @@ async function openFailed(page: Page, request: APIRequestContext, title: string)
   await page.goto(appUrl('/p/ASK'))
   await page
     .getByRole('region', { name: 'Failed' })
+    .getByRole('link', { name: new RegExp(`^${key} `) })
+    .click(RUN)
+  return page.getByRole('dialog', { name: title })
+}
+
+async function openBlocked(page: Page, request: APIRequestContext, title: string) {
+  const key = await approvedTask(request, stuck(), title)
+  await page.goto(appUrl('/p/STK'))
+  await page
+    .getByRole('region', { name: 'Blocked' })
     .getByRole('link', { name: new RegExp(`^${key} `) })
     .click(RUN)
   return page.getByRole('dialog', { name: title })
@@ -193,3 +204,74 @@ test('a refused POST on a Failed card shows the card’s problem notice', async 
     await page.unroute('**/api/tasks/*/helps')
   }
 })
+
+// AC29: a help that succeeded changes no decision button. Each card's buttons are read before
+// the help is asked and after its result is announced; a button the card does not show is null.
+const DECISION_BUTTONS = [
+  'Approve',
+  'Redraft',
+  'Mark done',
+  'Resume',
+  'Cancel run',
+  'Re-run with this plan',
+  'Re-run and plan again',
+]
+
+async function buttonStates(card: Locator): Promise<Record<string, boolean | null>> {
+  const states: Record<string, boolean | null> = {}
+  for (const name of DECISION_BUTTONS) {
+    const button = card.getByRole('button', { name, exact: true })
+    states[name] = (await button.count()) === 0 ? null : await button.isEnabled()
+  }
+  return states
+}
+
+const SUCCEEDED_HELPS: {
+  card: string
+  open: (page: Page, request: APIRequestContext) => Promise<Locator>
+  ask: string
+  ready: string
+  /** The buttons the card must show, so the comparison is not of absences alone. */
+  shown: string[]
+}[] = [
+  {
+    card: 'Spec review',
+    open: async (page, request) => {
+      const task = await specTask(request, 'Buttons at Spec review')
+      return (await openSpec(page, task.key, 'Buttons at Spec review')).card
+    },
+    ask: 'Review spec',
+    ready: 'Spec review ready for v1.',
+    shown: ['Approve', 'Redraft', 'Mark done'],
+  },
+  {
+    card: 'Failed',
+    open: (page, request) => openFailed(page, request, 'Buttons at a stop'),
+    ask: 'Suggest what to do',
+    ready: 'Suggested next step ready for the stopped run.',
+    shown: ['Mark done', 'Re-run with this plan', 'Re-run and plan again'],
+  },
+  {
+    card: 'Blocked',
+    open: (page, request) => openBlocked(page, request, 'Buttons at a block'),
+    ask: 'Suggest what to do',
+    ready: 'Suggested next step ready for the stopped run.',
+    shown: ['Resume', 'Cancel run'],
+  },
+]
+
+for (const row of SUCCEEDED_HELPS)
+  test(`a succeeded help leaves a ${row.card} card’s decision buttons as they were`, async ({
+    page,
+    request,
+  }) => {
+    const card = await row.open(page, request)
+    const asking = card.getByRole('button', { name: row.ask })
+    await expect(asking).toBeVisible(RUN)
+    const before = await buttonStates(card)
+    for (const name of row.shown) expect(before[name], name).not.toBeNull()
+
+    await asking.click()
+    await expect(card.getByRole('status').filter({ hasText: row.ready })).toBeVisible(RUN)
+    expect(await buttonStates(card)).toEqual(before)
+  })

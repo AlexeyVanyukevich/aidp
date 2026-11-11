@@ -196,6 +196,39 @@ const SCRIPT = {
         }),
       ],
     },
+    // A help that succeeds at each decision, whose buttons are read before and after.
+    'Buttons at Spec review': {
+      helper: [SUGGEST({ verdict: 'nothing_to_change', findings: [], unsure: 'Nothing.' })],
+    },
+    'Buttons at a stop': {
+      planner: [[{ tool: 'save_plan', args: PLAN }]],
+      builder: [1, 2, 3].map((n) => [
+        { edit: 'src/retry.ts', content: `export const delays = [${n}]\n` },
+        { commit: `attempt ${n}` },
+      ]),
+      verifier: [1, 2, 3].map(() => [FAIL]),
+      helper: [
+        SUGGEST({
+          why_stopped: 'The verifier failed AC1 three times.',
+          action: 'rerun_again',
+          reasoning: 'The plan missed the delays.',
+          unsure: 'Whether the spec is clear.',
+        }),
+      ],
+    },
+    'Buttons at a block': {
+      planner: [[{ tool: 'save_plan', args: PLAN }]],
+      builder: [BUILD],
+      verifier: [[PASS]],
+      helper: [
+        SUGGEST({
+          why_stopped: 'The remote refused the push.',
+          action: 'cancel',
+          reasoning: 'The remote refuses every push.',
+          unsure: 'Whether the remote will change.',
+        }),
+      ],
+    },
     'Help with a batch': {
       ...drafting,
       helper: [
@@ -417,6 +450,11 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     '#!/bin/sh\n[ -f pushed-once ] && exit 0\ntouch pushed-once\necho "refused once" >&2\nexit 1\n',
   )
   chmodSync(refuseOnce, 0o755)
+  // This one refuses every push, so a run stays Blocked whichever journey reaches it first.
+  const stuckPath = targetRepository(root, 'stuck')
+  const refuseAll = join(root, 'stuck.git', 'hooks', 'pre-receive')
+  writeFileSync(refuseAll, '#!/bin/sh\necho "refused" >&2\nexit 1\n')
+  chmodSync(refuseAll, 0o755)
   const scriptPath = join(root, 'script.json')
   writeFileSync(scriptPath, JSON.stringify(SCRIPT))
 
@@ -485,6 +523,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       opsPath,
       askPath,
       flakyPath,
+      stuckPath,
       draftPath,
     }),
   )
