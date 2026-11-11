@@ -1178,6 +1178,92 @@ describe('a help beside a paused run', () => {
   }, 60_000)
 })
 
+// ── Decision helps on the help lane ─────────────────────────────────────────────────────────
+
+/** A Backlog task, where Mark done is offered and so is its check. */
+async function backlogTask(title: string, budget_usd?: number): Promise<string> {
+  const created = await api<{ id: string }>('POST', '/api/projects/PAY/tasks', {
+    title,
+    ...(budget_usd === undefined ? {} : { budget_usd }),
+  })
+  return created.id
+}
+async function askCheck(taskId: string): Promise<void> {
+  const help = await api<HelpJson>('POST', `/api/tasks/${taskId}/helps`, {
+    decision: 'mark_done',
+    mode: 'check',
+  })
+  expect(help.status).toBe('queued')
+}
+
+describe('decision helps on the help lane', () => {
+  it('shares the three slots with question helps: the fourth waits (AC38)', async () => {
+    const BATCH = {
+      tool: 'request_approval',
+      args: {
+        kind: 'questions',
+        questions: [
+          { question: 'How many retries?', options: [{ id: 'a', label: 'Three' }] },
+          { question: 'How long a delay?', options: [{ id: 'a', label: 'One second' }] },
+        ],
+      },
+    }
+    const slow = { helper: [[{ sleep: 2500 }]] }
+    const f = fleet({
+      byTitle: {
+        Alpha: {
+          planner: [[{ tool: 'save_plan', args: PLAN }]],
+          builder: [[BATCH], builds('export const delays = [1]\n')],
+          ...slow,
+        },
+        Gamma: slow,
+        Delta: slow,
+      },
+    })
+    const { taskId, approvalId } = await pausedOnQuestion(f, 'Alpha')
+    for (const question_index of [0, 1])
+      await askHelp(approvalId, { mode: 'suggest', question_index })
+    const decided = [await backlogTask('Gamma'), await backlogTask('Delta')]
+    for (const id of decided) await askCheck(id)
+    const all = async () => (await Promise.all([taskId, ...decided].map(helpsOf))).flat()
+
+    const stop = new AbortController()
+    const loop = f.daemon().helpLoop(stop.signal)
+    await until(
+      async () => (await all()).filter((h) => h.status === 'running').length === 3,
+      'three running helps',
+    )
+    expect((await all()).filter((h) => h.status === 'queued')).toHaveLength(1)
+
+    await until(
+      async () => (await all()).every((h) => h.status === 'failed'),
+      'every help to end',
+      30_000,
+    )
+    stop.abort()
+    await loop
+  }, 60_000)
+
+  it('starts the helper with the task’s budget as its spending limit (AC44)', async () => {
+    const f = fleet({ byTitle: { Budgeted: { helper: [[]] } } })
+    const taskId = await backlogTask('Budgeted', 2)
+    await askCheck(taskId)
+    const stop = new AbortController()
+    const loop = f.daemon().helpLoop(stop.signal)
+    await until(async () => (await helpsOf(taskId))[0]?.status === 'failed', 'the help to end')
+    stop.abort()
+    await loop
+
+    const calls = rawLog(f)
+      .split('\n')
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line) as { agent?: string; max_budget_usd?: string })
+    expect(calls.filter((call) => call.agent === 'helper')).toEqual([
+      expect.objectContaining({ max_budget_usd: '2' }),
+    ])
+  })
+})
+
 // ── A run whose worktree was lost ───────────────────────────────────────────────────────────
 
 describe('a run whose worktree is lost while it waits', () => {

@@ -60,7 +60,10 @@ writeFileSync(statePath, JSON.stringify(state))
 const steps = scripts[agent]?.[call] ?? scripts[agent]?.at(-1) ?? []
 
 if (process.env.FAKE_CLAUDE_LOG)
-  appendFileSync(process.env.FAKE_CLAUDE_LOG, `${JSON.stringify({ agent, resumed, prompt })}\n`)
+  appendFileSync(
+    process.env.FAKE_CLAUDE_LOG,
+    `${JSON.stringify({ agent, resumed, prompt, max_budget_usd: flag('--max-budget-usd') })}\n`,
+  )
 
 function hook(event: string, input: object): string {
   const command = settings.hooks[event]?.[0]?.hooks[0]?.command
