@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { decide, denyOutput } from '../../src/hooks/guard.js'
+import { HELP_TOOLS, decide, denyOutput } from '../../src/hooks/guard.js'
+import { PHASES } from '../../src/phases/agents.js'
 
 const CWD = '/work/run-1'
 const identity = (path: string): string | null => path
@@ -609,5 +610,92 @@ describe('the guard for a helper', () => {
   it('refuses a read outside the worktree', () => {
     const verdict = decide({ tool_name: 'Read', tool_input: { file_path: '/etc/passwd' } }, help())
     expect(verdict.allow).toBe(false)
+  })
+})
+
+describe('the guard for saved results', () => {
+  interface Row {
+    name: string
+    config?: string
+    transcript?: string | null
+    tool: string
+    input: Record<string, unknown>
+    allow: boolean
+  }
+  const T = '/cfg/projects/p/S.jsonl'
+  const own = '/cfg/projects/p/S/tool-results'
+  const rows: Row[] = [
+    { name: 'own result', tool: 'Read', input: { file_path: `${own}/x.txt` }, allow: true },
+    {
+      name: 'other session',
+      tool: 'Read',
+      input: { file_path: '/cfg/projects/p/OTHER/tool-results/x.txt' },
+      allow: false,
+    },
+    {
+      name: 'dot-dot out of own',
+      tool: 'Read',
+      input: { file_path: `${own}/../../OTHER/tool-results/x.txt` },
+      allow: false,
+    },
+    { name: 'transcript', tool: 'Read', input: { file_path: T }, allow: false },
+    {
+      name: 'no transcript_path',
+      transcript: null,
+      tool: 'Read',
+      input: { file_path: `${own}/x.txt` },
+      allow: false,
+    },
+    { name: 'Grep own dir', tool: 'Grep', input: { path: own }, allow: false },
+    { name: 'Glob own dir', tool: 'Glob', input: { path: own }, allow: false },
+    { name: 'Glob pattern', tool: 'Glob', input: { pattern: `${own}/*` }, allow: false },
+    {
+      name: 'config with slash, own',
+      config: '/cfg/',
+      tool: 'Read',
+      input: { file_path: `${own}/x.txt` },
+      allow: true,
+    },
+    {
+      name: 'config with slash, other',
+      config: '/cfg/',
+      tool: 'Read',
+      input: { file_path: '/cfg/projects/p/OTHER/tool-results/x.txt' },
+      allow: false,
+    },
+    {
+      name: 'worktree file',
+      tool: 'Read',
+      input: { file_path: '/work/run-1/src/a.ts' },
+      allow: true,
+    },
+  ]
+  const phases = ['spec', 'plan', 'build', 'verify', 'title', 'rephrase', 'help']
+  const cases = phases.flatMap((phase) => rows.map((row) => ({ phase, ...row })))
+  it.each(cases)('$phase: $name', ({ phase, config, transcript, tool, input, allow }) => {
+    const verdict = decide(
+      { tool_name: tool, tool_input: input },
+      {
+        ...ctx(phase, null),
+        configDir: config ?? '/cfg',
+        ...(transcript === null ? {} : { transcriptPath: transcript ?? T }),
+      },
+    )
+    expect(verdict.allow).toBe(allow)
+  })
+
+  it.each(['get_task', 'list_projects', 'list_tasks', 'read_task'])(
+    'allows %s in help, and still denies Bash and Edit',
+    (tool) => {
+      expect(
+        decide({ tool_name: `mcp__board__${tool}`, tool_input: {} }, ctx('help', null)),
+      ).toEqual({ allow: true })
+      for (const denied of ['Bash', 'Edit'])
+        expect(decide({ tool_name: denied, tool_input: {} }, ctx('help', null)).allow).toBe(false)
+    },
+  )
+
+  it('keeps HELP_TOOLS the same as the help phase’s tools', () => {
+    expect([...HELP_TOOLS].sort()).toEqual([...PHASES.help.tools].sort())
   })
 })

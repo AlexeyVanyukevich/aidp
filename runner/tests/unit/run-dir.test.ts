@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import {
   clearMark,
   clearUntested,
+  prepareRunDir,
   readAllowed,
   readApproved,
   readExcluded,
@@ -140,6 +141,53 @@ describe('the run directory’s list readers', () => {
       if (typeof result === 'object' && result !== null && 'throws' in result)
         expect(() => read(dir)).toThrow(result.throws)
       else expect(read(dir)).toEqual(result === 'missing' ? missing : result)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('prepareRunDir settings', () => {
+  interface Row {
+    name: string
+    env: Record<string, string | undefined>
+    rule: string
+  }
+  const rows: Row[] = [
+    {
+      name: 'dir set',
+      env: { CLAUDE_CONFIG_DIR: '/tmp/cfg' },
+      rule: 'Read(//tmp/cfg/projects/**/tool-results/**)',
+    },
+    {
+      name: 'dir with trailing slash',
+      env: { CLAUDE_CONFIG_DIR: '/tmp/cfg/' },
+      rule: 'Read(//tmp/cfg/projects/**/tool-results/**)',
+    },
+    {
+      name: 'dir unset',
+      env: {},
+      rule: 'Read(//home/u/.claude/projects/**/tool-results/**)',
+    },
+    {
+      name: 'dir empty',
+      env: { CLAUDE_CONFIG_DIR: '' },
+      rule: 'Read(//home/u/.claude/projects/**/tool-results/**)',
+    },
+  ]
+  it.each(rows)('writes one rule: $name', ({ env, rule }) => {
+    const dir = mkdtempSync(join(tmpdir(), 'run-dir-'))
+    try {
+      prepareRunDir(dir, env, '/home/u')
+      const settings = JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8'))
+      expect(settings.permissions).toEqual({ allow: [rule] })
+      expect(settings.attribution).toEqual({ commit: '', pr: '' })
+      expect(Object.keys(settings.hooks)).toEqual([
+        'PreToolUse',
+        'PostToolUse',
+        'SubagentStart',
+        'SubagentStop',
+      ])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

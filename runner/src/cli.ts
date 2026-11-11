@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { BoardApi } from './api.js'
 import { realExec } from './exec.js'
@@ -9,6 +10,7 @@ import { decide, denyOutput } from './hooks/guard.js'
 import { hookToEvent, pausedBy } from './hooks/hook-event.js'
 import { readLinkedStrict } from './linked.js'
 import { readMigrationSiblings } from './hooks/migration-siblings.js'
+import { configDir } from './phases/config-dir.js'
 import { PAUSED_MARKER, readAllowed, readApproved, readExcluded } from './phases/run-dir.js'
 import { EventSink } from './sink.js'
 import { canonicalPath } from './worktree-log.js'
@@ -177,6 +179,10 @@ async function check(): Promise<void> {
       paused: existsSync(join(runDir, PAUSED_MARKER)),
       linked: readLinkedStrict(runDir),
       cwd,
+      configDir: configDir(process.env, homedir()),
+      ...(typeof input.transcript_path === 'string'
+        ? { transcriptPath: input.transcript_path }
+        : {}),
       worktree: worktree.path,
       canonical: canonicalPath,
       exists: existsSync,

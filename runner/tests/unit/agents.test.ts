@@ -66,6 +66,9 @@ describe('the spec-writer', () => {
     'Glob',
     'mcp__board__get_task',
     'mcp__board__get_spec',
+    'mcp__board__list_projects',
+    'mcp__board__list_tasks',
+    'mcp__board__read_task',
     'mcp__board__save_spec',
     'mcp__board__log_step',
     'mcp__board__request_approval',
@@ -222,6 +225,9 @@ describe('the helper', () => {
         'mcp__board__get_question',
         'mcp__board__get_decision',
         'mcp__board__get_phase_record',
+        'mcp__board__list_projects',
+        'mcp__board__list_tasks',
+        'mcp__board__read_task',
         'mcp__board__save_help_result',
       ].toSorted(),
     )
@@ -240,5 +246,76 @@ describe('the helper', () => {
     ['in explain mode carries no recommendation', 'no option and no recommendation'],
   ])('tells the helper it %s', (_name, words) => {
     expect(helper.prompt).toContain(words)
+  })
+})
+
+describe('the board-reading tools', () => {
+  const NEW = ['list_projects', 'list_tasks', 'read_task'].map((t) => `mcp__board__${t}`)
+  const CURRENT = {
+    build: [
+      'Read',
+      'Edit',
+      'Write',
+      'Bash',
+      'mcp__board__get_task',
+      'mcp__board__get_spec',
+      'mcp__board__log_step',
+      'mcp__board__request_approval',
+    ],
+    verify: [
+      'Read',
+      'Grep',
+      'Glob',
+      'Bash',
+      'Agent',
+      'mcp__board__get_task',
+      'mcp__board__get_spec',
+      'mcp__board__save_report',
+      'mcp__board__log_step',
+      'mcp__board__request_approval',
+    ],
+    title: [
+      'Read',
+      'Grep',
+      'Glob',
+      'mcp__board__get_task',
+      'mcp__board__suggest_title',
+      'mcp__board__log_step',
+    ],
+    rephrase: [
+      'Read',
+      'Grep',
+      'Glob',
+      'mcp__board__get_task',
+      'mcp__board__save_suggestion',
+      'mcp__board__log_step',
+    ],
+  } as const
+  it.each(['spec', 'plan', 'help'] as const)('gives the %s phase the three tools', (phase) => {
+    for (const tool of NEW) expect(PHASES[phase].tools).toContain(tool)
+  })
+  it.each(Object.entries(CURRENT))('leaves the %s phase’s tools as they were', (phase, tools) => {
+    expect(PHASES[phase as keyof typeof CURRENT].tools).toEqual(tools)
+  })
+
+  it('tells the spec writer to read the board and name related tasks', () => {
+    const prompt = AGENTS['spec-writer']!.prompt
+    expect(prompt).toContain('list_tasks')
+    expect(prompt).toContain('<linked_projects>')
+    expect(prompt).toContain('project key')
+    expect(prompt).toContain('## Context')
+    expect(prompt).toContain('projects you searched')
+  })
+  it('tells the planner to read the board and say which tasks it takes in', () => {
+    const prompt = AGENTS.planner!.prompt
+    expect(prompt).toContain('list_tasks')
+    expect(prompt).toContain('<linked_projects>')
+    expect(prompt).toContain('takes in or leaves out')
+  })
+  it('tells the helper to check the board', () => {
+    const prompt = AGENTS.helper!.prompt
+    expect(prompt).toContain('read_task')
+    expect(prompt).toContain('list_tasks')
+    expect(prompt).toContain('whether a task exists')
   })
 })
