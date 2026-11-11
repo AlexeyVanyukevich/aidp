@@ -97,8 +97,8 @@ test('Review spec and Explain simply give results under their headings, announce
 })
 
 test('a failed review shows its reason in the Help section', async ({ page, request }) => {
-  const task = await specTask(request, 'Help at Spec review that fails')
-  const { spec } = await openSpec(page, task.key, 'Help at Spec review that fails')
+  const task = await specTask(request, 'A spec review that fails')
+  const { spec } = await openSpec(page, task.key, 'A spec review that fails')
   await spec.getByRole('button', { name: 'Review spec' }).click()
   await expect(spec.getByText(/^No spec review for v1: /)).toBeVisible(RUN)
 })

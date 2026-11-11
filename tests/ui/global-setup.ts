@@ -172,7 +172,8 @@ const SCRIPT = {
         }),
       ],
     },
-    'Help at Spec review that fails': { helper: [[]] },
+    // Not "Help at Spec review that fails": a title takes the first key it contains.
+    'A spec review that fails': { helper: [[]] },
     'Help at a stop': {
       planner: [[{ tool: 'save_plan', args: PLAN }]],
       builder: [1, 2, 3].map((n) => [
