@@ -15,6 +15,17 @@ const RUN = { timeout: 90_000 }
 const draft = () => ({ key: 'DFT', name: 'Drafts', path: runtime().draftPath, repo: 'owner/draft' })
 const ask = () => ({ key: 'ASK', name: 'Asks', path: runtime().askPath, repo: 'owner/ask' })
 
+/** A refusal as the server words one: its code in `error`, as the card's error helpers read it. */
+const refusal = (status: number) => ({
+  status,
+  contentType: 'application/json',
+  body: JSON.stringify({ error: status === 409 ? 'conflict' : 'internal_error', message: 'no' }),
+})
+const REFUSALS = [
+  [409, 'This card changed meanwhile; its latest state is shown.'],
+  [500, 'That did not work. Try again.'],
+] as const
+
 async function specTask(request: APIRequestContext, title: string) {
   await registerProject(request, draft())
   const task = (await (
@@ -95,19 +106,11 @@ test('a failed review shows its reason in the Help section', async ({ page, requ
 test('a refused decision POST shows the problem notice with focus', async ({ page, request }) => {
   const task = await specTask(request, 'Help at Spec review')
   const { spec } = await openSpec(page, task.key, 'Help at Spec review')
-  for (const [status, words] of [
-    [409, 'This card changed meanwhile; its latest state is shown.'],
-    [500, 'That did not work. Try again.'],
-  ] as const) {
-    await page.route(`**/api/tasks/${task.id}/helps`, (route) =>
-      route.fulfill({
-        status,
-        contentType: 'application/json',
-        body: JSON.stringify({ error: { code: 'conflict', message: 'no' } }),
-      }),
-    )
+  for (const [status, words] of REFUSALS) {
+    await page.route(`**/api/tasks/${task.id}/helps`, (route) => route.fulfill(refusal(status)))
     await spec.getByRole('button', { name: 'Review spec' }).click()
-    const notice = spec.getByText(words)
+    // The notice itself takes focus, not the text inside it.
+    const notice = spec.getByRole('alert').filter({ hasText: words })
     await expect(notice).toBeVisible()
     await expect(notice).toBeFocused()
     await page.unroute(`**/api/tasks/${task.id}/helps`)
@@ -176,17 +179,17 @@ test('a decision help that fails announces its failure with the reason', async (
   ).toBeVisible(RUN)
 })
 
-test('a 409 on a Failed card shows the card’s problem notice', async ({ page, request }) => {
+test('a refused POST on a Failed card shows the card’s problem notice', async ({
+  page,
+  request,
+}) => {
   const card = await openFailed(page, request, 'Fail after a confident plan')
-  await page.route('**/api/tasks/*/helps', (route) =>
-    route.fulfill({
-      status: 409,
-      contentType: 'application/json',
-      body: JSON.stringify({ error: { code: 'conflict', message: 'no' } }),
-    }),
-  )
-  await card.getByRole('button', { name: 'Suggest what to do' }).click()
-  const notice = card.getByText('This card changed meanwhile; its latest state is shown.')
-  await expect(notice).toBeVisible()
-  await expect(notice).toBeFocused()
+  for (const [status, words] of REFUSALS) {
+    await page.route('**/api/tasks/*/helps', (route) => route.fulfill(refusal(status)))
+    await card.getByRole('button', { name: 'Suggest what to do' }).click()
+    const notice = card.getByRole('alert').filter({ hasText: words })
+    await expect(notice).toBeVisible()
+    await expect(notice).toBeFocused()
+    await page.unroute('**/api/tasks/*/helps')
+  }
 })
