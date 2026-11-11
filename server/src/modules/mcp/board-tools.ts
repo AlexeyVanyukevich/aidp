@@ -28,6 +28,7 @@ import { parseSpec } from '../specs/spec-parser.js'
 import { SpecRepository } from '../specs/spec.repository.js'
 import { acceptedPlanOf, planAnswers } from '../tasks/plan-history.js'
 import { loadPlanHistory, planToKeepFor } from '../tasks/plan-history.queries.js'
+import { foldKey, filterPattern, parseTaskKey } from './board-read.js'
 import { checkSuggestion, suggestionRefusal } from './title-rules.js'
 import {
   checkPlan,
@@ -834,6 +835,7 @@ function registerRunTools(server: McpServer, ctx: ToolContext): void {
 }
 
 function registerReadTools(server: McpServer, ctx: ToolContext): void {
+  registerBoardReadingTools(server, ctx)
   server.registerTool(
     'get_task',
     { description: 'Read the task this run carries out.' },
@@ -870,6 +872,105 @@ function registerReadTools(server: McpServer, ctx: ToolContext): void {
         .orderBy('version', 'desc')
         .executeTakeFirst()
       return latest === undefined ? reply('This task has no spec yet.') : json(latest)
+    },
+  )
+}
+
+/** The error reply for a project key that is not on the board: it lists the valid keys. */
+async function unknownProject(ctx: ToolContext, key: string, subject = key) {
+  const projects = await ctx.db.selectFrom('projects').select('key').orderBy('key').execute()
+  return reply(
+    `No project has the key ${key}${subject === key ? '' : `, so ${subject} does not exist`}. The valid project keys are: ${projects.map((p) => p.key).join(', ')}.`,
+    true,
+  )
+}
+
+function registerBoardReadingTools(server: McpServer, ctx: ToolContext): void {
+  server.registerTool(
+    'list_projects',
+    {
+      description: 'List every project on the board, ordered by key, each with its key and name.',
+    },
+    async () =>
+      json(await ctx.db.selectFrom('projects').select(['key', 'name']).orderBy('key').execute()),
+  )
+
+  server.registerTool(
+    'list_tasks',
+    {
+      description:
+        'List the tasks of one project, in every state, ordered by number, each with key, title and state. `project` is a project key (case is ignored). The optional `filter` is trimmed, and keeps only the tasks whose title or description contains it as a case-insensitive, literal substring.',
+      inputSchema: { project: z.string(), filter: z.string().optional() },
+    },
+    async (input) => {
+      const key = foldKey(input.project)
+      const project = await ctx.db
+        .selectFrom('projects')
+        .select('id')
+        .where('key', '=', key)
+        .executeTakeFirst()
+      if (project === undefined) return unknownProject(ctx, key)
+      const pattern = filterPattern(input.filter)
+      let query = ctx.db
+        .selectFrom('tasks')
+        .select(['number', 'title', 'state'])
+        .where('project_id', '=', project.id)
+      if (pattern !== null)
+        query = query.where((eb) =>
+          eb.or([
+            eb(sql`lower(title)`, 'like', sql`lower(${pattern}) escape '\\'`),
+            eb(sql`lower(description_md)`, 'like', sql`lower(${pattern}) escape '\\'`),
+          ]),
+        )
+      const tasks = await query.orderBy('number').execute()
+      return json(tasks.map((t) => ({ key: `${key}-${t.number}`, title: t.title, state: t.state })))
+    },
+  )
+
+  server.registerTool(
+    'read_task',
+    {
+      description:
+        'Read one task of any project by its key, such as ZLR-12 (case is ignored): key, title, state, description_md, and spec, the task’s highest spec version as { version, status, body_md } or null when it has none.',
+      inputSchema: { key: z.string() },
+    },
+    async (input) => {
+      const parsed = parseTaskKey(input.key)
+      if (parsed === null)
+        return reply(
+          `${foldKey(input.key)} is not a task key: a task key is a project key, a hyphen and a number, such as ZLR-12.`,
+          true,
+        )
+      const project = await ctx.db
+        .selectFrom('projects')
+        .select('id')
+        .where('key', '=', parsed.project)
+        .executeTakeFirst()
+      if (project === undefined) return unknownProject(ctx, parsed.project, parsed.folded)
+      const task = await ctx.db
+        .selectFrom('tasks')
+        .select(['id', 'title', 'state', 'description_md'])
+        .where('project_id', '=', project.id)
+        .where('number', '=', parsed.number)
+        .executeTakeFirst()
+      if (task === undefined)
+        return reply(
+          `${parsed.project} has no task numbered ${parsed.number}: ${parsed.folded} does not exist.`,
+          true,
+        )
+      const spec = await ctx.db
+        .selectFrom('specs')
+        .select(['version', 'status', 'body_md'])
+        .where('task_id', '=', task.id)
+        .orderBy('version', 'desc')
+        .executeTakeFirst()
+      return json({
+        key: parsed.folded,
+        title: task.title,
+        state: task.state,
+        description_md: task.description_md,
+        spec: spec ?? null,
+      })
     },
   )
 }
