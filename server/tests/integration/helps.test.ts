@@ -186,6 +186,9 @@ describe('a help through its life', () => {
         'get_phase_record',
         'get_spec',
         'get_task',
+        'list_projects',
+        'list_tasks',
+        'read_task',
         'save_help_result',
       ].sort(),
     )
