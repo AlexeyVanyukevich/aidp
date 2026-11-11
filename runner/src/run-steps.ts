@@ -13,6 +13,7 @@ import { CODE_CHECK_COMMAND, CODE_CHECK_OUTPUT, StartFailure } from './phases/pr
 import type { PhaseDeps, PhaseInput, PhaseRecord, StepResult } from './phases/phase.js'
 import {
   readBase,
+  addUndone,
   readExcluded,
   readMark,
   readPendingAnswer,
@@ -327,6 +328,7 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
     const { uncommitted } = await deps.git.changedPaths(io.worktree, base)
     const builders = uncommitted.filter((p) => !excluded.has(p)).sort()
     await deps.git.undoUncommitted(io.worktree, base)
+    if (builders.length > 0) addUndone(io.runDir, builders)
     if (builders.length > 0)
       await runnerEvent({
         tool: 'undo_uncommitted',

@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Checkpoint, RunWork } from '../../src/contract.js'
 import type { Git } from '../../src/git.js'
+import { readUndone } from '../../src/phases/run-dir.js'
 import {
   baseMovedNote,
   End,
@@ -287,6 +288,7 @@ describe('setup bookkeeping', () => {
     await r.steps.undoUncommitted('main')
     expect(r.undone).toHaveLength(1)
     const sent = r.events.filter((e) => e.tool === 'undo_uncommitted')
+    expect(readUndone(r.runDir)).toEqual(named ?? [])
     if (named === null) expect(sent).toEqual([])
     else {
       expect(sent).toHaveLength(1)
