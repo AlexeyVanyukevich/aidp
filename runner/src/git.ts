@@ -173,8 +173,10 @@ export class Git {
    * does not track is unstaged and deleted. Paths travel on stdin, NUL-separated, so a long
    * list never meets the argument limit and a name is taken literally.
    */
-  async undoUncommitted(dir: string, base: string): Promise<void> {
-    const { uncommitted } = await this.changedPaths(dir, base)
+  async undoUncommitted(dir: string, base: string, only?: string[]): Promise<void> {
+    const found = (await this.changedPaths(dir, base)).uncommitted
+    const wanted = only === undefined ? null : new Set(only)
+    const uncommitted = wanted === null ? found : found.filter((p) => wanted.has(p))
     if (uncommitted.length === 0) return
     const inHead = new Set(
       (await this.run('git', ['-C', dir, 'ls-tree', '-r', '-z', '--name-only', 'HEAD']))

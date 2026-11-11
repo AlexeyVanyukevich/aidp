@@ -336,6 +336,38 @@ describe('Git', () => {
       ])
     })
 
+    it('AC1: undoes only the listed paths, all without a list, none with an empty list', async () => {
+      const { worktree } = await fresh()
+      const dirty = () => {
+        writeFileSync(join(worktree, 'src/retry.ts'), 'changed\n')
+        writeFileSync(join(worktree, 'staged.txt'), 'staged\n')
+        git(['add', 'staged.txt'], worktree)
+        writeFileSync(join(worktree, 'untracked.txt'), 'x\n')
+        writeFileSync(join(worktree, 'fourth.txt'), 'x\n')
+      }
+      const present = () =>
+        ['src/retry.ts', 'staged.txt', 'untracked.txt', 'fourth.txt'].map((p) =>
+          existsSync(join(worktree, p)),
+        )
+      dirty()
+      await subject.undoUncommitted(worktree, 'main', [])
+      expect(readFileSync(join(worktree, 'src/retry.ts'), 'utf8')).toBe('changed\n')
+      expect(present()).toEqual([true, true, true, true])
+      await subject.undoUncommitted(worktree, 'main', [
+        'src/retry.ts',
+        'staged.txt',
+        'untracked.txt',
+      ])
+      expect(readFileSync(join(worktree, 'src/retry.ts'), 'utf8')).toBe(
+        'export const delays = []\n',
+      )
+      expect(present()).toEqual([true, false, false, true])
+      expect(git(['status', '--porcelain'], worktree).trim()).toBe('?? fourth.txt')
+      dirty()
+      await subject.undoUncommitted(worktree, 'main')
+      expect(git(['status', '--porcelain'], worktree)).toBe('')
+    })
+
     it('AC5: deletes an untracked file a failed setup left, then fast-forwards over a file of that name', async () => {
       const { repo, worktree } = await fresh()
       writeFileSync(join(worktree, 'generated.txt'), 'half-made\n')
