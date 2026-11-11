@@ -1820,11 +1820,26 @@ describe('the tests stage on the current base', () => {
     if (row.uncommitted.length === 0) expect(handoff).not.toContain('Before the test command ran')
   })
 
-  it('AC9: gate-head.txt holds HEAD once the stage ends', async () => {
-    const h = withPlan(harness({}))
+  interface GateHeadRow {
+    name: string
+    script: Script
+    head: string | null
+  }
+  const GATE_HEAD_ROWS: GateHeadRow[] = [
+    { name: 'nothing owed', script: {}, head: 'abc123' },
+    { name: 'a rebase owed', script: MOVED, head: 'rebased-1' },
+    {
+      name: 'a passing gate, then a rebase conflict',
+      script: { ...MOVED, conflicts: [['src/a.ts']], acts: { 'build-2': ['paused'] } },
+      head: null,
+    },
+  ]
+  it.each(GATE_HEAD_ROWS)('AC9: gate-head.txt is written once, at the end: $name', async (row) => {
+    const h = withPlan(harness(row.script))
     await carryOut(at('tests', 1), h.deps)
-    expect(text(h, 'gate-head.txt')).toBe(text(h, 'gate-head.txt').trim())
-    expect(has(h, 'tested-base.txt')).toBe(true)
+    expect(h.order).toContain('gate')
+    if (row.head === null) expect(has(h, 'gate-head.txt')).toBe(false)
+    else expect(text(h, 'gate-head.txt')).toBe(row.head)
   })
 
   describe('a conflict with the base', () => {
