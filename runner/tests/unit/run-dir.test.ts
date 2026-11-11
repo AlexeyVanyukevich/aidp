@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
+  addUndone,
   clearMark,
+  clearUndone,
+  readUndone,
   clearUntested,
   prepareRunDir,
   readAllowed,
@@ -188,6 +191,25 @@ describe('prepareRunDir settings', () => {
         'SubagentStart',
         'SubagentStop',
       ])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('undone-paths.json', () => {
+  it('reads empty when missing or unreadable, and adds sorted without repeats, until cleared', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'run-dir-'))
+    try {
+      expect(readUndone(dir)).toEqual([])
+      writeFileSync(join(dir, 'undone-paths.json'), '{nope')
+      expect(readUndone(dir)).toEqual([])
+      rmSync(join(dir, 'undone-paths.json'))
+      addUndone(dir, ['b', 'a'])
+      addUndone(dir, ['a', 'c'])
+      expect(readUndone(dir)).toEqual(['a', 'b', 'c'])
+      clearUndone(dir)
+      expect(readUndone(dir)).toEqual([])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

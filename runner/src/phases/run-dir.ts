@@ -101,6 +101,29 @@ export const GATE_REPORT = 'files-gate-report.md'
 /** The worktree's HEAD when the gate passed; Verify may not move it. */
 export const GATE_HEAD = 'gate-head.txt'
 
+/** The builder's paths the runner undid in the tests stage; the next Verify and Build are told. */
+const UNDONE = 'undone-paths.json'
+
+/** Empty when the file is missing or unreadable. */
+export function readUndone(dir: string): string[] {
+  try {
+    return readList(dir, UNDONE)
+  } catch {
+    return []
+  }
+}
+/** Adds paths to the record, sorted, each once. */
+export function addUndone(dir: string, paths: string[]): void {
+  if (paths.length === 0) return
+  writeFileSync(
+    join(dir, UNDONE),
+    JSON.stringify([...new Set([...readUndone(dir), ...paths])].sort()),
+  )
+}
+export function clearUndone(dir: string): void {
+  writeFileSync(join(dir, UNDONE), '[]')
+}
+
 export function writeExcluded(dir: string, paths: string[]): void {
   writeFileSync(join(dir, EXCLUDED), JSON.stringify(paths))
 }
