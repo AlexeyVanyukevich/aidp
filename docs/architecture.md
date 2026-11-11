@@ -730,7 +730,7 @@ a violation on attempt 3 ends the run `failed` with `the build changed files the
 allow, on attempt 3: <paths>` (the first 20 paths, then `and <n> more`). Each gate run sends a
 runner `tool_call` event `files_gate`: `error` with `<n> paths the run does not allow` and the
 `violations` (`path`, `reason`, `committed`) in its payload, or `ok` with `every changed path is
-allowed`. When the gate passes it records the worktree's `HEAD` (`gate-head.txt`).
+allowed`. The gate does not write `gate-head.txt`; the tests stage does, once (see below).
 
 _Excluded paths._ What the runner's own commands write is not the builder's. `excluded-paths.json`
 holds those paths: right after the setup command in `prepare` (and again in each Plan-stage
@@ -750,17 +750,38 @@ runner:
    (a linked worktree's `.git` is a file, so the state is never joined onto the worktree
    directory) names a directory whose `head-name` is `refs/heads/<branch>`; its `onto` file is the
    commit the rebase is onto.
-2. Runs `git fetch origin <base>` in the project's `repo_path`. A rebase is owed when
-   `origin/<base>` is not an ancestor of HEAD.
+2. Runs `git fetch origin <base>` in the project's `repo_path`, then counts the new commits
+   (`origin/<base>..HEAD`). With none, the runner undoes nothing and runs no setup, rebase or
+   test command, and writes neither `gate-head.txt` nor `tested-base.txt`; it runs the files gate
+   on the worktree as it stands (a violation sends Build round with `files_gate`, as always), and
+   otherwise sends Build round with `no_commit`, the builder's uncommitted edits still in place.
+   Known limit: when setup is owed and an earlier setup failed and left files behind, the gate
+   can report those files as violations, since no undo runs on this path. Otherwise a rebase is
+   owed when `origin/<base>` is not an ancestor of HEAD.
 3. When setup is owed, undoes every uncommitted path; unless a rebase is owed, it then runs the
    setup command (a `setup_command` event), rewrites `excluded-paths.json` to the uncommitted list
    and writes `setup-base.txt`. A failed setup blocks the run as `step_failed` at `tests`.
 4. Runs the files gate.
 5. When a rebase is owed: undoes every uncommitted path, runs `git rebase origin/<base>`, and on
    success runs setup, rewrites `excluded-paths.json` and writes `setup-base.txt`.
-6. Writes the worktree's HEAD to `gate-head.txt`, so the push stage compares against the rebased
-   HEAD, and the fetched `origin/<base>` commit to `tested-base.txt`. Then the commit count and the
-   test command run.
+6. Writes the worktree's HEAD to `gate-head.txt` (its only write), so the push stage compares
+   against the rebased HEAD, and the fetched `origin/<base>` commit to `tested-base.txt`. Then the
+   test command runs.
+
+Before every run of the test command, in this stage and in a Verify resumed with no test output,
+the runner undoes the builder's uncommitted paths (those not in `excluded-paths.json`) and keeps
+the excluded ones; it runs no setup and leaves `excluded-paths.json` as it is. Only committed work
+is tested, verified and pushed. Known limits: a builder edit to a path already in
+`excluded-paths.json` is not undone, and a file written under a gitignored path is not undone,
+since the uncommitted list leaves ignored files out.
+
+`undone-paths.json` in the run directory lists, sorted and once each, the builder's paths the
+runner undid. The tests stage empties it at its top; the setup-owed and rebase-owed undos, the
+base-conflict undo and the undo before the test command add to it. When it is not empty, the
+Verify handoff's `<note>` says which paths were undone before the test command ran (after the
+base-moved note, separated by a blank line), and the next Build's `<verify_report>` ends with a
+paragraph naming them, whatever the failing report (never `no_commit`). A missing file reads as
+empty.
 
 `setup-base.txt` holds the merge-base of HEAD and `origin/<base>` as of the last setup that
 succeeded: `prepare`, the Plan-stage refresh, a worktree remade on resume, and the tests stage
@@ -772,8 +793,7 @@ existed gets it once.
 Each time the runner undoes uncommitted paths in this stage it first takes the ones not in
 `excluded-paths.json`, which are the builder's; when there are any it sends a runner `tool_call`
 event `undo_uncommitted` (status `ok`, target `undid <n> paths the build left uncommitted`,
-payload `paths`). Uncommitted edits to allowed files stay in place when no rebase is owed and
-setup is not (AIDP-72).
+payload `paths`).
 
 A rebase that succeeded sends a `base_rebase` event, status `ok`, target `rebased onto <sha>, <n>
 commits later`, payload `from` (the merge-base before), `to`, `commits` and `paths`. A conflict,
