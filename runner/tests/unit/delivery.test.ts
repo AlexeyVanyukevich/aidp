@@ -1695,54 +1695,129 @@ describe('the tests stage on the current base', () => {
     expect(JSON.parse(text(h, 'undone-paths.json'))).toEqual(['src/retry.ts'])
   })
 
-  it('AC11: undone-paths.json starts empty each stage and holds only the stage’s paths', async () => {
-    const h = withPlan(
-      harness({ rebasing: { onto: ORIGIN, paths: ['x.ts'] }, acts: { 'build-2': ['paused'] } }),
-    )
-    seed(h, { 'undone-paths.json': '["stale"]' })
-    await carryOut(at('tests', 1), h.deps)
-    expect(JSON.parse(text(h, 'undone-paths.json'))).toEqual([])
-  })
+  interface StaleRow {
+    name: string
+    script: Script
+    uncommitted: string[]
+    expected: string[]
+  }
+  const STALE_ROWS: StaleRow[] = [
+    {
+      name: 'a rebase in progress and a builder edit',
+      script: { rebasing: { onto: ORIGIN, paths: ['x.ts'] } },
+      uncommitted: ['src/retry.ts'],
+      expected: ['src/retry.ts'],
+    },
+    { name: 'nothing undone', script: {}, uncommitted: [], expected: [] },
+  ]
+  it.each(STALE_ROWS)(
+    'AC11: undone-paths.json holds only this stage’s paths: $name',
+    async (row) => {
+      const h = withPlan(
+        harness({
+          ...row.script,
+          initial: { uncommitted: row.uncommitted },
+          acts: { 'build-2': ['paused'] },
+        }),
+      )
+      seed(h, { 'undone-paths.json': '["stale"]' })
+      await carryOut(at('tests', 1), h.deps)
+      expect(JSON.parse(text(h, 'undone-paths.json'))).toEqual(row.expected)
+    },
+  )
 
+  const PARAGRAPH = (paths: string[]) =>
+    `The runner undid these paths the build left uncommitted:\n${paths.join('\n')}\nOnly committed work is tested, shown in the diff and pushed.`
   interface ReportRow {
     name: string
     failing: string
     undone: string[]
-    paragraph: boolean
+    base: (h: ReturnType<typeof harness>) => string
   }
-  const REPORT_ROWS: ReportRow[] = [
-    {
-      name: 'files_gate, paths undone',
-      failing: 'files_gate',
-      undone: ['a.ts', 'b.ts'],
-      paragraph: true,
-    },
-    {
-      name: 'base_conflict, paths undone',
-      failing: 'base_conflict',
-      undone: ['a.ts'],
-      paragraph: true,
-    },
-    { name: 'no_commit, file empty', failing: 'no_commit', undone: [], paragraph: false },
-    { name: 'files_gate, file empty', failing: 'files_gate', undone: [], paragraph: false },
-  ]
+  const VERIFY_BODY = 'the verify report body'
+  const REPORT_ROWS: ReportRow[] = []
+  for (const [failing, base] of [
+    ['report-x', () => VERIFY_BODY],
+    ['files_gate', (h: ReturnType<typeof harness>) => text(h, 'files-gate-report.md')],
+    ['base_conflict', (h: ReturnType<typeof harness>) => text(h, 'base-conflict-report.md')],
+  ] as const)
+    for (const undone of [['a.ts', 'b.ts'], []])
+      REPORT_ROWS.push({
+        name: `${failing}, ${undone.length === 0 ? 'file empty' : 'paths undone'}`,
+        failing,
+        undone,
+        base,
+      })
+  REPORT_ROWS.push({
+    name: 'no_commit, file empty',
+    failing: 'no_commit',
+    undone: [],
+    base: () => 'The build made no commit, so there was nothing to verify. Commit your work.',
+  })
   it.each(REPORT_ROWS)('AC14: Build report paragraph: $name', async (row) => {
     const h = withPlan(harness({ acts: { 'build-2': ['paused'] } }))
-    seed(h, { 'undone-paths.json': JSON.stringify(row.undone) })
-    await carryOut(
-      at('build', 2, RUN) &&
-        ({
-          ...at('build', 2),
-          checkpoint: { ...checkpoint('build', 2), failing_report_id: row.failing },
-        } as Extract<Work, { kind: 'resume' }>),
-      h.deps,
-    )
+    h.artifacts.push({
+      id: 'report-x',
+      kind: 'verify_report',
+      phase_id: 'v',
+      body_md: VERIFY_BODY,
+      uri: null,
+      data: { summary: 's', criteria: [] },
+    } as never)
+    seed(h, {
+      'undone-paths.json': JSON.stringify(row.undone),
+      'files-gate-report.md': 'the gate report',
+      'base-conflict-report.md': 'the conflict report',
+    })
+    const work = {
+      ...at('build', 2),
+      checkpoint: { ...checkpoint('build', 2), failing_report_id: row.failing },
+    } as Extract<Work, { kind: 'resume' }>
+    await carryOut(work, h.deps)
     const handoff = h.handoffs['build-2'] ?? ''
     expect(handoff).not.toContain('Before the test command ran')
-    expect(handoff.includes('The runner undid these paths the build left uncommitted:')).toBe(
-      row.paragraph,
+    const body = row.base(h)
+    if (row.undone.length > 0) expect(handoff).toContain(`${body}\n\n${PARAGRAPH(row.undone)}`)
+    else {
+      expect(handoff).toContain(body)
+      expect(handoff).not.toContain('The runner undid these paths')
+    }
+  })
+
+  interface VerifyNoteRow {
+    name: string
+    uncommitted: string[]
+    moved: boolean
+  }
+  const VERIFY_NOTE_ROWS: VerifyNoteRow[] = [
+    { name: 'undone paths, no base move', uncommitted: ['src/retry.ts'], moved: false },
+    { name: 'undone paths and a base move', uncommitted: ['src/retry.ts'], moved: true },
+    { name: 'a base move only', uncommitted: [], moved: true },
+    { name: 'neither', uncommitted: [], moved: false },
+  ]
+  it.each(VERIFY_NOTE_ROWS)('AC13: Verify note: $name', async (row) => {
+    const h = withPlan(
+      harness({
+        initial: { uncommitted: row.uncommitted },
+        moveTo: { head: 'abc123', commits: 4, paths: ['x.ts'] },
+      }),
     )
-    if (row.paragraph) expect(handoff).toContain(row.undone.join('\n'))
+    seed(h, row.moved ? { 'build-base.txt': 'B', 'tested-base.txt': 'T' } : {})
+    await carryOut(at('verify', 1), h.deps)
+    const handoff = h.handoffs['verify-1'] ?? ''
+    const moved =
+      'The base branch moved since Build began. It was at B; the branch is now tested on T, 4 commits later.\nPaths changed between them:\nx.ts\nCheck that the change still meets the spec with these changes to the base in place.'
+    const undone = `Before the test command ran, the runner undid these paths the build left uncommitted:\nsrc/retry.ts\nOnly committed work is tested, shown in the diff and pushed.`
+    const expected = [
+      row.moved ? moved : undefined,
+      row.uncommitted.length > 0 ? undone : undefined,
+    ]
+      .filter((n) => n !== undefined)
+      .join('\n\n')
+    if (expected === '') expect(handoff).not.toContain('<note>')
+    else expect(handoff).toContain(expected)
+    if (!row.moved) expect(handoff).not.toContain('The base branch moved')
+    if (row.uncommitted.length === 0) expect(handoff).not.toContain('Before the test command ran')
   })
 
   it('AC9: gate-head.txt holds HEAD once the stage ends', async () => {
