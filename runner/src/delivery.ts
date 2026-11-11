@@ -19,6 +19,9 @@ import {
   readAllowed,
   readApproved,
   readExcluded,
+  readUndone,
+  clearUndone,
+  addUndone,
   readMark,
   readPendingAnswer,
   readUntested,
@@ -109,7 +112,26 @@ export async function carryOut(
   const uncommitted = async () =>
     (await deps.git.changedPaths(worktree, project.base_branch)).uncommitted
 
+  /**
+   * Undoes the builder's uncommitted paths (those not in `excluded-paths.json`) so the test
+   * command judges only committed work. Called from `tests()` alone.
+   */
+  const undoBuilders = async (): Promise<void> => {
+    const excluded = new Set(readExcluded(runDir))
+    const mine = (await uncommitted()).filter((p) => !excluded.has(p)).sort()
+    if (mine.length === 0) return
+    await deps.git.undoUncommitted(worktree, project.base_branch, mine)
+    addUndone(runDir, mine)
+    await steps.runnerEvent({
+      tool: 'undo_uncommitted',
+      target: `undid ${mine.length} paths the build left uncommitted`,
+      status: 'ok',
+      payload: { paths: mine },
+    })
+  }
+
   const tests = async () => {
+    await undoBuilders()
     // What the test command itself writes is the runner's doing, not the builder's.
     const before = await uncommitted()
     const result = await deps.runTests(project.test_command, worktree, {
@@ -173,19 +195,30 @@ export async function carryOut(
               : state.failingId === BASE_CONFLICT
                 ? conflictReport()
                 : (await artifact('verify_report', { id: state.failingId }))?.body_md
+      const undone = readUndone(runDir)
+      const report =
+        failing === undefined || state.failingId === NO_COMMIT || undone.length === 0
+          ? failing
+          : `${failing}\n\nThe runner undid these paths the build left uncommitted:\n${undone.join('\n')}\nOnly committed work is tested, shown in the diff and pushed.`
       return buildHandoff({
         ...common,
         plan: plan.body_md,
         approvedMigrations: readApproved(runDir),
-        ...(failing === undefined ? {} : { verifyReport: failing }),
+        ...(report === undefined ? {} : { verifyReport: report }),
       })
     }
     // A Verify started afresh after a resume has no test output yet: the tests run again.
     if (testOutput === undefined) await tests()
     const moved = await verifyNote()
+    const undone = readUndone(runDir)
+    const undoneNote =
+      undone.length === 0
+        ? undefined
+        : `Before the test command ran, the runner undid these paths the build left uncommitted:\n${undone.join('\n')}\nOnly committed work is tested, shown in the diff and pushed.`
+    const note = [moved, undoneNote].filter((n) => n !== undefined).join('\n\n')
     return buildHandoff({
       ...common,
-      ...(moved === undefined ? {} : { note: moved }),
+      ...(note === '' ? {} : { note }),
       plan: plan.body_md,
       testOutput: testOutput ?? '',
       diff: await deps.git.diff(worktree, project.base_branch),
@@ -323,11 +356,7 @@ export async function carryOut(
         },
       ),
     ])
-    if (found.length === 0) {
-      // Verify may not move the branch that is pushed: the push stage compares against this.
-      writeFileSync(join(runDir, GATE_HEAD), await deps.git.head(worktree))
-      return true
-    }
+    if (found.length === 0) return true
     writeFileSync(join(runDir, GATE_REPORT), formatViolations(found, changed.mergeBase))
     if (state.attempt >= MAX_ATTEMPTS) {
       const names = found.map((v) => v.path).sort()
@@ -538,6 +567,7 @@ export async function carryOut(
           break
         }
         case 'tests': {
+          clearUndone(runDir)
           await steps.checkpoint()
           const base = project.base_branch
           // A rebase left in progress is a conflict: the builder's, or one a resume found.
@@ -549,6 +579,13 @@ export async function carryOut(
             break
           }
           await deps.git.fetchBase(project.repo_path, base)
+          if ((await deps.git.newCommits(worktree, base)) === 0) {
+            // Nothing to test: no undo, setup, rebase or test command; the builder's edits stay.
+            if (!(await gate())) break
+            await steps.stopIfShuttingDown()
+            nextAttempt(NO_COMMIT)
+            break
+          }
           const rebaseOwed = !(await deps.git.baseIsAncestor(worktree, base))
           if (await steps.setupOwed(project.setup_command, base)) {
             await steps.undoUncommitted(base)
@@ -585,11 +622,9 @@ export async function carryOut(
           // Verify may not move the branch that is pushed: the push stage compares against this.
           writeFileSync(join(runDir, GATE_HEAD), await deps.git.head(worktree))
           writeMark(runDir, 'tested', await deps.git.revParse(worktree, `origin/${base}`))
-          const commits = await deps.git.newCommits(worktree, base)
           await tests()
           await steps.stopIfShuttingDown()
-          if (commits === 0) nextAttempt(NO_COMMIT)
-          else state.stage = 'verify'
+          state.stage = 'verify'
           break
         }
         case 'verify': {

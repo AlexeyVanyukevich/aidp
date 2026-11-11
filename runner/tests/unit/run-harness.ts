@@ -116,6 +116,8 @@ export function harness(script: Script) {
   const calls: string[] = []
   /** The refresh's git steps and setup runs, with the phase calls, in the order they happened. */
   const order: string[] = []
+  /** The uncommitted paths the worktree held as each test command started. */
+  const testSaw: string[][] = []
   let setups = 0
   const gitCalls: string[] = []
   /** The body of each pull request created. */
@@ -280,7 +282,7 @@ export function harness(script: Script) {
     prepareWorktree: async (_r: string, _b: string, branch: string) => {
       gitCalls.push(`worktree ${branch}`)
     },
-    newCommits: async () => script.commits?.[builds - 1] ?? 1,
+    newCommits: async () => script.commits?.[Math.max(builds - 1, 0)] ?? 1,
     diff: async () => '+change',
     head: async () => headNow,
     changedPaths: async () => {
@@ -349,9 +351,9 @@ export function harness(script: Script) {
       origin = script.fetchTo?.[fetches++] ?? origin
       if (script.fails === 'fetch') throw new GitError('git fetch origin main', 'no network')
     },
-    undoUncommitted: async () => {
+    undoUncommitted: async (_dir: string, _base: string, only?: string[]) => {
       order.push('undo')
-      tree.uncommitted = []
+      tree.uncommitted = only === undefined ? [] : tree.uncommitted.filter((p) => !only.includes(p))
     },
     fastForward: async () => {
       order.push('ff')
@@ -393,6 +395,7 @@ export function harness(script: Script) {
         tree.uncommitted = [...(script.afterSetup ?? [])]
         return { ...runResult, exitCode: script.setupExits?.[setups++] ?? 0 }
       } else {
+        testSaw.push([...tree.uncommitted])
         tree.uncommitted = [...tree.uncommitted, ...(script.testWrites?.[tests] ?? [])]
         tests += 1
         testRuns.push(command)
@@ -424,6 +427,7 @@ export function harness(script: Script) {
     artifacts,
     calls,
     order,
+    testSaw,
     gitCalls,
     prBodies,
     writes,
