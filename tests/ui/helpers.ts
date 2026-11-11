@@ -9,6 +9,8 @@ interface Runtime {
   opsPath: string
   askPath: string
   flakyPath: string
+  /** A target whose remote refuses every push. */
+  stuckPath: string
   draftPath: string
 }
 
