@@ -136,11 +136,13 @@ test('a repository, the board and a card work from the keyboard alone', async ({
   await page.keyboard.press('Shift+Tab')
   await expect(card.getByRole('combobox', { name: 'Version' })).toBeFocused()
 
-  // The card is in Spec review: Edit, Approve, the note, Redraft.
+  // The card is in Spec review: Edit, Approve, its two helps, the note, Redraft.
   await expect(card.getByText('OPS-2 · Spec review')).toBeVisible()
   await tabTo(page, edit)
-  await page.keyboard.press('Tab')
-  await expect(card.getByRole('button', { name: 'Approve' })).toBeFocused()
+  for (const name of ['Approve', 'Review spec', 'Explain simply']) {
+    await page.keyboard.press('Tab')
+    await expect(card.getByRole('button', { name })).toBeFocused()
+  }
   await page.keyboard.press('Tab')
   await expect(card.getByRole('textbox', { name: 'What to change' })).toBeFocused()
   await page.keyboard.press('Tab')
