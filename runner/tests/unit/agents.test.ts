@@ -141,6 +141,12 @@ describe('the owner check in the prompts', () => {
     expect(prompt).toContain('generated that the plan does not list')
     expect(prompt).toContain('is deleted, and never committed')
   })
+
+  it('tells the builder uncommitted changes are undone before the test command runs', () => {
+    const prompt = AGENTS.builder!.prompt
+    expect(prompt).toContain('Before the test command runs, the runner undoes every change')
+    expect(prompt).toContain('Only commits are tested, verified and pushed')
+  })
 })
 
 interface PhraseRow {

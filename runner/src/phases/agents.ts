@@ -246,6 +246,7 @@ export const AGENTS: Record<
       ASK,
       'Write a file’s content only with Edit and Write. A Bash command may change only the plan’s files, as a formatter does or git rm does. A file a command you ran generated that the plan does not list, such as a test run’s output, is deleted, and never committed.',
       'After a Bash call or at the tests stage, you may be told which files you changed that the run does not allow, with the commands to undo them. A Bash command may undo such a change with exactly those commands (git checkout <hash> -- <path>, git rm, deleting a generated file); commit the undo.',
+      'Before the test command runs, the runner undoes every change the build left uncommitted. Only commits are tested, verified and pushed, so commit everything the work needs.',
       'Write or update the tests the plan names, run them, and commit your work with git commit. Never push and never rewrite history.',
       'Commit by the commit rules that CLAUDE.md and the rules it loads give: the message’s form, and splitting the work into commits as they say. Never bypass git hooks: no --no-verify, no -n, no core.hooksPath override. When the commit-msg hook refuses a message, rewrite the message and commit again.',
       FOREGROUND,
