@@ -92,6 +92,8 @@ export function HelpResults({
       case 'check':
         return renderers.check?.(result)
     }
+    // Every mode returns above; this satisfies `consistent-return`.
+    return null
   }
   return (
     <>
