@@ -353,7 +353,7 @@ ${BOLD}./run <scenario>${OFF}
   ${BOLD}stop${OFF}       stop what dev started, runner first, up to 30 s for each part
   ${BOLD}test${OFF}       every workspace's suite
   ${BOLD}test:ui${OFF}    the browser journeys, with a fake claude
-  ${BOLD}check${OFF}      types, formatting and the suites
+  ${BOLD}check${OFF}      types, lint, formatting and the suites
   ${BOLD}migrate${OFF}    apply migrations to the local database
   ${BOLD}smoke${OFF}      one real task against a throwaway repository (spends tokens); --draft: drafted spec
   ${BOLD}price:set${OFF}  record a model's price: <model> <input> <output> <cache_read> <cache_write> [from]
