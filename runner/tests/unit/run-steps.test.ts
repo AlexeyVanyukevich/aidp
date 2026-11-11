@@ -192,15 +192,16 @@ describe('setup bookkeeping', () => {
     if (o.excluded !== undefined)
       writeFileSync(join(runDir, 'excluded-paths.json'), JSON.stringify(o.excluded))
     const events: { tool: string | null; target: string | null; payload: unknown }[] = []
-    const undone: number[] = []
+    /** Each git undo's list of paths; undefined for an undo of every path. */
+    const undone: (string[] | undefined)[] = []
     const deps = {
       api: { issueToken: async () => 't' },
       git: {
         mergeBase: async () => MERGE_BASE,
         fetchBase: async () => undefined,
         head: async () => 'h',
-        undoUncommitted: async () => {
-          undone.push(1)
+        undoUncommitted: async (_dir: string, _base: string, only?: string[]) => {
+          undone.push(only)
         },
         fastForward: async () => undefined,
         changedPaths: async () => ({
@@ -278,15 +279,28 @@ describe('setup bookkeeping', () => {
     expect(await r.steps.setupOwed(command, 'main')).toBe(owed)
   })
 
-  it.each<[string, string[], string[] | undefined, string[] | null]>([
+  const UNDO_ROWS: [string, string[], string[] | undefined, string[] | null][] = [
     ['the builder’s paths only', ['a.ts', 'lock.json'], ['lock.json'], ['a.ts']],
     ['paths sorted', ['b.ts', 'a.ts'], [], ['a.ts', 'b.ts']],
     ['only the runner’s paths: no event', ['lock.json'], ['lock.json'], null],
     ['nothing uncommitted: no event', [], undefined, null],
-  ])('AC7: undo_uncommitted names %s', async (_name, uncommitted, excluded, named) => {
+  ]
+  it.each(
+    (['all', 'builders'] as const).flatMap((scope) =>
+      UNDO_ROWS.map(([name, uncommitted, excluded, named]) => ({
+        scope,
+        name,
+        uncommitted,
+        excluded,
+        named,
+      })),
+    ),
+  )('AC7: undoing $scope, undo_uncommitted names $name', async (row) => {
+    const { scope, uncommitted, excluded, named } = row
     const r = rig({ uncommitted, ...(excluded === undefined ? {} : { excluded }) })
-    await r.steps.undoUncommitted('main')
-    expect(r.undone).toHaveLength(1)
+    await r.steps.undoUncommitted('main', scope)
+    // Every path goes in one git call; the builder's alone go only when there are any.
+    expect(r.undone).toEqual(scope === 'all' ? [undefined] : named === null ? [] : [named])
     const sent = r.events.filter((e) => e.tool === 'undo_uncommitted')
     expect(readUndone(r.runDir)).toEqual(named ?? [])
     if (named === null) expect(sent).toEqual([])

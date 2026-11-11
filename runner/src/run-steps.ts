@@ -320,14 +320,19 @@ export function runSteps(work: Extract<Work, { kind: 'start' | 'resume' }>, deps
     readMark(io.runDir, 'setup') !== (await deps.git.mergeBase(io.worktree, base))
 
   /**
-   * Undoes every uncommitted path of the tests stage. The ones the runner did not write itself
-   * (those not in `excluded-paths.json`) are the builder's: they are named in an event.
+   * Undoes the uncommitted paths of the tests stage: every one, or with `builders` only the
+   * builder's, keeping the runner's own. The builder's are those not in `excluded-paths.json`:
+   * they are recorded in `undone-paths.json` and named in an event.
    */
-  const undoUncommitted = async (base: string): Promise<void> => {
+  const undoUncommitted = async (
+    base: string,
+    scope: 'all' | 'builders' = 'all',
+  ): Promise<void> => {
     const excluded = new Set(readExcluded(io.runDir))
     const { uncommitted } = await deps.git.changedPaths(io.worktree, base)
     const builders = uncommitted.filter((p) => !excluded.has(p)).sort()
-    await deps.git.undoUncommitted(io.worktree, base)
+    if (scope === 'all') await deps.git.undoUncommitted(io.worktree, base)
+    else if (builders.length > 0) await deps.git.undoUncommitted(io.worktree, base, builders)
     if (builders.length > 0) addUndone(io.runDir, builders)
     if (builders.length > 0)
       await runnerEvent({
