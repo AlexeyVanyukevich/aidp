@@ -101,6 +101,54 @@ github_repo base_branch path>` per checkout and the escaped note as its text, an
 handoff is as before. Pushing and the pull request use only the task's own project; nothing
 commits, pushes or opens a pull request in a linked repository.
 
+## Reading the board from a run
+
+The spec writer, the planner and the helper can read the whole board, every project and not only
+the task's own and its linked ones, with three tools. They only read: no row is written and
+nothing is published. Their tokens (run tokens and helper tokens alike) reach them; the builder,
+verifier, title writer and rephraser do not have them. The planner's tools are `get_task`,
+`get_spec`, `list_projects`, `list_tasks`, `read_task`, `save_plan`, `log_step` and
+`request_approval`, besides Read, Grep, Glob and Agent.
+
+- `list_projects` takes no input and returns `[{ key, name }]`, ordered by key.
+- `list_tasks` takes `project`, a project key, and an optional `filter`. It returns
+  `[{ key, title, state }]` for every task of the project in every state, ordered by number; a
+  project with no tasks gives `[]`. The filter is trimmed; when it is then not empty, only tasks
+  whose title or description contains it as a case-insensitive, literal substring are kept (`%`,
+  `_` and `\` match only themselves; the match is `lower(...) LIKE lower(...)` with an explicit
+  escape character on a bound parameter). An absent or blank filter keeps every task.
+- `read_task` takes `key`, a task key matching `^[A-Z][A-Z0-9]{1,9}-[1-9][0-9]*$` once upper-cased. It
+  returns `key`, `title`, `state`, `description_md` and `spec`: the task's highest spec version as
+  `{ version, status, body_md }`, with the stored status (`draft`, `approved` or `superseded`), or
+  `null` when it has no spec.
+
+The tools fold case: `project` and `key` are upper-cased before they are checked, so `zlr` finds
+ZLR, and every key in a reply is upper case. The HTTP routes do not fold case: `GET
+/api/projects/zlr/tasks` is still a 404. An error reply (`isError`) names the upper-cased key and,
+for a project that does not exist, lists the valid project keys. `read_task` answers with an error
+for a malformed key, an unknown project, and a number the project has no task for.
+
+**Saved results.** Claude Code saves a tool result that is large enough, such as a long spec from
+`read_task`, to a file under `<config dir>/projects/.../<session id>/tool-results/` and answers
+with the file's path. `<config dir>` is `CLAUDE_CONFIG_DIR` when it is set and not empty, and
+`~/.claude` otherwise (`runner/src/phases/config-dir.ts`, used by both rules below). The run
+directory's `settings.json` carries one `permissions.allow` rule for it,
+`Read(//<config dir>/projects/**/tool-results/**)`. The guard narrows the rule in every phase to
+the calling session's own results: the directory comes from the hook input's `transcript_path`
+(its directory, the transcript's name without `.jsonl`, then `tool-results`). A Read inside it is
+allowed, in a help too; a Read elsewhere under `<config dir>/projects/` is refused, as is any
+Read when the hook input has no `transcript_path`. Only Read reaches saved results: a Grep or Glob
+whose path (or a Glob's absolute pattern) lies under `<config dir>/projects/` is refused, since a
+saved result is one line of JSON. Paths are resolved before they are compared. A subagent's saved
+results are not covered.
+
+The spec writer's and planner's instructions tell each to search the board with `list_tasks`
+over the task's own project, every project in `<linked_projects>` and every project key the
+description names, and to name related tasks: the spec writer in `## Context` with the projects
+searched, the planner in its summary, saying whether the plan takes each in or leaves it out. The
+helper's instructions tell it to settle whether a task exists from the board, not to report it as
+unsure.
+
 ## A spec run
 
 **Draft spec** queues a spec run; **Redraft** queues one carrying the latest version and the
@@ -110,8 +158,8 @@ and one whose card has left Spec draft is cancelled at claim.
 
 The runner (`runner/src/drafting.ts`) checks out a detached worktree of `origin/<base>` — no
 branch, nothing is pushed — then runs one phase, `spec`: the spec-writer on Opus at high effort,
-with Read, Grep, Glob and the board's `get_task`, `get_spec`, `save_spec`, `log_step` and
-`request_approval`. Its handoff carries the task's description, and for a redraft the version and
+with Read, Grep, Glob and the board's `get_task`, `get_spec`, `list_projects`, `list_tasks`,
+`read_task`, `save_spec`, `log_step` and `request_approval`. Its handoff carries the task's description, and for a redraft the version and
 the note, then `<base branch="<base_branch>" commit="<sha>"/>`: the worktree's full HEAD when the
 handoff is built, at the first start and at a restart. Its instructions carry the Spec tab's
 template word for word and tell it to ask every open question in one batch. The phase pauses,
@@ -470,7 +518,8 @@ the run it is carrying: `POST /api/runner/helps/claim` takes the oldest queued o
 the run slot is busy, and each help process sends its own heartbeat. A help is its own Claude Code
 session, on Opus at high effort, in the asking run's worktree, with its own run directory and a
 token limited to the run (`run_tokens.help_id`) that reaches only the helper's tools: Read, Grep,
-Glob, `get_task`, `get_spec`, `get_question`, `get_phase_record` and `save_help_result`. The guard
+Glob, `get_task`, `get_spec`, `list_projects`, `list_tasks`, `read_task`, `get_question`,
+`get_decision`, `get_phase_record` and `save_help_result`. The guard
 refuses everything else. `save_help_result` refuses an option the question does not offer, a
 suggestion with neither option nor words, and an explanation carrying an option, naming the field;
 a saved result moves the help to `succeeded` and the card shows it without a reload. A help that
