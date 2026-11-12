@@ -64,6 +64,21 @@ describe('the first message', () => {
     expect(text).toContain('Decision: mark_done. Mode: check.')
     expect(text).toContain('<checkout ref="origin/main" source="base"/>')
   })
+  it('names a proposal’s decision and mode', () => {
+    const text = helpPrompt(
+      { ...work('proposal', 'advise') },
+      {
+        worktree: '/w',
+        runDir: '/r',
+        ref: 'origin/main',
+        source: 'base',
+        fallback: false,
+        madeWorktree: true,
+      },
+    )
+    expect(text).toContain('Decision: proposal. Mode: advise.')
+    expect(text).toContain('source="base"')
+  })
   it('keeps the question words', () => {
     expect(helpPrompt({ ...work('question', 'suggest') })).toContain(
       'Suggest an answer to the open question',

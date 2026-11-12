@@ -5,6 +5,9 @@ const BOARD = (tools: string[]) => tools.map((tool) => `mcp__board__${tool}`)
 /** Tools that read the whole board: the spec writer, planner and helper have them. */
 const READ_BOARD = ['list_projects', 'list_tasks', 'read_task']
 
+/** Every phase that works on the task may propose a finding to the owner, and read what it proposed. */
+const PROPOSE = ['propose_task', 'list_proposals']
+
 export interface PhaseConfig {
   agent: string
   model: string
@@ -27,6 +30,7 @@ export const PHASES: Record<PhaseName, PhaseConfig> = {
         'get_task',
         'get_spec',
         ...READ_BOARD,
+        ...PROPOSE,
         'save_spec',
         'log_step',
         'request_approval',
@@ -47,6 +51,7 @@ export const PHASES: Record<PhaseName, PhaseConfig> = {
         'get_task',
         'get_spec',
         ...READ_BOARD,
+        ...PROPOSE,
         'save_plan',
         'log_step',
         'request_approval',
@@ -63,7 +68,15 @@ export const PHASES: Record<PhaseName, PhaseConfig> = {
       'Edit',
       'Write',
       'Bash',
-      ...BOARD(['get_task', 'get_spec', 'log_step', 'request_approval']),
+      ...BOARD([
+        'get_task',
+        'get_spec',
+        'list_tasks',
+        'read_task',
+        ...PROPOSE,
+        'log_step',
+        'request_approval',
+      ]),
     ],
   },
   help: {
@@ -97,7 +110,16 @@ export const PHASES: Record<PhaseName, PhaseConfig> = {
       'Glob',
       'Bash',
       'Agent',
-      ...BOARD(['get_task', 'get_spec', 'save_report', 'log_step', 'request_approval']),
+      ...BOARD([
+        'get_task',
+        'get_spec',
+        'list_tasks',
+        'read_task',
+        ...PROPOSE,
+        'save_report',
+        'log_step',
+        'request_approval',
+      ]),
     ],
   },
   // Read-only, and never asks the owner: it has no request_approval.
@@ -128,6 +150,23 @@ const FOREGROUND =
 /** Every phase may ask; none may go on once it has (slice 2 spec, §5). */
 const ASK =
   'If the spec leaves you a choice you cannot settle yourself — an ambiguity, two approaches with real trade-offs — do not guess: call request_approval with the question, up to five options, the one you recommend, and the context the owner needs. When it answers that the run is paused, end your turn at once; the owner’s answer arrives as your next message.'
+
+/**
+ * How a run puts a finding on the board: it proposes, and only the owner files (the word "file"
+ * is the owner's). The four phases that work on the task share it, each with its own ending.
+ */
+const PROPOSING = (where: string) =>
+  [
+    'A finding outside your task, such as a bug noticed on the way past, a missing test or a document that has drifted, is never fixed in passing: you propose it with propose_task. Write its description in the form Where, Found, Problem, Impact: `**Where:** …`, `**Found:** …`, `**Problem:** …` and `**Impact:** …`, each at the start of a line. Propose it in the task’s own project or in a project in <linked_projects>.',
+    'Before proposing, search the target project with list_tasks and its filter, and read this task’s proposals with list_proposals, so that a task already on the board is not proposed again. Propose with propose_task, never with the board’s HTTP API: the curl line in CLAUDE.md’s Findings rule is for sessions outside a run.',
+    `You cannot create a task: the owner settles each proposal on the card. Name each proposal you made in ${where}. A run can make at most 10 proposals; once the cap refuses one, list the remaining findings there.`,
+  ].join(' ')
+
+const PROPOSING_RELATED =
+  'A finding that bears on this task is related: set related to true and say in bearing_md how it bears on the task, and give workaround_md when there is a workaround. A related proposal pauses the run until the owner settles it; when the tool answers that the run is paused, end your turn at once. Any other finding is unrelated: set related to false, and bearing_md may say why it came up here.'
+
+const PROPOSING_UNRELATED =
+  'Every finding you propose is unrelated: set related to false, and bearing_md may say why it came up here. A related proposal is refused in this phase. A blocker of the task is not a finding: it goes through request_approval.'
 
 /**
  * The Spec tab's template (`web/src/card/lint.ts`), word for word: the lint reads ids only in
@@ -170,6 +209,8 @@ export const AGENTS: Record<
       'Under Requirements and Acceptance criteria write only items, with no lead-in sentence, and indent a line that continues an item under that item; any other line fails the lint.',
       'Prefer a criterion a run can check: write it so that a test, a command or a line of the diff settles it. A criterion no agent in a run can check, such as one that needs eyes on a screen, a browser or a device, carries owner inside its parentheses, as in `- AC5 (R3, owner): Given … When … Then …`. The owner checks it by hand at the pull request. Write owner exactly so, in lower case; any other word in the parentheses fails the lint.',
       'Save it with save_spec. It answers with the lint: fix what it names and save again until it is clean. Leave ## Open questions empty.',
+      PROPOSING('the closing paragraph'),
+      PROPOSING_RELATED,
       'Finish with one paragraph: what the spec covers, and what it leaves out.',
     ].join('\n\n'),
   },
@@ -189,6 +230,8 @@ export const AGENTS: Record<
       'A correction in the owner’s answers that withdraws or changes one of the approved spec’s criteria goes into `withdrawn` in save_plan, as { criterion, answer }, and not only into prose. A changed criterion counts as withdrawn. `answer` quotes the owner’s words, whole or as an excerpt, and save_plan refuses it otherwise. A withdrawn criterion gets no row in the checks table. A plan with any withdrawal never has confidence high, because the withdrawal takes effect only once the owner approves the plan at the plan gate.',
       'The check for a criterion that carries owner in its parentheses (an owner check) names the hand check the owner will do, plus anything a run can still check for that criterion, for example that a focus style exists in the CSS.',
       ASK,
+      PROPOSING('the plan summary'),
+      PROPOSING_RELATED,
       'Do not edit any file. Finish with one paragraph summarising the plan.',
     ].join('\n\n'),
   },
@@ -207,6 +250,8 @@ export const AGENTS: Record<
       'Commit by the commit rules that CLAUDE.md and the rules it loads give: the message’s form, and splitting the work into commits as they say. Never bypass git hooks: no --no-verify, no -n, no core.hooksPath override. When the commit-msg hook refuses a message, rewrite the message and commit again.',
       FOREGROUND,
       'If the handoff carries a failing verify report, fix exactly what it says failed.',
+      PROPOSING('the build report’s paragraph'),
+      PROPOSING_UNRELATED,
       'Finish with <build_report status="done|blocked" files="…" tests="…" confidence="high|medium|low"/> and one paragraph.',
     ].join('\n\n'),
   },
@@ -221,6 +266,9 @@ export const AGENTS: Record<
       'A criterion the plan lists as withdrawn gets withdrawn, with evidence naming the owner’s answer it rests on. No other criterion gets withdrawn. A withdrawn criterion never goes back to Build.',
       FOREGROUND,
       SUBAGENTS,
+      'A criterion that requires a task on the board passes when list_tasks finds a matching task in the target project, or when list_proposals shows a matching proposal of any run of this task that is open or filed (outcome `file` or `workaround`). A dismissed proposal never counts, and with neither the criterion fails.',
+      PROPOSING('the verify report’s summary'),
+      PROPOSING_UNRELATED,
       'Save your verdicts with save_report, one per criterion. If it refuses the report, fix what it names and save again. Finish with one paragraph.',
       ASK,
     ].join('\n\n'),
@@ -269,6 +317,7 @@ export const AGENTS: Record<
       'restate: restate the spec in plain words and judge nothing. Save changes, requirements and left_out.',
       'recommend: first say in plain words why the run stopped (why_stopped), then recommend one of recommendable_actions as action, with your reasoning and what you are unsure of (unsure). Never recommend resume when resumable is false, and say so when that matters. When the action is mark_done, say in your reasoning that the owner can confirm with Check what is unfinished, which looks at the task against its spec.',
       'check: say what you checked against (checked_against, as get_decision gives it) and what the runs produced (produced), saying plainly when nothing was produced, then list what is unfinished (unfinished, each with a where and text; empty when nothing is) and what you are unsure of (unsure).',
+      'advise: a proposal is a finding an agent of the task proposed, and the owner settles it by filing it, filing it with the agent’s workaround, or dismissing it. Read it with get_decision; its offered list names the variants the owner may choose now. Search the target project with list_tasks for a task already filed, judge whether the finding is related to the task, and recommend one offered variant. Save variant, your reasoning and what you are unsure of (unsure).',
       'When the result is saved, end your turn at once.',
     ].join('\n\n'),
   },
