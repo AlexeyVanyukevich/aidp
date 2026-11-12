@@ -74,6 +74,9 @@ test('Review spec and Explain simply give results under their headings, announce
   const plain = spec.getByRole('button', { name: 'Explain simply' })
   const approve = spec.getByRole('button', { name: 'Approve' })
   const approveEnabled = await approve.isEnabled()
+  const note = spec.getByRole('textbox', { name: 'What to change' })
+  const use = spec.getByRole('button', { name: 'Use these findings' })
+  const buttonsBefore = await buttonStates(card)
 
   // Focus order: Edit, Approve, Review spec, Explain simply.
   await tabTo(page, spec.getByRole('button', { name: 'Edit' }))
@@ -98,6 +101,49 @@ test('Review spec and Explain simply give results under their headings, announce
   await expect(result).toBeVisible()
   await expect(spec).toContainText('No retry limit')
 
+  // Use these findings fills the note from the keyboard, sends nothing and leaves the card be.
+  const requests: string[] = []
+  page.on('request', (req) => {
+    if (req.url().includes('/api/')) requests.push(`${req.method()} ${req.url()}`)
+  })
+  await spec
+    .getByRole('status')
+    .first()
+    .evaluate((node) => {
+      const seen: string[] = []
+      ;(window as unknown as { seen: string[] }).seen = seen
+      new MutationObserver(() => seen.push(node.textContent ?? '')).observe(node, {
+        childList: true,
+        characterData: true,
+        subtree: true,
+      })
+    })
+  const line = '- missing (R1): No retry limit'
+  await tabTo(page, use)
+  await page.keyboard.press('Enter')
+  await expect(note).toHaveValue(line)
+  await expect(note).toBeFocused()
+  expect(await note.evaluate((el: HTMLTextAreaElement) => el.selectionStart)).toBe(line.length)
+  await expect(spec.getByText('Findings put in What to change.')).toBeVisible()
+  await expect(card.getByText(`${task.key} · Spec review`)).toBeVisible()
+  await expectAccessible(page)
+  expect(await buttonStates(card)).toEqual(buttonsBefore)
+  for (const name of ['Approve', 'Redraft', 'Mark done'])
+    expect(buttonsBefore[name], name).not.toBeNull()
+
+  // A second press is announced again: the region is emptied, then refilled.
+  await page.evaluate(() => ((window as unknown as { seen: string[] }).seen.length = 0))
+  await use.click()
+  await expect(spec.getByText('Findings put in What to change.')).toBeVisible()
+  const seen = await page.evaluate(() => (window as unknown as { seen: string[] }).seen)
+  expect(seen.slice(0, 2)).toEqual(['', 'Findings put in What to change.'])
+  expect(requests.filter((request) => !request.startsWith('GET '))).toEqual([])
+
+  // Words already in the note stay, and the lines come after a blank line.
+  await note.fill('Also rename X.')
+  await use.click()
+  await expect(note).toHaveValue(`Also rename X.\n\n${line}`)
+
   await plain.click()
   await expect(plain).toBeFocused()
   await expect(spec.getByRole('heading', { level: 4, name: 'v1 in plain words' })).toBeVisible(RUN)
@@ -112,6 +158,18 @@ test('a failed review shows its reason in the Help section', async ({ page, requ
   const { spec } = await openSpec(page, task.key, 'A spec review that fails')
   await spec.getByRole('button', { name: 'Review spec' }).click()
   await expect(spec.getByText(/^No spec review for v1: /)).toBeVisible(RUN)
+})
+
+test('a review with nothing to change offers no button in its result', async ({
+  page,
+  request,
+}) => {
+  const task = await specTask(request, 'Buttons at Spec review')
+  const { spec } = await openSpec(page, task.key, 'Buttons at Spec review')
+  await spec.getByRole('button', { name: 'Review spec' }).click()
+  const result = spec.getByRole('region', { name: 'Spec review of v1' })
+  await expect(result).toContainText('Nothing to change', RUN)
+  await expect(result.getByRole('button')).toHaveCount(0)
 })
 
 test('a refused decision POST shows the problem notice with focus', async ({ page, request }) => {

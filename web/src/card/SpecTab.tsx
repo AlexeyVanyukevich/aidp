@@ -3,10 +3,11 @@ import { flushSync } from 'react-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Field, Input, Markdown, Notice, Select, Textarea } from '@zellige/react'
 import { api, ApiError } from '../api'
+import { useAnnouncer } from '../announce'
 import { invalidField, isConflict, NO_NOTE, noteRefusal } from '../errors'
 import { Loaded } from '../Loaded'
 import type { HelpMode, SpecView, TaskView } from '../types'
-import { decisionHelp, NO_HELP } from './approvals'
+import { decisionHelp, fillNoteFromReview, NO_HELP, type ReviewResult } from './approvals'
 import { decisionMode, decisionRenderers, HelpButtons, HelpResults } from './HelpPanel'
 import {
   DRAFT_LOCK,
@@ -96,7 +97,8 @@ function SpecEditor({
   const rephraseDescriptionButton = useRef<HTMLButtonElement>(null)
   const [note, setNote] = useState('')
   const [noteMissing, setNoteMissing] = useState<string | undefined>()
-  const [message, setMessage] = useState('')
+  const [filled, setFilled] = useState(0)
+  const { message, setMessage, announce } = useAnnouncer()
   const [problem, setProblem] = useState<{ text: string } | undefined>()
   const problemBox = useRef<HTMLDivElement>(null)
   const descriptionField = useRef<HTMLTextAreaElement>(null)
@@ -105,6 +107,13 @@ function SpecEditor({
   useEffect(() => {
     if (problem) problemBox.current?.focus()
   }, [problem])
+  // A count, so each Use these findings moves focus once the filled note is on the page.
+  useEffect(() => {
+    if (filled === 0) return
+    const field = noteField.current
+    field?.focus()
+    field?.setSelectionRange(field.value.length, field.value.length)
+  }, [filled])
 
   const latest = specs[0]
   const shown = specs.find((s) => s.id === selected) ?? latest
@@ -443,6 +452,15 @@ function SpecEditor({
     onSettled: refresh,
   })
 
+  /** Findings go after the words already in the note; nothing is sent. */
+  const putFindingsInNote = (result: ReviewResult) => {
+    const next = fillNoteFromReview(note, result)
+    setNote(next)
+    setNoteMissing(undefined)
+    setFilled((count) => count + 1)
+    announce('Findings put in What to change.')
+  }
+
   const startDraft = () => {
     if (describedAs.trim() === '') markMissing('description')
     else draftSpec.mutate()
@@ -691,7 +709,11 @@ function SpecEditor({
       {inReview && hasHelpResults && (
         <section aria-labelledby={helpHeadingId} className="help-results">
           <h3 id={helpHeadingId}>Help with v{latest?.version ?? '?'}</h3>
-          <HelpResults level={4} modes={reviewModes} renderers={decisionRenderers(null)} />
+          <HelpResults
+            level={4}
+            modes={reviewModes}
+            renderers={decisionRenderers(null, controls.redraft ? putFindingsInNote : undefined)}
+          />
         </section>
       )}
       <Notice className="announce">{message}</Notice>

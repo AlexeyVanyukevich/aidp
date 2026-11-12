@@ -13,6 +13,7 @@ import {
   resultHeading,
   type ModeHelp,
   type QuestionHelp,
+  type ReviewResult,
 } from './approvals'
 
 type Suggestion = Extract<HelpResult, { mode: 'suggest' }>
@@ -237,8 +238,15 @@ const Part = ({ title, children }: { title: string; children: ReactNode }) => (
   </p>
 )
 
-/** Renderers for the modes of the card's decisions. A result holds no focusable control. */
-export function decisionRenderers(checkedVersion: number | null): Renderers {
+/**
+ * Renderers for the modes of the card's decisions. The Spec review result holds Use these
+ * findings when a handler is given and its verdict is `changes`; no other result holds a
+ * focusable control.
+ */
+export function decisionRenderers(
+  checkedVersion: number | null,
+  onUseFindings?: (result: ReviewResult) => void,
+): Renderers {
   return {
     review: (result) => (
       <>
@@ -255,6 +263,11 @@ export function decisionRenderers(checkedVersion: number | null): Renderers {
           </ul>
         )}
         <Part title="Unsure about">{result.unsure}</Part>
+        {onUseFindings !== undefined && result.verdict === 'changes' && (
+          <Button type="button" onClick={() => onUseFindings(result)}>
+            Use these findings
+          </Button>
+        )}
       </>
     ),
     restate: (result) => (
