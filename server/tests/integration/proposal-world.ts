@@ -98,3 +98,24 @@ export async function addTask(projectId: string, number: number, title: string, 
   })
   return task
 }
+
+/** A world whose task is waiting on a related proposal made in `phase`; returns the proposal's id. */
+export async function relatedWorld(
+  phase: 'spec' | 'plan',
+  extra: Record<string, unknown> = { workaround_md: 'do it by hand' },
+) {
+  const w = await world({ phase, kind: phase === 'spec' ? 'spec' : 'delivery' })
+  await getTestDb()
+    .updateTable('tasks')
+    .set({ state: phase === 'spec' ? 'spec_draft' : 'running' })
+    .where('id', '=', w.taskId)
+    .execute()
+  const out = await propose(w, { related: true, bearing_md: 'it blocks this', ...extra })
+  if (out.isError) throw new Error(out.text)
+  const row = await getTestDb()
+    .selectFrom('proposals')
+    .select('id')
+    .where('run_id', '=', w.runId)
+    .executeTakeFirstOrThrow()
+  return { ...w, proposalId: row.id }
+}
