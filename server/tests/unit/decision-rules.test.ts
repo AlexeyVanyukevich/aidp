@@ -20,6 +20,7 @@ interface Row {
   plan_to_keep: boolean
   checkpoint: boolean
   approval_current: boolean
+  open_proposals?: number
   offered: Decision[]
   stopped_run_actions: StoppedRunAction[]
   recommendable_actions: StoppedRunAction[]
@@ -34,6 +35,7 @@ const factsOf = (row: Row): DecisionFacts => ({
   planToKeep: row.plan_to_keep,
   checkpoint: row.checkpoint,
   approvalCurrent: row.approval_current,
+  openProposals: Array.from({ length: row.open_proposals ?? 0 }, (_, i) => `p${i}`),
 })
 
 describe('the decision rules, on the shared table', () => {
@@ -46,8 +48,8 @@ describe('the decision rules, on the shared table', () => {
   it.each(rows)('$name: recommendable actions', (row) => {
     expect(recommendableActions(factsOf(row))).toEqual(row.recommendable_actions)
   })
-  it('lists the four decisions', () => {
-    expect(DECISIONS).toEqual(['question', 'spec_review', 'stopped_run', 'mark_done'])
+  it('lists the five decisions', () => {
+    expect(DECISIONS).toEqual(['question', 'spec_review', 'stopped_run', 'mark_done', 'proposal'])
   })
 })
 
@@ -57,6 +59,7 @@ const base: SubjectFacts = {
   planToKeep: false,
   checkpoint: false,
   approvalCurrent: false,
+  openProposals: [],
   latestSpecVersion: 3,
   approvedSpecVersion: null,
   latestRunId: null,
@@ -136,5 +139,21 @@ describe('stands', () => {
   ]
   it.each(cases)('$name', ({ decision, subject, facts, expected }) => {
     expect(stands(decision, subject, facts)).toBe(expected)
+  })
+})
+
+describe('stands for a proposal', () => {
+  const open = { ...base, taskState: 'running' as const, openProposals: ['p1', 'p2'] }
+  it.each([
+    { name: 'while it is open', id: 'p1', facts: open, expected: true },
+    { name: 'once it is settled', id: 'p3', facts: open, expected: false },
+    {
+      name: 'with no proposal open',
+      id: 'p1',
+      facts: { ...open, openProposals: [] },
+      expected: false,
+    },
+  ])('$name', ({ id, facts, expected }) => {
+    expect(stands('proposal', { proposal_id: id }, facts)).toBe(expected)
   })
 })

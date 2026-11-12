@@ -152,5 +152,65 @@
     "offered": ["stopped_run", "mark_done"],
     "stopped_run_actions": ["rerun_again", "mark_done", "rerun_keep"],
     "recommendable_actions": ["rerun_again", "mark_done", "rerun_keep"]
+  },
+  {
+    "name": "Running with an open proposal",
+    "state": "running",
+    "block_cause": null,
+    "plan_to_keep": false,
+    "checkpoint": false,
+    "approval_current": false,
+    "open_proposals": 1,
+    "offered": ["proposal"],
+    "stopped_run_actions": [],
+    "recommendable_actions": []
+  },
+  {
+    "name": "Done with an open proposal",
+    "state": "done",
+    "block_cause": null,
+    "plan_to_keep": false,
+    "checkpoint": false,
+    "approval_current": false,
+    "open_proposals": 2,
+    "offered": ["proposal"],
+    "stopped_run_actions": [],
+    "recommendable_actions": []
+  },
+  {
+    "name": "Needs approval on a proposal only",
+    "state": "needs_approval",
+    "block_cause": null,
+    "plan_to_keep": false,
+    "checkpoint": false,
+    "approval_current": false,
+    "open_proposals": 1,
+    "offered": ["proposal"],
+    "stopped_run_actions": [],
+    "recommendable_actions": []
+  },
+  {
+    "name": "Spec review with an open proposal",
+    "state": "spec_review",
+    "block_cause": null,
+    "plan_to_keep": false,
+    "checkpoint": false,
+    "approval_current": false,
+    "open_proposals": 1,
+    "offered": ["spec_review", "mark_done", "proposal"],
+    "stopped_run_actions": [],
+    "recommendable_actions": []
+  },
+  {
+    "name": "Running with every proposal settled",
+    "state": "running",
+    "block_cause": null,
+    "plan_to_keep": false,
+    "checkpoint": false,
+    "approval_current": false,
+    "open_proposals": 0,
+    "offered": [],
+    "stopped_run_actions": [],
+    "recommendable_actions": []
   }
 ]
