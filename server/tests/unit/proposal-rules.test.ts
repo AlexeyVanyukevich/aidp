@@ -132,7 +132,9 @@ describe('texts', () => {
       'Proposed by AIDP-95, Run 2, build; filed by the owner, and AIDP-95 goes on with a workaround.',
     )
     expect(filedDescription('body  \n', 'L')).toBe('body\n\nL')
-    expect(descriptionLength('x', input)).toBeGreaterThan(100)
+    expect(descriptionLength('x', input)).toBe(
+      `x\n\n${proposedByLine({ ...input, outcome: 'workaround' })}`.length,
+    )
   })
 
   const resume: { outcome: 'file' | 'workaround' | 'dismiss'; phase: string; text: string }[] = [
