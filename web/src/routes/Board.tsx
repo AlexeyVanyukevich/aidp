@@ -3,6 +3,7 @@ import { Link, Outlet, useLocation, useParams } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Field, Input, Notice } from '@zellige/react'
 import { api } from '../api'
+import { useAnnouncer } from '../announce'
 import { columns, dropPatch, LABELS, MAIN_COLUMNS, SIDE_COLUMNS } from '../board/columns'
 import { cardDomId, TaskCardView } from '../board/TaskCardView'
 import { isConflict } from '../errors'
@@ -21,35 +22,7 @@ export function Board() {
   const name = board.data ? `${board.data.project.key} · ${board.data.project.name}` : key
   const heading = usePage(board.data ? name : undefined, `board:${key}`)
   const [dragged, setDragged] = useState<TaskCard | undefined>()
-  const [message, setMessage] = useState('')
-  // A message equal to the one shown is announced again only if the region is emptied, stays
-  // empty across a painted frame, and is then refilled: two nested frames, never flushSync.
-  // At most one write is pending; every other write to the region cancels it.
-  const pending = useRef<number | undefined>(undefined)
-  const cancelPending = () => {
-    if (pending.current !== undefined) cancelAnimationFrame(pending.current)
-    pending.current = undefined
-  }
-  const say = (text: string) => {
-    cancelPending()
-    setMessage(text)
-  }
-  const announce = (text: string) => {
-    cancelPending()
-    setMessage('')
-    pending.current = requestAnimationFrame(() => {
-      pending.current = requestAnimationFrame(() => {
-        pending.current = undefined
-        setMessage(text)
-      })
-    })
-  }
-  useEffect(
-    () => () => {
-      if (pending.current !== undefined) cancelAnimationFrame(pending.current)
-    },
-    [],
-  )
+  const { message, say, announce } = useAnnouncer()
   const [title, setTitle] = useState('')
   const [titleMissing, setTitleMissing] = useState(false)
   const titleInput = useRef<HTMLInputElement>(null)
