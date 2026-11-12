@@ -104,11 +104,18 @@ commits, pushes or opens a pull request in a linked repository.
 ## Reading the board from a run
 
 The spec writer, the planner and the helper can read the whole board, every project and not only
-the task's own and its linked ones, with three tools. They only read: no row is written and
-nothing is published. Their tokens (run tokens and helper tokens alike) reach them; the builder,
-verifier, title writer and rephraser do not have them. The planner's tools are `get_task`,
-`get_spec`, `list_projects`, `list_tasks`, `read_task`, `save_plan`, `log_step` and
-`request_approval`, besides Read, Grep, Glob and Agent.
+the task's own and its linked ones, with three tools. The builder and the verifier have two of
+them, `list_tasks` and `read_task`. They only read: no row is written and nothing is published.
+Their tokens (run tokens and helper tokens alike) reach them; the title writer and rephraser do
+not have them. The tool lists, besides Read, Grep, Glob and (planner, verifier) Agent, are:
+
+- spec writer: `get_task`, `get_spec`, `list_projects`, `list_tasks`, `read_task`,
+  `propose_task`, `list_proposals`, `save_spec`, `log_step`, `request_approval`;
+- planner: the same with `save_plan` for `save_spec`;
+- builder (with Edit, Write, Bash): `get_task`, `get_spec`, `list_tasks`, `read_task`,
+  `propose_task`, `list_proposals`, `log_step`, `request_approval`;
+- verifier (with Bash): `get_task`, `get_spec`, `list_tasks`, `read_task`, `propose_task`,
+  `list_proposals`, `save_report`, `log_step`, `request_approval`.
 
 - `list_projects` takes no input and returns `[{ key, name }]`, ordered by key.
 - `list_tasks` takes `project`, a project key, and an optional `filter`. It returns
@@ -148,6 +155,138 @@ description names, and to name related tasks: the spec writer in `## Context` wi
 searched, the planner in its summary, saying whether the plan takes each in or leaves it out. The
 helper's instructions tell it to settle whether a task exists from the board, not to report it as
 unsure.
+
+## Proposing a finding
+
+A finding outside the task, such as a bug noticed on the way past or a document that has drifted,
+reaches the board as a **proposal**. No agent creates a task: the owner settles each proposal on
+the card, and only then does a task exist. The spec writer, planner, builder and verifier have two
+tools for it, registered for run tokens only (never for a helper's, the title writer's or the
+rephraser's).
+
+- `propose_task` takes `project`, `title`, `description_md`, `related`, and optionally
+  `bearing_md` and `workaround_md`. `project` is the task's own project or one it links to in
+  `project_links`, read when the call is made, with case folded as `list_tasks` folds it; any other
+  key is an error reply naming the upper-cased key and the allowed keys, ordered by key. The title
+  is trimmed and must then be 1–200 characters. The description must carry the labels Where, Found,
+  Problem and Impact, either `**Where:**` or `**Where**:`, case-sensitive, each at the start of the
+  description or of a line after at most one list marker; the reply names each missing label and
+  the expected form. With the proposed-by line added the description may not pass 100,000
+  characters. A title equal (trimmed, case-insensitive) to a task of the target project in any
+  state, to a proposal of this run to it whatever its outcome, or to an open proposal of another
+  run to it is refused, naming the task's key and state or the proposal, its outcome and run
+  (`Draft n` or `Run n`, with the task key for another run's).
+- `bearing_md` (at most 2,000 characters after trimming) says how a related finding bears on this
+  task, and is required then; for an unrelated finding it says why it came up, is optional, and is
+  stored as null when blank. `workaround_md` (1–10,000 characters) belongs to a related proposal.
+- Nothing is saved when no phase of the run is running, the run is neither a spec nor a delivery
+  run, the running phase is none of spec, plan, build and verify, or the rules above refuse.
+  `related` is refused in build and verify: every finding proposed there is unrelated, and a
+  blocker goes through `request_approval`. A delivery run never waits on a filed task once Plan
+  has ended. A run makes at most 10 proposals, counted whatever their outcome; the 11th is refused
+  with a reply that tells the agent to list the remaining findings in its report or summary.
+- `list_proposals` takes no input and returns the task's proposals as the HTTP route gives them
+  (below), for every spec and delivery run of the task, whatever the state of the run's phases.
+
+**Two kinds.** An _unrelated_ proposal leaves the run running and holds nothing back: Approve,
+Approve plan, the pull request, Mark done and the drag to Done behave as they do without it, and it
+can be settled in any task state, Done included, after its run has ended. A _related_ proposal is
+opened through `openApproval`, in the same transaction, as an approval of kind `proposal` whose
+question is the title: the phase, the run and the card pause (Needs approval), the reply is the
+paused reply, and the one-open-request rule holds in both directions. After 48 hours the sweeper
+expires it and the card goes to Blocked with cause `approval_expired`; settling it from Blocked
+resumes the run as answering an expired question does. Cancel withdraws its approval and the
+proposal stays open.
+
+**Settling.** `POST /api/tasks/:id/proposals/:proposalId/settle` with `{ "variant": … }` (strict
+body; `file`, `workaround`, `wait` or `dismiss`). A proposal of another task is 404; a settled one
+409 `settled`; a variant the proposal does not offer now, `wait` always, 409 `not_offered`; a
+`file` or `workaround` whose title now equals a task of the target project 409 `duplicate`, naming
+its key and state. An unrelated proposal offers File and Dismiss. A related one offers File, then
+Use the workaround and file when it has a `workaround_md`, then Dismiss, while its approval is open
+or expired; once Cancel has withdrawn the approval it offers File and Dismiss. The outcome `wait`
+is in the vocabulary and the schema and is not offered yet.
+
+The settle is one transaction: the numbering bump and the new task in the target project's
+Backlog, at the bottom (`TaskRepository.insert` joins the caller's transaction), the proposal's
+outcome, `settled_at` and filed task, a declared `message` event, for a related proposal with an
+open or expired approval the approval answered, the card moved and a resume queued, and the
+settling of the proposal's helps. Its notices (`task.updated` for the new and the proposing
+task, `run.event`, `run.queued`, `help.updated`) go out at commit, never after a rollback. The
+filed task's description is the proposal's text, a blank line and `Proposed by <task key>, <run
+label>, <phase>; filed by the owner.` (for `workaround` the line ends `filed by the owner, and
+<task key> goes on with a workaround.`). The resume message tells the agent what was filed
+(`The owner filed KEY-n: <title>. Go on with the task unchanged, and name KEY-n in your
+summary.`), what was filed with the workaround to carry into the spec or plan, or that the
+proposal was dismissed. Proposing and settling each write a declared `message` event on the
+proposal's run and phase (`Proposed: <title>`, `Filed KEY-n: <title>`, `Filed KEY-n with the
+workaround: <title>`, `Dismissed: <title>`); the settle events have no agent. The Timeline shows
+them and `get_phase_record` returns them to a helper. They do not count toward the cap.
+
+**Lock order.** One order serves the proposal tools, the settle and Cancel: the proposal row, the
+target project's row, the proposing task's row, the run row; each takes those it needs. `propose_task`
+locks the project, the task and the run before it reads the cap or the titles, so two concurrent
+calls cannot pass the cap or save one title twice. A settle locks the proposal, then for `file` and
+`workaround` the project, then for a related proposal the task and the run. Cancel locks the task
+then the run, as it always did, and Prioritise locks the project before its tasks, which this order
+keeps. Every other lock (the approval row, the phase row, `moveTask`'s task row, the helps rows)
+comes after these.
+
+**HTTP.** `GET /api/tasks/:id/proposals` returns every proposal of the task's spec and delivery
+runs, newest run first and then by number: `id`, `run` (`{ kind, number }`), `phase`, `number`,
+`project`, `title`, `description_md`, `related`, `bearing_md` (null when none), `workaround_md`,
+`offered` (empty once settled), `outcome` (null while open), `filed_task` (`{ id, key, title }` or
+null), `created_at` and `settled_at`. An unknown task is 404. `POST /api/approvals/:id/answer` on a
+`proposal` approval is 409 `settle_proposal`; the approval counts as not current for the question
+decision, so it offers no question helps, and `POST /api/approvals/:id/helps` on it is 409
+`not_offered`. The task view's `approval` still names it.
+
+**The verifier and a task on the board.** A criterion that requires a task on the board passes when
+`list_tasks` finds a matching task in the target project, or `list_proposals` shows a matching
+proposal of any run of the task that is open or filed (outcome `file` or `workaround`). A dismissed
+proposal never counts, and with neither the criterion fails. The four prompts say to propose, never
+to file; to search with `list_tasks` and read `list_proposals` first; to use `propose_task` rather
+than the HTTP API, the `curl` line in the repository's Findings rule being for sessions outside a
+run; to name each proposal in the summary or report; and to list the remaining findings there once
+the cap refuses one. The spec writer and planner are told a related proposal pauses the run and to
+give a workaround when there is one. The builder and verifier are told every finding is unrelated.
+A fix that must land first is the owner's to arrange: cancel the run and use Re-run and plan again,
+whose Plan starts from the current base.
+
+**The card.** The Proposals tab follows Approvals. It lists one `h3` per run (`Draft n` or `Run n`)
+and under it a card per proposal labelled by its `h4`: a `related` or `unrelated` badge, an outcome
+badge (`open`, `filed`, `filed with workaround`, `dismissed`), `To <KEY> · proposed in <phase>`, a
+link to the filed card, `How it bears on this task:` (related) or `Why it came up here:`
+(unrelated) with the text, a `Description` and a `Proposed workaround` disclosure, and for an open
+proposal the buttons `File in <KEY>`, `Use the workaround and file in <KEY>`, `Dismiss` and `Suggest
+how to settle`, each described by the `h4`. The `h4` has `tabIndex` -1 and takes focus only by
+script, after a settle. A settle button is busy while its request runs; on success the buttons go,
+focus moves to the `h4`, and the status region says `Filed KEY-n: <title>.`, `Filed KEY-n with the
+workaround: <title>.` or `Dismissed: <title>.`. A proposal arriving while the card is open is
+announced once as `New proposal: <title>.`. An error goes into the problem region, which takes
+focus, and the list is refetched: `This proposal was settled meanwhile; its latest state is shown.`,
+`<KEY-n> (<state>) already has this title. Dismiss the proposal, or file the task by hand under
+another title.` or `That did not work. Try again.`. With no proposals the tab shows `No proposals`.
+A card waiting on a `proposal` approval opens on this tab, and the Approvals tab shows it as one
+paragraph, `<agent> proposed a task: <title>. Settle it on the Proposals tab.`, with no form.
+
+**Help.** Settling is a decision control. The decision `proposal` has the one mode `advise`; it is
+offered for each open proposal, its subject is `{ proposal_id }`, and it stands while that proposal
+is open. `POST /api/tasks/:id/helps` takes `proposal_id`, required with `proposal` and refused with
+any other decision (400, naming `proposal_id`); a settled or unknown proposal is 409 `not_offered`,
+and a press while that proposal's help is in flight answers with it. Settling stops its queued and
+running helps and retires its succeeded one in the settle's transaction. The helper works from the
+base checkout (`Decision: proposal. Mode: advise.`), reads `get_decision` (the proposal, its run,
+the proposing phase and `offered`) and the newest 300 entries of the proposing phase from
+`get_phase_record`, searches the target project with `list_tasks`, and saves `variant` (one the
+proposal offers now), `reasoning` and `unsure` with `save_help_result`. The result shows under
+`Suggested settlement`, with `Suggested:`, `Why:` and `Unsure about:`.
+
+**Storage.** Migration 012 creates `proposals` (cascading from run, phase and task; the target
+project and filed task are restricted) with checks that tie the outcome to `settled_at` and to the
+filed task, a related proposal to its approval and bearing, and a workaround to a related
+proposal, and rewrites the three `helps` checks to add the decision. Its `down` refuses while any
+proposal or proposal help exists.
 
 ## A spec run
 
