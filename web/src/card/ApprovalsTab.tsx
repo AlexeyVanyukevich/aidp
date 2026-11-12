@@ -137,7 +137,7 @@ function SingleForm({
           </RadioGroup>
           {choice.option !== undefined && (
             <Button
-              variant="secondary"
+              variant="neutral"
               onClick={() => {
                 flushSync(() => {
                   setChoice((now) => ({ text: now.text }))
