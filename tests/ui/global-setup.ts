@@ -269,6 +269,15 @@ const SCRIPT = {
       ]),
       verifier: [1, 2, 3].map(() => [FAIL]),
     },
+    // Two medium-confidence plans: the owner asks for changes in words after clearing Approve plan.
+    'Clear choice at the plan gate': {
+      planner: [
+        [{ tool: 'save_plan', args: { ...PLAN, confidence: 'medium' } }],
+        [{ tool: 'save_plan', args: { ...PLAN, confidence: 'medium' } }],
+      ],
+      builder: [BUILD],
+      verifier: [[PASS]],
+    },
     // Cancelled at the plan gate: a plan the owner never approved, so nothing to keep.
     'Cancel at the plan gate': {
       planner: [[{ tool: 'save_plan', args: { ...PLAN, confidence: 'medium' } }]],
