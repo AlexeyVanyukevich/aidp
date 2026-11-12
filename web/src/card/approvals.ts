@@ -214,6 +214,23 @@ export function applySuggestion(kind: ApprovalKind, current: Choice, result: Hel
   }
 }
 
+export type ReviewResult = Extract<HelpResult, { mode: 'review' }>
+
+/**
+ * The Redraft note after Use these findings: one line per finding, added after a blank line to
+ * words already there. Unsure about and the verdict stay out.
+ */
+export function fillNoteFromReview(note: string, result: ReviewResult): string {
+  const lines = result.findings
+    .map(
+      (finding) =>
+        `- ${finding.kind}${finding.where === undefined ? '' : ` (${finding.where})`}: ${finding.text}`,
+    )
+    .join('\n')
+  const words = note.trimEnd()
+  return words === '' ? lines : `${words}\n\n${lines}`
+}
+
 /** A refusal the form can give before sending: an approval carries no words. */
 export function preSendProblem(kind: ApprovalKind, choice: Choice): string | undefined {
   return kind === 'plan' && choice.option === 'approve' && choice.text.trim() !== ''

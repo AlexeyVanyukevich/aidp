@@ -14,6 +14,7 @@ import {
   optionName,
   unanswered,
   applySuggestion,
+  fillNoteFromReview,
   preSendProblem,
   NO_WORDS_WITH_PLAN,
   failureText,
@@ -21,6 +22,7 @@ import {
   newlyEnded,
   questionHelp,
   singleAnswer,
+  type ReviewResult,
 } from '../../src/card/approvals'
 import { keysFor } from '../../src/stream'
 import type { ApprovalView, HelpView } from '../../src/types'
@@ -411,5 +413,42 @@ describe('singleAnswer', () => {
     ['neither', { text: '  ' }, null],
   ])('sends %s', (_name, choice, expected) => {
     expect(singleAnswer(choice)).toEqual(expected)
+  })
+})
+
+describe('fillNoteFromReview', () => {
+  type Finding = ReviewResult['findings'][number]
+  const review = (findings: Finding[]): ReviewResult => ({
+    mode: 'review',
+    verdict: 'changes',
+    findings,
+    unsure: 'The deadline.',
+  })
+  const retry: Finding = { kind: 'missing', where: 'R1', text: 'No retry limit' }
+  const LINE = '- missing (R1): No retry limit'
+  it.each<[string, string, Finding[], string]>([
+    ['an empty note', '', [retry], LINE],
+    [
+      'a whitespace-only note, two findings in order',
+      '  \n ',
+      [retry, { kind: 'risk', text: 'Slow' }],
+      `${LINE}\n- risk: Slow`,
+    ],
+    ['a note ending in a blank line', 'Also rename X.\n\n', [retry], `Also rename X.\n\n${LINE}`],
+    ['words with no trailing space', 'Also rename X.', [retry], `Also rename X.\n\n${LINE}`],
+    ['a note that already holds the lines', LINE, [retry], `${LINE}\n\n${LINE}`],
+    [
+      'one finding of each kind',
+      '',
+      [
+        { kind: 'missing', text: 'a' },
+        { kind: 'contradiction', where: 'R2', text: 'b' },
+        { kind: 'uncheckable', text: 'c' },
+        { kind: 'risk', where: 'R4', text: 'd' },
+      ],
+      '- missing: a\n- contradiction (R2): b\n- uncheckable: c\n- risk (R4): d',
+    ],
+  ])('fills %s', (_name, note, findings, expected) => {
+    expect(fillNoteFromReview(note, review(findings))).toBe(expected)
   })
 })
