@@ -1,4 +1,5 @@
 import { ApiError } from './api'
+import { ANSWER_TOO_LONG, NO_WORDS_WITH_PLAN } from './card/approvals'
 
 interface SchemaIssue {
   instancePath?: unknown
@@ -24,4 +25,26 @@ export function invalidField(error: unknown): string | undefined {
 /** The request lost a race: what the page showed was stale, and it has been read again. */
 export function isConflict(error: unknown): boolean {
   return error instanceof ApiError && error.code === 'conflict'
+}
+
+/** The words-field message for an answer the board refused, or undefined for any other failure. */
+export function answerRefusal(error: unknown): string | undefined {
+  if (!(error instanceof ApiError) || error.code !== 'validation_error') return undefined
+  const details = error.details
+  if (details?.field === 'text') {
+    const findings = details.findings
+    const first = Array.isArray(findings)
+      ? (findings[0] as { code?: unknown } | undefined)
+      : undefined
+    if (first?.code === 'not_allowed') return NO_WORDS_WITH_PLAN
+    if (first?.code === 'too_long') return ANSWER_TOO_LONG
+    return undefined
+  }
+  const issues = details?.issues
+  const issue = Array.isArray(issues)
+    ? (issues[0] as { instancePath?: unknown; keyword?: unknown } | undefined)
+    : undefined
+  return issue?.instancePath === '/text' && issue.keyword === 'maxLength'
+    ? ANSWER_TOO_LONG
+    : undefined
 }

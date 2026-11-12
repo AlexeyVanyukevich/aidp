@@ -100,7 +100,7 @@ export function BatchForm({
               onAsk={(mode) => onAsk(mode, index)}
               onUse={(result) =>
                 setChoices((now) => {
-                  const next = applySuggestion(now[question.id] ?? { text: '' }, result)
+                  const next = applySuggestion('question', now[question.id] ?? { text: '' }, result)
                   return { ...now, [question.id]: next }
                 })
               }

@@ -188,14 +188,37 @@ export interface Choice {
   text: string
 }
 
-/** Use this answer: the suggested option when it has one, and the suggested words, replacing. */
-export function applySuggestion(current: Choice, result: HelpResult): Choice {
+export const NO_WORDS_WITH_PLAN =
+  'Approving the plan carries no words. Clear them, or press Clear choice to ask for changes.'
+export const ANSWER_TOO_LONG = 'The answer is longer than 4,000 characters.'
+
+/**
+ * Use this answer: the suggested option when it has one, and the suggested words, replacing.
+ * At a plan gate words win over an option: a wrong approval starts Build, wrong words only
+ * send the plan back to the planner.
+ */
+export function applySuggestion(kind: ApprovalKind, current: Choice, result: HelpResult): Choice {
   if (result.mode !== 'suggest') return current
+  if (kind === 'plan') {
+    if (result.text !== undefined && result.text.trim() !== '') return { text: result.text }
+    const option = result.option_id ?? current.option
+    return {
+      text: current.text,
+      ...(option === undefined ? {} : { option }),
+    }
+  }
   const option = result.option_id ?? current.option
   return {
     text: result.text ?? current.text,
     ...(option === undefined ? {} : { option }),
   }
+}
+
+/** A refusal the form can give before sending: an approval carries no words. */
+export function preSendProblem(kind: ApprovalKind, choice: Choice): string | undefined {
+  return kind === 'plan' && choice.option === 'approve' && choice.text.trim() !== ''
+    ? NO_WORDS_WITH_PLAN
+    : undefined
 }
 
 /** What a single request sends: the chosen option, the words, or both; null with neither. */

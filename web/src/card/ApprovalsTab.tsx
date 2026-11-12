@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { flushSync } from 'react-dom'
 import { Button, Empty, Field, Markdown, Radio, RadioGroup, Textarea } from '@zellige/react'
 import { api } from '../api'
-import { invalidField, isConflict } from '../errors'
+import { answerRefusal, isConflict } from '../errors'
 import { Loaded } from '../Loaded'
 import type {
   ApprovalAnswer,
@@ -27,6 +27,7 @@ import {
   questionHelp,
   singleAnswer,
   applySuggestion,
+  preSendProblem,
   type Choice,
 } from './approvals'
 import { BatchForm } from './BatchForm'
@@ -47,8 +48,6 @@ function proposerOf(list: ProposalView[] | undefined, title: string): string {
 }
 
 const NOTHING = 'Write an answer, or choose one of the options.'
-const NO_WORDS_WITH_PLAN =
-  'Approving the plan carries no words. Clear them, or leave the plan unchosen to ask for changes.'
 
 /**
  * A single request's one form: its options as a radio group named by the question, the words
@@ -79,6 +78,7 @@ function SingleForm({
   const [choice, setChoice] = useState<Choice>({ text: '' })
   const [problem, setProblem] = useState<string | undefined>()
   const field = useRef<HTMLTextAreaElement>(null)
+  const group = useRef<HTMLDivElement>(null)
   const questionId = useId()
   const hasOptions = approval.options.length > 0
 
@@ -88,6 +88,12 @@ function SingleForm({
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
+    const early = preSendProblem(approval.kind, choice)
+    if (early !== undefined) {
+      flushSync(() => setProblem(early))
+      field.current?.focus()
+      return
+    }
     const body = singleAnswer(choice)
     if (body === null) {
       flushSync(() => setProblem(hasOptions ? NOTHING : 'Write an answer.'))
@@ -105,24 +111,46 @@ function SingleForm({
         options={approval.options}
         level={4}
         onAsk={onAsk}
-        onUse={(result) => setChoice((now) => applySuggestion(now, result))}
+        onUse={(result) => {
+          setChoice((now) => applySuggestion(approval.kind, now, result))
+          setProblem(undefined)
+          if (refused !== undefined) onEdit()
+        }}
       />
       {hasOptions ? (
-        <RadioGroup
-          label={approval.question}
-          value={choice.option ?? null}
-          onChange={(option) => setChoice((now) => ({ ...now, option }))}
-        >
-          {approval.options.map((option) => (
-            <Radio
-              key={option.id}
-              value={option.id}
-              {...(option.impact === undefined ? {} : { description: option.impact })}
+        <>
+          <RadioGroup
+            ref={group}
+            label={approval.question}
+            value={choice.option ?? null}
+            onChange={(option) => setChoice((now) => ({ ...now, option }))}
+          >
+            {approval.options.map((option) => (
+              <Radio
+                key={option.id}
+                value={option.id}
+                {...(option.impact === undefined ? {} : { description: option.impact })}
+              >
+                {optionName(option, approval.recommendation)}
+              </Radio>
+            ))}
+          </RadioGroup>
+          {choice.option !== undefined && (
+            <Button
+              variant="secondary"
+              onClick={() => {
+                flushSync(() => {
+                  setChoice((now) => ({ text: now.text }))
+                  setProblem(undefined)
+                })
+                if (refused !== undefined) onEdit()
+                group.current?.querySelector<HTMLInputElement>('input[type="radio"]')?.focus()
+              }}
             >
-              {optionName(option, approval.recommendation)}
-            </Radio>
-          ))}
-        </RadioGroup>
+              Clear choice
+            </Button>
+          )}
+        </>
       ) : (
         <p id={questionId} className="question">
           {approval.question}
@@ -191,7 +219,8 @@ export function ApprovalsTab({
       onAnswered(`${task.key} answered. The run continues.`)
     },
     onError: (error) => {
-      if (invalidField(error) === 'text') setRefused({ message: NO_WORDS_WITH_PLAN })
+      const refusal = answerRefusal(error)
+      if (refusal !== undefined) setRefused({ message: refusal })
       else if (isConflict(error))
         onProblem('This question was answered or withdrawn meanwhile; its latest state is shown.')
       else onProblem('The answer was not sent. Try again.')
