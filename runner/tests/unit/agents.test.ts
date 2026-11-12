@@ -69,6 +69,8 @@ describe('the spec-writer', () => {
     'mcp__board__list_projects',
     'mcp__board__list_tasks',
     'mcp__board__read_task',
+    'mcp__board__propose_task',
+    'mcp__board__list_proposals',
     'mcp__board__save_spec',
     'mcp__board__log_step',
     'mcp__board__request_approval',
@@ -259,6 +261,10 @@ describe('the board-reading tools', () => {
       'Bash',
       'mcp__board__get_task',
       'mcp__board__get_spec',
+      'mcp__board__list_tasks',
+      'mcp__board__read_task',
+      'mcp__board__propose_task',
+      'mcp__board__list_proposals',
       'mcp__board__log_step',
       'mcp__board__request_approval',
     ],
@@ -270,6 +276,10 @@ describe('the board-reading tools', () => {
       'Agent',
       'mcp__board__get_task',
       'mcp__board__get_spec',
+      'mcp__board__list_tasks',
+      'mcp__board__read_task',
+      'mcp__board__propose_task',
+      'mcp__board__list_proposals',
       'mcp__board__save_report',
       'mcp__board__log_step',
       'mcp__board__request_approval',
@@ -317,5 +327,109 @@ describe('the board-reading tools', () => {
     expect(prompt).toContain('read_task')
     expect(prompt).toContain('list_tasks')
     expect(prompt).toContain('whether a task exists')
+  })
+})
+
+describe('proposing a finding', () => {
+  const PROPOSE = ['propose_task', 'list_proposals'].map((t) => `mcp__board__${t}`)
+  it.each(['spec', 'plan', 'build', 'verify'] as const)(
+    'gives the %s phase the proposal tools',
+    (phase) => {
+      for (const tool of PHASES[phase].tools.length > 0 ? PROPOSE : [])
+        expect(PHASES[phase].tools).toContain(tool)
+    },
+  )
+  it.each(['build', 'verify'] as const)('gives the %s phase list_tasks and read_task', (phase) => {
+    expect(PHASES[phase].tools).toContain('mcp__board__list_tasks')
+    expect(PHASES[phase].tools).toContain('mcp__board__read_task')
+  })
+  it.each(['help', 'title', 'rephrase'] as const)(
+    'keeps the proposal tools from the %s phase',
+    (phase) => {
+      for (const tool of PROPOSE) expect(PHASES[phase].tools).not.toContain(tool)
+    },
+  )
+  it('keeps the proposal tools from a helper', async () => {
+    const { HELP_TOOLS } = await import('../../src/hooks/guard.js')
+    for (const tool of PROPOSE) expect(HELP_TOOLS.has(tool)).toBe(false)
+  })
+
+  interface Row {
+    agent: string
+    ends: string
+    unrelated: boolean
+  }
+  const rows: Row[] = [
+    { agent: 'spec-writer', ends: 'the closing paragraph', unrelated: false },
+    { agent: 'planner', ends: 'the plan summary', unrelated: false },
+    { agent: 'builder', ends: 'the build report’s paragraph', unrelated: true },
+    { agent: 'verifier', ends: 'the verify report’s summary', unrelated: true },
+  ]
+  describe.each(rows)('the $agent’s prompt', ({ agent, ends, unrelated }) => {
+    const prompt = AGENTS[agent]!.prompt
+    it.each([
+      'propose_task',
+      'list_tasks',
+      'list_proposals',
+      'Where, Found, Problem, Impact',
+      'task’s own project or in a project in <linked_projects>',
+      'never with the board’s HTTP API',
+      'the curl line in CLAUDE.md’s Findings rule is for sessions outside a run',
+      `Name each proposal you made in ${ends}`,
+      'once the cap refuses one, list the remaining findings there',
+    ])('says %s', (words) => {
+      expect(prompt).toContain(words)
+    })
+    it('never has the agent file a task itself', () => {
+      expect(prompt).not.toMatch(
+        /\b(file|filing) (it\b|(a|the|this|that|each|every) (task|finding|proposal))/i,
+      )
+      expect(prompt).not.toMatch(/\byou (file|filed)\b/i)
+    })
+    it(
+      unrelated ? 'says every finding is unrelated' : 'tells of the pause and the workaround',
+      () => {
+        if (unrelated) {
+          expect(prompt).toContain('Every finding you propose is unrelated')
+          expect(prompt).toContain('goes through request_approval')
+        } else {
+          expect(prompt).toContain('pauses the run until the owner settles it')
+          expect(prompt).toContain('workaround_md')
+        }
+      },
+    )
+  })
+
+  // Each row: a case, its verdict, and the clause of the verifier's prompt that settles it.
+  const verifier: { case: string; verdict: 'passes' | 'fails'; clause: string }[] = [
+    {
+      case: 'an open proposal of this run matches',
+      verdict: 'passes',
+      clause: 'a matching proposal of any run of this task that is open or filed',
+    },
+    {
+      case: 'a filed proposal of an earlier run matches',
+      verdict: 'passes',
+      clause: 'any run of this task',
+    },
+    {
+      case: 'a task filed by hand is found by list_tasks',
+      verdict: 'passes',
+      clause: 'list_tasks finds a matching task in the target project',
+    },
+    {
+      case: 'only a dismissed proposal matches',
+      verdict: 'fails',
+      clause: 'A dismissed proposal never counts',
+    },
+    { case: 'nothing matches', verdict: 'fails', clause: 'with neither the criterion fails' },
+  ]
+  it.each(verifier)('the verifier $verdict when $case', ({ clause }) => {
+    expect(AGENTS.verifier!.prompt).toContain(clause)
+    expect(AGENTS.verifier!.prompt).toContain('(outcome `file` or `workaround`)')
+  })
+  it('tells the helper how to advise on a proposal', () => {
+    expect(AGENTS.helper!.prompt).toContain('advise:')
+    expect(AGENTS.helper!.prompt).toContain('recommend one offered variant')
   })
 })
