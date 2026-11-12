@@ -1,5 +1,13 @@
 import { expect, test } from '@playwright/test'
-import { appUrl, approvedTask, expectAccessible, focusedText, runtime, tabTo } from './helpers'
+import {
+  appUrl,
+  approvedTask,
+  expectAccessible,
+  focusedText,
+  registerProject,
+  runtime,
+  tabTo,
+} from './helpers'
 
 // A run takes a few seconds with the fake claude: the planner, the builder, the tests, Verify.
 const RUN = { timeout: 30_000 }
@@ -241,14 +249,21 @@ const REQUEST = {
   answered_at: null,
 }
 
-/** Opens the Approvals tab of a card whose approvals are the given requests. */
+/**
+ * Opens the Approvals tab of a card whose approvals are the given requests. The task has no
+ * spec and no run: the requests are routed, and the one runner is left to the journeys that
+ * need a real run.
+ */
 async function openApprovals(
   page: import('@playwright/test').Page,
   request: import('@playwright/test').APIRequestContext,
   title: string,
   requests: object[],
 ) {
-  const key = await approvedTask(request, ask(), title)
+  await registerProject(request, ask())
+  const { key } = (await (
+    await request.post(appUrl('/api/projects/ASK/tasks'), { data: { title } })
+  ).json()) as { key: string }
   await page.route('**/api/tasks/*/approvals', (route) => route.fulfill({ json: requests }))
   await page.goto(appUrl('/p/ASK'))
   const link = page.getByRole('link', { name: new RegExp(`^${key} `) })
