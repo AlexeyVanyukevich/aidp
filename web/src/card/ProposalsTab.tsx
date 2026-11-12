@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Badge, Button, Card, Empty, Markdown } from '@zellige/react'
+import { Badge, Button, Empty, Markdown } from '@zellige/react'
 import { api, ApiError } from '../api'
 import { Loaded } from '../Loaded'
 import type { HelpView, ProposalOutcome, ProposalView, TaskView } from '../types'
@@ -100,7 +100,7 @@ function ProposalCard({
   const open = proposal.outcome === null
   const suggested = help.result?.variant
   return (
-    <Card role="group" aria-labelledby={`${id}-title`} className="proposal">
+    <article aria-labelledby={`${id}-title`} className="zl-card proposal">
       <h4 id={`${id}-title`} ref={headingRef} tabIndex={-1}>
         {proposal.title}
       </h4>
@@ -185,7 +185,7 @@ function ProposalCard({
           </p>
         </section>
       )}
-    </Card>
+    </article>
   )
 }
 
@@ -210,15 +210,16 @@ export function ProposalsTab({
   const helps = useQuery({ queryKey: ['helps', task.id], queryFn: () => api.helps(task.id) })
   const [settling, setSettling] = useState<{ id: string; variant: ProposalOutcome } | undefined>()
   const headings = useRef(new Map<string, HTMLHeadingElement>())
-  const [focusAfter, setFocusAfter] = useState<string | undefined>()
+  const focusAfter = useRef<string | undefined>(undefined)
 
   useEffect(() => {
-    if (focusAfter === undefined) return
-    const settled = proposals.data?.find((p) => p.id === focusAfter)
+    const id = focusAfter.current
+    if (id === undefined) return
+    const settled = proposals.data?.find((p) => p.id === id)
     if (settled === undefined || settled.outcome === null) return
-    headings.current.get(focusAfter)?.focus()
-    setFocusAfter(undefined)
-  }, [focusAfter, proposals.data])
+    headings.current.get(id)?.focus()
+    focusAfter.current = undefined
+  }, [proposals.data])
 
   const settle = useMutation({
     mutationFn: ({ id, variant }: { id: string; variant: ProposalOutcome }) =>
@@ -228,7 +229,7 @@ export function ProposalsTab({
       client.setQueryData<ProposalView[]>(proposalsKey(task.id), (list) =>
         list?.map((p) => (p.id === proposal.id ? proposal : p)),
       )
-      setFocusAfter(proposal.id)
+      focusAfter.current = proposal.id
       onSettled(settledText(proposal))
     },
     onError: (error) => onProblem(settleProblem(error)),
