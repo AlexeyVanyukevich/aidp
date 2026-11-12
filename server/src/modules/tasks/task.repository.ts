@@ -251,12 +251,16 @@ export class TaskRepository {
     }))
   }
 
-  /** Takes the next number from the project row, so two creates never share one. */
+  /**
+   * Takes the next number from the project row, so two creates never share one. Given a
+   * transaction it joins it, so the number and the row commit or roll back with the caller.
+   */
   async insert(
     projectId: string,
     input: { title: string; description_md?: string | undefined; budget_usd?: number | undefined },
+    within?: Transaction<Database>,
   ): Promise<string> {
-    return this.db.transaction().execute(async (trx) => {
+    const run = async (trx: Transaction<Database>): Promise<string> => {
       const { number } = await trx
         .updateTable('projects')
         .set((eb) => ({ next_task_number: eb('next_task_number', '+', 1) }))
@@ -284,7 +288,8 @@ export class TaskRepository {
         .returning('id')
         .executeTakeFirstOrThrow()
       return row.id
-    })
+    }
+    return within === undefined ? this.db.transaction().execute(run) : run(within)
   }
 
   async update(

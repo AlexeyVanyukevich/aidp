@@ -5,7 +5,13 @@ import type { BlockCause, HelpSubject, TaskState } from '../../shared/vocabulary
  * database, no clock. A new decision control is added here first.
  */
 
-export const DECISIONS = ['question', 'spec_review', 'stopped_run', 'mark_done'] as const
+export const DECISIONS = [
+  'question',
+  'spec_review',
+  'stopped_run',
+  'mark_done',
+  'proposal',
+] as const
 export type Decision = (typeof DECISIONS)[number]
 
 /** The modes each decision offers. */
@@ -14,6 +20,7 @@ export const DECISION_MODES = {
   spec_review: ['review', 'restate'],
   stopped_run: ['recommend'],
   mark_done: ['check'],
+  proposal: ['advise'],
 } as const satisfies Record<Decision, readonly string[]>
 
 export type DecisionMode = (typeof DECISION_MODES)[Decision][number]
@@ -41,6 +48,8 @@ export interface DecisionFacts {
   checkpoint: boolean
   /** Whether the card's question is still current (`isCurrent`). */
   approvalCurrent: boolean
+  /** The ids of the task's open proposals. */
+  openProposals: readonly string[]
 }
 
 /** Whether the stopped run is one the owner can recommend an action for. */
@@ -61,6 +70,8 @@ export function offered(decision: Decision, facts: DecisionFacts): boolean {
       return stopped(facts)
     case 'mark_done':
       return ['backlog', 'spec_review', 'review', 'failed'].includes(facts.taskState)
+    case 'proposal':
+      return facts.openProposals.length > 0
   }
 }
 
@@ -99,7 +110,12 @@ export interface SubjectFacts extends DecisionFacts {
 }
 
 /** The subject the facts give a decision now. */
-export function subjectOf(decision: CardDecision, facts: SubjectFacts): Subject {
+export function subjectOf(
+  decision: CardDecision,
+  facts: SubjectFacts,
+  proposalId?: string,
+): Subject {
+  if (decision === 'proposal') return { proposal_id: proposalId ?? '' }
   if (decision === 'spec_review') return { spec_version: facts.latestSpecVersion ?? 0 }
   if (decision === 'stopped_run')
     return {
@@ -118,6 +134,9 @@ export function subjectOf(decision: CardDecision, facts: SubjectFacts): Subject 
 /** True while the decision is offered and the help's recorded subject equals the facts. */
 export function stands(decision: CardDecision, subject: Subject, facts: SubjectFacts): boolean {
   if (!offered(decision, facts)) return false
+  // A proposal's help stands while that proposal is open.
+  if (decision === 'proposal')
+    return 'proposal_id' in subject && facts.openProposals.includes(subject.proposal_id)
   const now = subjectOf(decision, facts)
   return JSON.stringify(sorted(subject)) === JSON.stringify(sorted(now))
 }

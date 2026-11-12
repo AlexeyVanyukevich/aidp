@@ -3,6 +3,7 @@ import type {
   HelpMode,
   HelpResult,
   HelpStatus,
+  ProposalOutcome,
   QuestionHelpMode,
 } from '../../shared/vocabulary.js'
 import type { ApprovalOption, BatchQuestion, Finding } from './approval-rules.js'
@@ -176,6 +177,7 @@ export interface DecisionResultInput {
   produced?: string | undefined
   unfinished?: { where?: string | undefined; text: string }[] | undefined
   // The question fields: never allowed in a decision help.
+  variant?: string | undefined
   option_id?: string | undefined
   text?: string | undefined
   asked?: string | undefined
@@ -189,6 +191,8 @@ export interface DecisionCheckFacts {
   recommendable: readonly string[]
   /** What Mark done reads for the task's state (R11). */
   checkedAgainst: string
+  /** The variants a proposal offers now: what an advise help may recommend. */
+  offeredVariants?: readonly string[]
 }
 
 const DECISION_FIELDS = {
@@ -196,6 +200,7 @@ const DECISION_FIELDS = {
   restate: ['changes', 'requirements', 'left_out'],
   recommend: ['why_stopped', 'action', 'reasoning', 'unsure'],
   check: ['checked_against', 'produced', 'unfinished', 'unsure'],
+  advise: ['variant', 'reasoning', 'unsure'],
 } as const
 
 const ALL_RESULT_FIELDS = [
@@ -211,6 +216,7 @@ const ALL_RESULT_FIELDS = [
   'checked_against',
   'produced',
   'unfinished',
+  'variant',
   'option_id',
   'text',
   'asked',
@@ -240,7 +246,7 @@ export interface DecisionFinding {
 
 /** What a decision help's saved result must be. Each finding names the field to fix. */
 export function checkDecisionResult(
-  mode: 'review' | 'restate' | 'recommend' | 'check',
+  mode: 'review' | 'restate' | 'recommend' | 'check' | 'advise',
   input: DecisionResultInput,
   facts: DecisionCheckFacts,
 ): DecisionFinding[] {
@@ -299,6 +305,12 @@ export function checkDecisionResult(
       findings.push({ field: 'action', code: 'unknown_action' })
     else if (!facts.recommendable.includes(input.action))
       findings.push({ field: 'action', code: 'not_offered' })
+  } else if (mode === 'advise') {
+    text('reasoning', true)
+    text('unsure', true)
+    if (input.variant === undefined) findings.push({ field: 'variant', code: 'required' })
+    else if (!(facts.offeredVariants ?? []).includes(input.variant))
+      findings.push({ field: 'variant', code: 'not_offered' })
   } else {
     if (input.checked_against === undefined)
       findings.push({ field: 'checked_against', code: 'required' })
@@ -313,7 +325,7 @@ export function checkDecisionResult(
 
 /** The decision result as it is stored: only the fields of its mode, trimmed. */
 export function decisionResultOf(
-  mode: 'review' | 'restate' | 'recommend' | 'check',
+  mode: 'review' | 'restate' | 'recommend' | 'check' | 'advise',
   input: DecisionResultInput,
 ): HelpResult {
   const t = (value: string | undefined) => (value ?? '').trim()
@@ -342,6 +354,13 @@ export function decisionResultOf(
       mode,
       why_stopped: t(input.why_stopped),
       action: t(input.action),
+      reasoning: t(input.reasoning),
+      unsure: t(input.unsure),
+    }
+  if (mode === 'advise')
+    return {
+      mode,
+      variant: t(input.variant) as ProposalOutcome,
       reasoning: t(input.reasoning),
       unsure: t(input.unsure),
     }

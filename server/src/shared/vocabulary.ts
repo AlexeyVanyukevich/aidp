@@ -46,7 +46,13 @@ export type HelpMode = (typeof HELP_MODES)[number]
 export type QuestionHelpMode = 'suggest' | 'explain'
 
 /** What a help advises on: a waiting question, or one of the decisions of a card. */
-export const HELP_DECISIONS = ['question', 'spec_review', 'stopped_run', 'mark_done', 'proposal'] as const
+export const HELP_DECISIONS = [
+  'question',
+  'spec_review',
+  'stopped_run',
+  'mark_done',
+  'proposal',
+] as const
 export type HelpDecision = (typeof HELP_DECISIONS)[number]
 
 /** What a decision help recorded when it was created. */
@@ -110,7 +116,14 @@ export const APPROVAL_STATUSES = ['open', 'answered', 'expired', 'withdrawn'] as
 export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number]
 
 /** `questions` is a batch: several questions, asked together and answered whole (slice 3). */
-export const APPROVAL_KINDS = ['question', 'out_of_plan', 'migration', 'plan', 'questions', 'proposal'] as const
+export const APPROVAL_KINDS = [
+  'question',
+  'out_of_plan',
+  'migration',
+  'plan',
+  'questions',
+  'proposal',
+] as const
 export type ApprovalKind = (typeof APPROVAL_KINDS)[number]
 
 /** Why a run is Blocked. The first and last are the server's sweeper's; the others the runner's. */

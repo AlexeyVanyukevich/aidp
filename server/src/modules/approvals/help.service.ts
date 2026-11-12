@@ -1,6 +1,7 @@
-import type { Kysely, Transaction } from 'kysely'
+import { sql, type Kysely, type Transaction } from 'kysely'
 import type { Database } from '../../db/schema.js'
 import { planToKeepFor } from '../tasks/plan-history.queries.js'
+import { openProposalIds, proposalsOf } from '../proposals/proposal.repository.js'
 import type { Bus } from '../../shared/bus.js'
 import { publish } from '../../shared/bus.js'
 import { ConflictError, NotFoundError, ValidationError } from '../../shared/errors.js'
@@ -141,9 +142,12 @@ export async function readSubjectFacts(db: Db, taskId: string): Promise<SubjectF
     .select('approval_requests.status')
     .where('runs.task_id', '=', taskId)
     .where('approval_requests.status', 'in', ['open', 'expired'])
+    // A proposal's request is settled on the Proposals tab; it is no question to help with.
+    .where('approval_requests.kind', '!=', 'proposal')
     .orderBy('approval_requests.created_at', 'desc')
     .limit(1)
     .executeTakeFirst()
+  const openProposals = await openProposalIds(db, taskId)
   const block = (run?.block ?? null) as Block | null
   const kept =
     task.state === 'failed' ? await planToKeepFor(db as Kysely<Database>, taskId) : undefined
@@ -159,6 +163,7 @@ export async function readSubjectFacts(db: Db, taskId: string): Promise<SubjectF
         taskState: task.state,
         blockCause: block?.cause ?? null,
       }),
+    openProposals,
     latestSpecVersion: latest,
     approvedSpecVersion: approved,
     latestRunId: run?.id ?? null,
@@ -422,12 +427,23 @@ export class HelpService {
    * Asks for a decision help (R4): with the task row locked, checks the decision is offered,
    * then queues a help run and its help. A second press while one is in flight answers with it.
    */
-  async createForDecision(taskId: string, decision: string, mode: string): Promise<HelpView> {
+  async createForDecision(
+    taskId: string,
+    decision: string,
+    mode: string,
+    proposalId?: string,
+  ): Promise<HelpView> {
     if (!(decision in DECISION_MODES) || decision === 'question')
       throw new ValidationError('Unknown decision', { field: 'decision' })
     const known = decision as CardDecision
     const modes: readonly string[] = DECISION_MODES[known]
     if (!modes.includes(mode)) throw new ValidationError('Unknown mode', { field: 'mode' })
+    if (known === 'proposal' && proposalId === undefined)
+      throw new ValidationError('proposal_id is required for a proposal', { field: 'proposal_id' })
+    if (known !== 'proposal' && proposalId !== undefined)
+      throw new ValidationError('proposal_id belongs to the proposal decision only', {
+        field: 'proposal_id',
+      })
     return this.db.transaction().execute(async (trx) => {
       const task = await trx
         .selectFrom('tasks')
@@ -437,7 +453,10 @@ export class HelpService {
         .executeTakeFirst()
       if (task === undefined) throw new NotFoundError('No such task')
       const facts = await readSubjectFacts(trx, taskId)
-      if (!offered(known, facts))
+      if (
+        !offered(known, facts) ||
+        (known === 'proposal' && !facts.openProposals.includes(proposalId ?? ''))
+      )
         throw new ConflictError(`Help with ${decision.replaceAll('_', ' ')} is not offered now`, {
           reason: 'not_offered',
           state: task.state,
@@ -450,6 +469,9 @@ export class HelpService {
         .where('helps.decision', '=', known)
         .where('helps.mode', '=', mode as HelpMode)
         .where('helps.status', 'in', ['queued', 'running'])
+        .$if(known === 'proposal', (qb) =>
+          qb.where(sql<boolean>`helps.subject->>'proposal_id' = ${proposalId ?? ''}`),
+        )
         .executeTakeFirst()
       if (busy !== undefined) return busy as HelpView
       const last = await trx
@@ -475,7 +497,7 @@ export class HelpService {
           run_id: run.id,
           approval_id: null,
           decision: known,
-          subject: JSON.stringify(subjectOf(known, facts)),
+          subject: JSON.stringify(subjectOf(known, facts, proposalId)),
           question_index: null,
           mode: mode as HelpMode,
           status: 'queued',
@@ -879,10 +901,16 @@ export class HelpService {
     }
     if (help.status !== 'running')
       return { error: `This help is ${help.status}; nothing was saved. End your turn now.` }
-    const mode = help.mode as 'review' | 'restate' | 'recommend' | 'check'
+    const mode = help.mode as 'review' | 'restate' | 'recommend' | 'check' | 'advise'
+    const subject = help.subject
+    const proposal =
+      mode === 'advise' && 'proposal_id' in subject
+        ? (await proposalsOf(trx, help.task_id)).find((view) => view.id === subject.proposal_id)
+        : undefined
     const findings = checkDecisionResult(mode, input, {
       recommendable: recommendableActions(facts),
       checkedAgainst: specRead(facts).checkedAgainst,
+      ...(proposal === undefined ? {} : { offeredVariants: proposal.offered }),
     })
     if (findings.length > 0)
       return {
