@@ -1,6 +1,12 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import { HelpButtons, HelpResults, type PanelMode, type Renderers } from '../../src/card/HelpPanel'
+import {
+  decisionRenderers,
+  HelpButtons,
+  HelpResults,
+  type PanelMode,
+  type Renderers,
+} from '../../src/card/HelpPanel'
 import {
   decisionAnnouncement,
   decisionHelp,
@@ -313,5 +319,66 @@ describe('goneResults (AC42)', () => {
   ]
   it.each(table)('$name', ({ before, after, changed, text }) => {
     expect(goneResults(before, after, changed)).toEqual(text)
+  })
+})
+
+describe('decisionRenderers and Use these findings', () => {
+  const changes: HelpResult = {
+    mode: 'review',
+    verdict: 'changes',
+    findings: [{ kind: 'missing', where: 'R1', text: 'No retry limit' }],
+    unsure: 'u',
+  }
+  const render = (result: HelpResult, handler: boolean) => {
+    const renderers = decisionRenderers(1, handler ? () => undefined : undefined)
+    const node =
+      result.mode === 'review'
+        ? renderers.review?.(result)
+        : result.mode === 'restate'
+          ? renderers.restate?.(result)
+          : result.mode === 'recommend'
+            ? renderers.recommend?.(result)
+            : result.mode === 'check'
+              ? renderers.check?.(result)
+              : null
+    return renderToStaticMarkup(<>{node}</>)
+  }
+  const table: { name: string; result: HelpResult; handler: boolean; button: boolean }[] = [
+    { name: 'changes, with the handler', result: changes, handler: true, button: true },
+    { name: 'changes, without it', result: changes, handler: false, button: false },
+    ...(['with', 'without'] as const).flatMap((w) => [
+      {
+        name: `nothing to change, ${w} the handler`,
+        result: RESULTS.review,
+        handler: w === 'with',
+        button: false,
+      },
+      {
+        name: `restate, ${w} the handler`,
+        result: RESULTS.restate,
+        handler: w === 'with',
+        button: false,
+      },
+      {
+        name: `recommend, ${w} the handler`,
+        result: RESULTS.recommend,
+        handler: w === 'with',
+        button: false,
+      },
+      {
+        name: `check, ${w} the handler`,
+        result: RESULTS.check,
+        handler: w === 'with',
+        button: false,
+      },
+    ]),
+  ]
+  it.each(table)('$name', ({ result, handler, button }) => {
+    const markup = render(result, handler)
+    expect(markup.includes('<button')).toBe(button)
+    if (button) {
+      expect(markup).toContain('Use these findings')
+      expect(markup.indexOf('Unsure about')).toBeLessThan(markup.indexOf('Use these findings'))
+    }
   })
 })
