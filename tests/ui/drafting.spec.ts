@@ -122,12 +122,29 @@ test('a spec redrafted with a note comes back as the next version', async ({ pag
   const note = spec.getByRole('textbox', { name: 'What to change' })
   await expect(note).toBeFocused()
   await expect(note).toHaveAttribute('aria-invalid', 'true')
+  await expect(note).toHaveAccessibleDescription(/Say what to change\./)
   await expectAccessible(page)
 
   await note.fill('Say how long to wait between tries.')
   await spec.getByRole('button', { name: 'Redraft' }).click()
   await expect(card.getByText(`${created.key} · Spec review`)).toBeVisible(RUN)
   await expect(spec.getByRole('combobox', { name: 'Version' })).toContainText('v2 · draft')
+  await expectAccessible(page)
+})
+
+test('a note over 4,000 characters is refused where it was written', async ({ page, request }) => {
+  const created = await newTask(request, 'Redraft a long note', DESCRIPTION)
+  await request.post(appUrl(`/api/tasks/${created.id}/specs`), { data: { body_md: SPEC } })
+  const card = await openCard(page, created.key, 'Redraft a long note')
+  const spec = card.getByRole('tabpanel', { name: 'Spec' })
+
+  const note = spec.getByRole('textbox', { name: 'What to change' })
+  await note.fill('x'.repeat(4_001))
+  await spec.getByRole('button', { name: 'Redraft' }).click()
+  await expect(note).toBeFocused()
+  await expect(note).toHaveAttribute('aria-invalid', 'true')
+  await expect(note).toHaveAccessibleDescription(/The note is longer than 4,000 characters\./)
+  await expect(card.getByText(`${created.key} · Spec review`)).toBeVisible()
   await expectAccessible(page)
 })
 

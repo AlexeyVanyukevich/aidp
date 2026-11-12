@@ -48,3 +48,16 @@ export function answerRefusal(error: unknown): string | undefined {
     ? ANSWER_TOO_LONG
     : undefined
 }
+
+export const NO_NOTE = 'Say what to change.'
+export const NOTE_TOO_LONG = 'The note is longer than 4,000 characters.'
+
+/** The note field's message for a Redraft the board refused, or undefined for any other failure. */
+export function noteRefusal(error: unknown): string | undefined {
+  if (invalidField(error) !== 'note') return undefined
+  const issues = error instanceof ApiError ? error.details?.issues : undefined
+  const issue = Array.isArray(issues)
+    ? (issues[0] as { instancePath?: unknown; keyword?: unknown } | undefined)
+    : undefined
+  return issue?.instancePath === '/note' && issue.keyword === 'maxLength' ? NOTE_TOO_LONG : NO_NOTE
+}

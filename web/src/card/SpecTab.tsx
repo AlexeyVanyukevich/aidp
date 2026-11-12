@@ -3,7 +3,7 @@ import { flushSync } from 'react-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Field, Input, Markdown, Notice, Select, Textarea } from '@zellige/react'
 import { api, ApiError } from '../api'
-import { invalidField, isConflict } from '../errors'
+import { invalidField, isConflict, NO_NOTE, noteRefusal } from '../errors'
 import { Loaded } from '../Loaded'
 import type { HelpMode, SpecView, TaskView } from '../types'
 import { decisionHelp, NO_HELP } from './approvals'
@@ -24,7 +24,6 @@ import {
 } from './lint'
 
 const NO_DESCRIPTION = 'Write a description first; the spec-writer drafts from it.'
-const NO_NOTE = 'Say what to change.'
 const NO_TITLE = 'Enter a title.'
 const NO_DESCRIPTION_TO_REPHRASE = 'Write a description first; the rephraser works from it.'
 const NO_SUGGESTION = 'Write the text to accept, or discard the suggestion.'
@@ -96,7 +95,7 @@ function SpecEditor({
   const suggestionField = useRef<HTMLTextAreaElement>(null)
   const rephraseDescriptionButton = useRef<HTMLButtonElement>(null)
   const [note, setNote] = useState('')
-  const [noteMissing, setNoteMissing] = useState(false)
+  const [noteMissing, setNoteMissing] = useState<string | undefined>()
   const [message, setMessage] = useState('')
   const [problem, setProblem] = useState<{ text: string } | undefined>()
   const problemBox = useRef<HTMLDivElement>(null)
@@ -205,8 +204,12 @@ function SpecEditor({
             : 'That did not work. Try again.',
     })
   /** The field's error is on the page before focus arrives, so it is read with the field. */
-  const markMissing = (which: 'description' | 'note', text = NO_DESCRIPTION) => {
-    flushSync(() => (which === 'description' ? setDescriptionMissing(text) : setNoteMissing(true)))
+  const markMissing = (which: 'description' | 'note', text?: string) => {
+    flushSync(() =>
+      which === 'description'
+        ? setDescriptionMissing(text ?? NO_DESCRIPTION)
+        : setNoteMissing(text ?? NO_NOTE),
+    )
     ;(which === 'description' ? descriptionField : noteField).current?.focus()
   }
 
@@ -433,7 +436,8 @@ function SpecEditor({
       onFrozen()
     },
     onError: (error) => {
-      if (invalidField(error) === 'note') markMissing('note')
+      const refusal = noteRefusal(error)
+      if (refusal !== undefined) markMissing('note', refusal)
       else fail('draft')(error)
     },
     onSettled: refresh,
@@ -769,7 +773,7 @@ function SpecEditor({
           <Field
             label="What to change"
             hint="The spec-writer reads this with the current version."
-            error={noteMissing ? NO_NOTE : undefined}
+            error={noteMissing}
           >
             <Textarea
               ref={noteField}
@@ -777,7 +781,7 @@ function SpecEditor({
               value={note}
               onChange={(e) => {
                 setNote(e.target.value)
-                if (noteMissing) setNoteMissing(false)
+                if (noteMissing !== undefined) setNoteMissing(undefined)
               }}
             />
           </Field>
