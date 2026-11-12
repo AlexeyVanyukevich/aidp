@@ -29,6 +29,15 @@ import { SpecRepository } from '../specs/spec.repository.js'
 import { acceptedPlanOf, planAnswers } from '../tasks/plan-history.js'
 import { loadPlanHistory, planToKeepFor } from '../tasks/plan-history.queries.js'
 import { foldKey, filterPattern, parseTaskKey } from './board-read.js'
+import { proposalsOf } from '../proposals/proposal.repository.js'
+import { ProposalRefused, ProposalService } from '../proposals/proposal.service.js'
+import {
+  BEARING_LIMIT,
+  WORKAROUND_LIMIT,
+  checkTitle,
+  labelsError,
+  missingLabels,
+} from '../proposals/proposal.rules.js'
 import { checkSuggestion, suggestionRefusal } from './title-rules.js'
 import {
   checkPlan,
@@ -229,12 +238,13 @@ async function helpHead(ctx: ToolContext, helpId: string): Promise<HelpHead> {
 }
 
 /** A stopped run's latest non-help phase: its newest entries, and how many earlier were left out. */
-async function stoppedPhaseRecord(ctx: ToolContext, runId: string) {
+async function stoppedPhaseRecord(ctx: ToolContext, runId: string, phaseId?: string) {
   const phase = await ctx.db
     .selectFrom('phases')
     .select('id')
     .where('run_id', '=', runId)
     .where('name', '!=', 'help')
+    .$if(phaseId !== undefined, (qb) => qb.where('id', '=', phaseId ?? ''))
     .orderBy('started_at', 'desc')
     .limit(1)
     .executeTakeFirst()
@@ -375,6 +385,18 @@ async function decisionRecord(ctx: ToolContext, helpId: string, head: HelpHead) 
           }),
     }
   }
+  if (head.decision === 'proposal' && subject !== null && 'proposal_id' in subject) {
+    const proposal = (await proposalsOf(ctx.db, ctx.taskId)).find(
+      (view) => view.id === subject.proposal_id,
+    )
+    return {
+      ...common,
+      proposal: proposal ?? null,
+      run: proposal?.run ?? null,
+      phase: proposal?.phase ?? null,
+      offered: proposal?.offered ?? [],
+    }
+  }
   const read = specRead(facts)
   const spec =
     read.version === null
@@ -461,6 +483,15 @@ function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string):
       const head = await helpHead(ctx, helpId)
       if (head.decision === 'stopped_run' && head.subject !== null && 'run_id' in head.subject)
         return json(await stoppedPhaseRecord(ctx, head.subject.run_id))
+      if (head.decision === 'proposal' && head.subject !== null && 'proposal_id' in head.subject) {
+        const proposal = await ctx.db
+          .selectFrom('proposals')
+          .select(['run_id', 'phase_id'])
+          .where('id', '=', head.subject.proposal_id)
+          .executeTakeFirst()
+        if (proposal === undefined) return json({ entries: [], earlier_left_out: 0 })
+        return json(await stoppedPhaseRecord(ctx, proposal.run_id, proposal.phase_id))
+      }
       if (head.decision !== 'question')
         return reply('This help has no phase record: use get_decision.', true)
       const { row } = await helpQuestion(ctx, helpId)
@@ -505,7 +536,7 @@ function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string):
     'save_help_result',
     {
       description:
-        'Save your result. A suggestion: option_id (one the question offers), text, or both, with reasoning and unsure (what you are unsure of). An explanation: asked (what is being asked), matters (why it matters to the task) and leads_to (what each option, or an answer in words, would lead to), and no option. For a decision help the fields depend on the mode. review: verdict (changes or nothing_to_change), findings (kind, where, text) and unsure. restate: changes, requirements and left_out. recommend: why_stopped, action, reasoning and unsure. check: checked_against, produced, unfinished (where, text) and unsure. Refused with the field to fix when it does not fit; fix it and save again.',
+        'Save your result. A suggestion: option_id (one the question offers), text, or both, with reasoning and unsure (what you are unsure of). An explanation: asked (what is being asked), matters (why it matters to the task) and leads_to (what each option, or an answer in words, would lead to), and no option. For a decision help the fields depend on the mode. review: verdict (changes or nothing_to_change), findings (kind, where, text) and unsure. restate: changes, requirements and left_out. recommend: why_stopped, action, reasoning and unsure. check: checked_against, produced, unfinished (where, text) and unsure. advise: variant (one the proposal offers now), reasoning and unsure. Refused with the field to fix when it does not fit; fix it and save again.',
       inputSchema: {
         option_id: z.string().optional(),
         text: z.string().optional(),
@@ -524,6 +555,7 @@ function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string):
         why_stopped: z.string().optional(),
         action: z.string().optional(),
         checked_against: z.string().optional(),
+        variant: z.string().optional(),
         produced: z.string().optional(),
         unfinished: z
           .array(z.object({ where: z.string().optional(), text: z.string() }))
@@ -545,6 +577,7 @@ export function registerBoardTools(server: McpServer, ctx: ToolContext): void {
   }
   registerReadTools(server, ctx)
   registerRunTools(server, ctx)
+  registerProposalTools(server, ctx)
 }
 
 function registerRunTools(server: McpServer, ctx: ToolContext): void {
@@ -882,6 +915,133 @@ async function unknownProject(ctx: ToolContext, key: string, subject = key) {
   return reply(
     `No project has the key ${key}${subject === key ? '' : `, so ${subject} does not exist`}. The valid project keys are: ${projects.map((p) => p.key).join(', ')}.`,
     true,
+  )
+}
+
+const PROPOSING_PHASES = ['spec', 'plan', 'build', 'verify']
+
+/** The projects a run may propose to: its task's own, and the ones that project links to. */
+async function proposable(ctx: ToolContext) {
+  const own = await ctx.db
+    .selectFrom('tasks')
+    .innerJoin('projects', 'projects.id', 'tasks.project_id')
+    .select(['projects.id', 'projects.key'])
+    .where('tasks.id', '=', ctx.taskId)
+    .executeTakeFirstOrThrow()
+  const linked = await ctx.db
+    .selectFrom('project_links')
+    .innerJoin('projects', 'projects.id', 'project_links.linked_project_id')
+    .select(['projects.id', 'projects.key'])
+    .where('project_links.project_id', '=', own.id)
+    .execute()
+  return [own, ...linked].sort((a, b) => (a.key < b.key ? -1 : 1))
+}
+
+const blankText = (text: string | undefined) => text === undefined || text.trim() === ''
+
+function registerProposalTools(server: McpServer, ctx: ToolContext): void {
+  const service = new ProposalService(ctx.db, ctx.clock)
+  server.registerTool(
+    'propose_task',
+    {
+      description:
+        'Propose a task for a finding outside your task: a bug noticed on the way, a missing test, a document that has drifted. It never creates a task; the owner settles each proposal on the card, by filing it, filing it with your workaround, or dismissing it. `project` is the task’s own project or one in your linked projects. `description_md` has the labels **Where:**, **Found:**, **Problem:** and **Impact:**, each at the start of a line. `related` says whether the finding bears on this task. A related proposal needs `bearing_md` (how it bears on this task), may carry `workaround_md`, and pauses the run until the owner settles it; build and verify propose unrelated findings only. An unrelated one may carry `bearing_md` (why it came up here) and never `workaround_md`. Search with list_tasks and list_proposals first. A run makes at most 10 proposals.',
+      inputSchema: {
+        project: z.string(),
+        title: z.string(),
+        description_md: z.string(),
+        related: z.boolean(),
+        bearing_md: z.string().optional(),
+        workaround_md: z.string().optional(),
+      },
+    },
+    async (input) => {
+      const phase = await runningPhase(ctx)
+      if (phase === undefined) {
+        const waiting = await ctx.db
+          .selectFrom('approval_requests')
+          .select('id')
+          .where('run_id', '=', ctx.runId)
+          .where('status', '=', 'open')
+          .executeTakeFirst()
+        return waiting === undefined
+          ? reply('No phase of this run is running; nothing was saved.', true)
+          : reply('This run is already waiting for an answer. End your turn now.', true)
+      }
+      const kind = await runKind(ctx)
+      if (kind !== 'spec' && kind !== 'delivery')
+        return reply(`A ${kind} run proposes no tasks; nothing was saved.`, true)
+      if (!PROPOSING_PHASES.includes(phase.name))
+        return reply(`The ${phase.name} phase proposes no tasks; nothing was saved.`, true)
+      if (input.related && (phase.name === 'build' || phase.name === 'verify'))
+        return reply(
+          'related must be false in build and verify: every finding proposed there is unrelated, and a blocker of the task goes through request_approval.',
+          true,
+        )
+      const bearing = input.bearing_md?.trim() ?? ''
+      if (input.related && bearing === '')
+        return reply(
+          'bearing_md is required when related is true: say how it bears on this task.',
+          true,
+        )
+      if (bearing.length > BEARING_LIMIT)
+        return reply(
+          `bearing_md is ${bearing.length} characters; the limit is ${BEARING_LIMIT}.`,
+          true,
+        )
+      if (input.workaround_md !== undefined && !input.related)
+        return reply(
+          'workaround_md belongs to a related proposal; leave it out when related is false.',
+          true,
+        )
+      const workaround = input.workaround_md?.trim()
+      if (workaround !== undefined && (workaround === '' || workaround.length > WORKAROUND_LIMIT))
+        return reply(`workaround_md must be 1–${WORKAROUND_LIMIT} characters after trimming.`, true)
+
+      const titled = checkTitle(input.title)
+      if ('error' in titled) return reply(titled.error, true)
+      const missing = missingLabels(input.description_md)
+      if (missing.length > 0) return reply(labelsError(missing), true)
+
+      const allowed = await proposable(ctx)
+      const key = foldKey(input.project)
+      const target = allowed.find((project) => project.key === key)
+      if (target === undefined)
+        return reply(
+          `${key} is not a project this task may propose to. Allowed: ${allowed.map((p) => p.key).join(', ')}.`,
+          true,
+        )
+      try {
+        const saved = await service.propose({
+          runId: ctx.runId,
+          taskId: ctx.taskId,
+          phaseId: phase.id,
+          agent: phase.agent,
+          targetProjectId: target.id,
+          title: titled.title,
+          description_md: input.description_md,
+          related: input.related,
+          bearing_md: bearing === '' ? null : bearing,
+          workaround_md: workaround ?? null,
+        })
+        if (saved.paused) return reply(PAUSED_REPLY)
+        return reply(
+          `Proposed. The owner settles it on the card; you do not wait. Go on with your task, and name the proposal "${titled.title}" in your summary or report.`,
+        )
+      } catch (error) {
+        if (error instanceof ProposalRefused) return reply(error.message, true)
+        return refusal(error)
+      }
+    },
+  )
+
+  server.registerTool(
+    'list_proposals',
+    {
+      description:
+        'List every proposal of this task’s spec and delivery runs, newest run first, then by number: title, target project, whether it is related, its outcome (null while open) and the task it filed.',
+    },
+    async () => json(await proposalsOf(ctx.db, ctx.taskId)),
   )
 }
 

@@ -260,6 +260,10 @@ export class ApprovalService {
         .forUpdate()
         .executeTakeFirst()
       if (row === undefined) throw new NotFoundError('No such approval request')
+      if (row.kind === 'proposal')
+        throw new ConflictError('A proposal is settled on the Proposals tab, not answered', {
+          reason: 'settle_proposal',
+        })
       const block = row.block as Block | null
       // An expired question stays answerable while the card it blocked waits on it (spec §2).
       const answerable = isCurrent({

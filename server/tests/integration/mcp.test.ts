@@ -88,15 +88,17 @@ describe('the board MCP server', () => {
     expect(response.status).toBe(401)
   })
 
-  it('offers the twelve tools', async () => {
+  it('offers the fourteen tools', async () => {
     const { client } = await session()
     const { tools } = await client.listTools()
     expect(tools.map((t) => t.name).sort()).toEqual([
       'get_spec',
       'get_task',
       'list_projects',
+      'list_proposals',
       'list_tasks',
       'log_step',
+      'propose_task',
       'read_task',
       'request_approval',
       'save_plan',
