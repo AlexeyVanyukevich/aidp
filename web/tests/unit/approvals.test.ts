@@ -14,6 +14,8 @@ import {
   optionName,
   unanswered,
   applySuggestion,
+  preSendProblem,
+  NO_WORDS_WITH_PLAN,
   failureText,
   helpAnnouncement,
   newlyEnded,
@@ -324,30 +326,80 @@ describe('applySuggestion', () => {
   it.each([
     [
       'selects the option and replaces the words',
+      'question' as const,
       { option: 'a', text: 'old' },
       result,
       { option: 'b', text: 'Use four.' },
     ],
     [
       'keeps the chosen option when the suggestion has none',
+      'question' as const,
       { option: 'a', text: 'old' },
       { ...result, option_id: undefined },
       { option: 'a', text: 'Use four.' },
     ],
     [
       'keeps the words when the suggestion has none',
+      'question' as const,
       { text: 'old' },
       { ...result, text: undefined },
       { option: 'b', text: 'old' },
     ],
-  ])('%s', (_name, current, suggested, expected) => {
+    [
+      'a plan suggestion of words alone clears the option',
+      'plan' as const,
+      { option: 'approve', text: 'old' },
+      { ...result, option_id: undefined },
+      { text: 'Use four.' },
+    ],
+    [
+      'a plan suggestion of approve and words keeps the words only',
+      'plan' as const,
+      { text: '' },
+      { ...result, option_id: 'approve' },
+      { text: 'Use four.' },
+    ],
+    [
+      'a plan suggestion of approve alone chooses approve',
+      'plan' as const,
+      { text: '' },
+      { ...result, option_id: 'approve', text: undefined },
+      { option: 'approve', text: '' },
+    ],
+  ])('%s', (_name, kind, current, suggested, expected) => {
     const { option_id, text, ...rest } = suggested
     const clean = {
       ...rest,
       ...(option_id === undefined ? {} : { option_id }),
       ...(text === undefined ? {} : { text }),
     }
-    expect(applySuggestion(current, clean)).toEqual(expected)
+    expect(applySuggestion(kind, current, clean)).toEqual(expected)
+  })
+})
+
+describe('preSendProblem', () => {
+  it.each([
+    [
+      'plan with approve and words',
+      'plan' as const,
+      { option: 'approve', text: 'x' },
+      NO_WORDS_WITH_PLAN,
+    ],
+    [
+      'plan with approve and blank words',
+      'plan' as const,
+      { option: 'approve', text: '  ' },
+      undefined,
+    ],
+    ['plan with words alone', 'plan' as const, { text: 'x' }, undefined],
+    [
+      'question with an option and words',
+      'question' as const,
+      { option: 'a', text: 'x' },
+      undefined,
+    ],
+  ])('%s', (_name, kind, choice, expected) => {
+    expect(preSendProblem(kind, choice)).toBe(expected)
   })
 })
 
