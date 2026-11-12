@@ -541,4 +541,9 @@ test('after Clear choice, words ask the planner for a second plan', async ({ pag
   // The planner's second turn opens a second plan request.
   await expect(panel.getByRole('textbox', { name: 'Changes to ask for' })).toBeVisible(RUN)
   await expect(panel.getByRole('radio', { name: 'Approve plan' })).not.toBeChecked()
+
+  // Approved, the run leaves no gate open for a later journey's count of questions waiting.
+  await panel.getByRole('radio', { name: 'Approve plan' }).check()
+  await panel.getByRole('button', { name: 'Send answer' }).click()
+  await expect(card.getByText(`${key} · Review`)).toBeVisible(RUN)
 })
