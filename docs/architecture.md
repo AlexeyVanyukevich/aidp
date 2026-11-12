@@ -57,8 +57,9 @@ reordered.", "The tasks were already in order.", or "The board could not be reor
 the board is refetched either way. With no cards it sends nothing and says "There are no tasks to
 reorder."; before the board has loaded it says "The board has not loaded yet.". Each of these is
 announced again on a repeated press: the region is emptied, stays empty across two animation
-frames, and is then refilled, with at most one write pending and any other write to the region
-cancelling it.
+frames, and is then refilled, with at most one write pending and the board's own writes cancelling
+it. `web/src/announce.ts` is the one place this rule lives, shared with the Spec tab. The refill
+fills the region only if it is still empty, so a message written in between is never overwritten.
 
 ## Linked projects
 
@@ -291,7 +292,9 @@ proposal or proposal help exists.
 ## A spec run
 
 **Draft spec** queues a spec run; **Redraft** queues one carrying the latest version and the
-owner's note. Spec runs and delivery runs are numbered apart: "Draft 2", "Run 1", and the
+owner's note, which may be at most 4,000 characters: a longer one is refused with "The note is
+longer than 4,000 characters." beside the field, a blank one with "Say what to change.", and focus
+goes to the field. Spec runs and delivery runs are numbered apart: "Draft 2", "Run 1", and the
 delivery branch `board/<KEY>-r<n>` counts delivery runs only. Claiming a spec run moves no card,
 and one whose card has left Spec draft is cancelled at claim.
 
@@ -1350,14 +1353,20 @@ Decision helps add buttons. In Spec review the Spec tab's action row reads Edit,
 spec, Explain simply, then the Redraft note field and Redraft; Approve and Redraft are enabled and
 disabled as without help. The results sit in a section under an `h3` "Help with v<n>", after the
 Lint section and before the tab's status region, each under an `h4` ("Spec review of v<n>": Nothing
-to change or the findings, then Unsure about; "v<n> in plain words": What changes, What it
-requires, What it leaves out), with a failure line "No spec review for v<n>: <reason>". The card's
-action bar reads Move up, Move down, Mark done, Check what is unfinished, Resume, Cancel run,
-Re-run with this plan, Re-run and plan again, Suggest what to do, each where it is shown. Their
-results ("Suggested next step", "What is unfinished") sit in one region after the status region and
-problem notice and before the Test command field, each under an `h3`, with no control in them and
-no button that acts on a result. Every help button is busy while its help runs and stays focusable,
-and focus stays on the button pressed. A refused or failed request shows the problem notice with
+to change or the findings, then Unsure about, then, when the verdict is changes and the Redraft
+form is shown, the button Use these findings; "v<n> in plain words": What changes, What it
+requires, What it leaves out), with a failure line "No spec review for v<n>: <reason>". Use these
+findings puts one line per finding, `- <kind> (<where>): <text>` or `- <kind>: <text>` without a
+where, into What to change: alone when the field is blank, else after the words already there and
+a blank line. A second press adds the lines again. Unsure about stays out. It sends nothing and
+changes no decision button; focus moves to the field with the caret at its end, any error on the
+field is cleared, and "Findings put in What to change." is announced in the tab's status region on
+every press, repeated ones included. The card's action bar reads Move up, Move down, Mark done,
+Check what is unfinished, Resume, Cancel run, Re-run with this plan, Re-run and plan again, Suggest
+what to do, each where it is shown. Their results ("Suggested next step", "What is unfinished") sit
+in one region after the status region and problem notice and before the Test command field, each
+under an `h3`, with no control in them and no button that acts on a result. Every help button is
+busy while its help runs and stays focusable, and focus stays on the button pressed. A refused or failed request shows the problem notice with
 focus moved to it: "This card changed meanwhile; its latest state is shown." for a 409, else "That
 did not work. Try again." The card's status region announces each decision help that ends,
 whichever tab shows: "Spec review ready for v<n>.", "Plain-words spec ready for v<n>.", "Suggested
