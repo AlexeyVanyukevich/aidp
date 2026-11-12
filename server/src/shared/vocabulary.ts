@@ -46,7 +46,7 @@ export type HelpMode = (typeof HELP_MODES)[number]
 export type QuestionHelpMode = 'suggest' | 'explain'
 
 /** What a help advises on: a waiting question, or one of the decisions of a card. */
-export const HELP_DECISIONS = ['question', 'spec_review', 'stopped_run', 'mark_done'] as const
+export const HELP_DECISIONS = ['question', 'spec_review', 'stopped_run', 'mark_done', 'proposal'] as const
 export type HelpDecision = (typeof HELP_DECISIONS)[number]
 
 /** What a decision help recorded when it was created. */
@@ -54,6 +54,7 @@ export type HelpSubject =
   | { spec_version: number }
   | { run_id: string; task_state: TaskState; block: BlockCause | null }
   | { task_state: TaskState; spec_version: number | null; delivery_run_id: string | null }
+  | { proposal_id: string }
 
 export const HELP_STATUSES = ['queued', 'running', 'succeeded', 'failed', 'stopped'] as const
 export type HelpStatus = (typeof HELP_STATUSES)[number]
@@ -92,6 +93,12 @@ export type HelpResult =
       unsure: string
     }
   | {
+      mode: 'advise'
+      variant: ProposalOutcome
+      reasoning: string
+      unsure: string
+    }
+  | {
       mode: 'check'
       checked_against: 'approved_spec' | 'latest_spec' | 'description'
       produced: string
@@ -103,7 +110,7 @@ export const APPROVAL_STATUSES = ['open', 'answered', 'expired', 'withdrawn'] as
 export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number]
 
 /** `questions` is a batch: several questions, asked together and answered whole (slice 3). */
-export const APPROVAL_KINDS = ['question', 'out_of_plan', 'migration', 'plan', 'questions'] as const
+export const APPROVAL_KINDS = ['question', 'out_of_plan', 'migration', 'plan', 'questions', 'proposal'] as const
 export type ApprovalKind = (typeof APPROVAL_KINDS)[number]
 
 /** Why a run is Blocked. The first and last are the server's sweeper's; the others the runner's. */
@@ -195,3 +202,7 @@ export interface SpecCriterion {
   /** Only the owner can check it. Absent in a criterion stored before the marker existed. */
   owner?: boolean
 }
+
+/** How the owner settles a proposal. `wait` belongs to a later slice and is never offered yet. */
+export const PROPOSAL_OUTCOMES = ['file', 'workaround', 'wait', 'dismiss'] as const
+export type ProposalOutcome = (typeof PROPOSAL_OUTCOMES)[number]
