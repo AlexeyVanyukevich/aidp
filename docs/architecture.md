@@ -1330,7 +1330,10 @@ focus the new page's `h1`; closing a card returns focus to its link.
 The Approvals tab, which a card waiting on a question opens on, holds the question and one form: its
 options as the kit's `RadioGroup` named by the question — the recommended one's name ends
 "(recommended)", an option's impact is its description — a field for an answer in words, and one
-Send answer. Choosing sends nothing. Send answer sends the option, the words or both; with neither it
+Send answer. Choosing sends nothing. While an option of a single request is chosen, a Clear choice
+button after the group withdraws it, keeps the words and moves focus to the group's first radio. The
+form refuses an approval sent with words before sending it, and a refusal on length says the
+4,000-character limit. Send answer sends the option, the words or both; with neither it
 marks the words field invalid and focuses it. Answering, Resume and Cancel move focus to the card's
 state line before their controls go. A request's context is rendered Markdown, headings starting at
 `h4` (`h5` for a batch question's); a plan's checks read as a table. A migration's stays plain code.
