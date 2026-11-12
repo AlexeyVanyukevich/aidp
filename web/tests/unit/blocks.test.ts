@@ -158,6 +158,7 @@ interface DecisionRow {
   approval_current: boolean
   offered: string[]
   stopped_run_actions: string[]
+  open_proposals?: number
 }
 const decisionRows = JSON.parse(
   readFileSync(new URL('../../../tests/fixtures/decisions.json', import.meta.url), 'utf8'),
@@ -168,7 +169,7 @@ const blockOf = (row: DecisionRow): Block | null =>
 
 describe('the shared decision table', () => {
   it.each(decisionRows)('$name: decisionsFor', (row) => {
-    expect(decisionsFor(row.state, blockOf(row))).toEqual(
+    expect(decisionsFor(row.state, blockOf(row), row.open_proposals ?? 0)).toEqual(
       row.offered.filter((decision) => decision !== 'question'),
     )
   })
@@ -190,4 +191,41 @@ describe('the shared decision table', () => {
       expect(found).toEqual(row.stopped_run_actions)
     },
   )
+})
+
+describe('initialTab for a proposal', () => {
+  const approval = (kind: 'proposal' | 'question', status: 'open' | 'expired') => ({
+    id: 'a',
+    kind,
+    status,
+    questions: 1,
+  })
+  it.each([
+    {
+      name: 'an open proposal',
+      state: 'needs_approval',
+      block: null,
+      kind: 'proposal',
+      status: 'open',
+      tab: 'proposals',
+    },
+    {
+      name: 'an expired proposal',
+      state: 'blocked',
+      block: { cause: 'approval_expired', stage: null },
+      kind: 'proposal',
+      status: 'expired',
+      tab: 'proposals',
+    },
+    {
+      name: 'an open question',
+      state: 'needs_approval',
+      block: null,
+      kind: 'question',
+      status: 'open',
+      tab: 'approvals',
+    },
+  ] as const)('$name opens on $tab', ({ state, block, kind, status, tab }) => {
+    expect(initialTab({ state, block, approval: approval(kind, status) })).toBe(tab)
+  })
 })

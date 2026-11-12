@@ -88,7 +88,8 @@ export type TitleSuggestion =
   | { status: 'working' }
   | { status: 'ready'; title: string; reason: string }
   | { status: 'failed'; reason: string }
-export type ApprovalKind = 'question' | 'out_of_plan' | 'migration' | 'plan' | 'questions'
+export type ApprovalKind =
+  'question' | 'out_of_plan' | 'migration' | 'plan' | 'questions' | 'proposal'
 export type ApprovalStatus = 'open' | 'answered' | 'expired' | 'withdrawn'
 export type Stage = 'prepare' | 'spec' | 'plan' | 'build' | 'tests' | 'verify' | 'push' | 'pr'
 export interface Block {
@@ -138,7 +139,7 @@ export interface ApprovalView {
 }
 export type QuestionHelpMode = 'suggest' | 'explain'
 export type HelpMode = QuestionHelpMode | 'review' | 'restate' | 'recommend' | 'check'
-export type HelpDecision = 'question' | 'spec_review' | 'stopped_run' | 'mark_done'
+export type HelpDecision = 'question' | 'spec_review' | 'stopped_run' | 'mark_done' | 'proposal'
 export type HelpStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'stopped'
 export type StoppedRunAction = 'resume' | 'cancel' | 'rerun_again' | 'rerun_keep' | 'mark_done'
 /** What a helper saved: a suggestion, a plain restatement, or advice on a decision of the card. */
@@ -163,6 +164,7 @@ export type HelpResult =
       reasoning: string
       unsure: string
     }
+  | { mode: 'advise'; variant: ProposalOutcome; reasoning: string; unsure: string }
   | {
       mode: 'check'
       checked_against: 'approved_spec' | 'latest_spec' | 'description'
@@ -177,6 +179,7 @@ export interface HelpSubject {
   task_state?: TaskState
   block?: string | null
   delivery_run_id?: string | null
+  proposal_id?: string
 }
 export interface HelpView {
   id: string
@@ -186,6 +189,7 @@ export interface HelpView {
   subject: HelpSubject | null
   /** The question of a batch; null for a single request. */
   question_index: number | null
+  /** A proposal's help has the mode `advise`, which only its result type names. */
   mode: HelpMode
   status: HelpStatus
   result: HelpResult | null
@@ -326,4 +330,26 @@ export interface PrFile {
   path: string
   additions: number
   deletions: number
+}
+
+/** How the owner settles a proposal. `wait` is never offered in this release. */
+export type ProposalOutcome = 'file' | 'workaround' | 'wait' | 'dismiss'
+
+/** One finding an agent proposed, as `GET /api/tasks/:id/proposals` gives it. */
+export interface ProposalView {
+  id: string
+  run: { kind: 'spec' | 'delivery'; number: number }
+  phase: string
+  number: number
+  project: string
+  title: string
+  description_md: string
+  related: boolean
+  bearing_md: string | null
+  workaround_md: string | null
+  offered: ProposalOutcome[]
+  outcome: ProposalOutcome | null
+  filed_task: { id: string; key: string; title: string } | null
+  created_at: string
+  settled_at: string | null
 }

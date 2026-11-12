@@ -11,6 +11,7 @@ import type {
   BatchAnswer,
   QuestionHelpMode,
   HelpView,
+  ProposalView,
   TaskView,
 } from '../types'
 import {
@@ -30,6 +31,20 @@ import {
 } from './approvals'
 import { BatchForm } from './BatchForm'
 import { HelpPanel } from './HelpPanel'
+import { proposalsKey } from './ProposalsTab'
+
+const AGENT_OF_PHASE: Record<string, string> = {
+  spec: 'spec-writer',
+  plan: 'planner',
+  build: 'builder',
+  verify: 'verifier',
+}
+
+/** The agent that made the open proposal of this title; a generic word when it is not found. */
+function proposerOf(list: ProposalView[] | undefined, title: string): string {
+  const found = list?.find((p) => p.title === title && p.outcome === null)
+  return (found === undefined ? undefined : AGENT_OF_PHASE[found.phase]) ?? 'The agent'
+}
 
 const NOTHING = 'Write an answer, or choose one of the options.'
 const NO_WORDS_WITH_PLAN =
@@ -159,6 +174,10 @@ export function ApprovalsTab({
     queryKey: ['helps', task.id],
     queryFn: () => api.helps(task.id),
   })
+  const proposals = useQuery({
+    queryKey: proposalsKey(task.id),
+    queryFn: () => api.proposals(task.id),
+  })
   const [sending, setSending] = useState<string | undefined>()
   const [refused, setRefused] = useState<{ message: string } | undefined>()
   const headingId = useId()
@@ -216,6 +235,13 @@ export function ApprovalsTab({
     <Loaded query={approvals} failure="The questions could not be loaded.">
       {(list) => {
         const current = currentApproval(list, task.state)
+        if (current?.kind === 'proposal')
+          return (
+            <p>
+              {proposerOf(proposals.data, current.question)} proposed a task: {current.question}.
+              Settle it on the Proposals tab.
+            </p>
+          )
         const answered = list.filter((a) => a.status === 'answered' || a.status === 'withdrawn')
         if (current === undefined && answered.length === 0)
           return (

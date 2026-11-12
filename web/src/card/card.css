@@ -202,3 +202,22 @@ td {
 .batch > .zl-button {
   justify-self: start;
 }
+.proposals-tab,
+.proposals-tab section {
+  display: grid;
+  gap: var(--zl-space-3);
+}
+.proposal {
+  display: grid;
+  gap: var(--zl-space-2);
+}
+.proposal h4 {
+  margin: 0;
+}
+.proposal-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--zl-space-2);
+  margin: 0;
+}

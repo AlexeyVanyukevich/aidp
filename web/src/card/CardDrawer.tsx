@@ -22,6 +22,7 @@ import { actionsFor, blockText, decisionsFor, initialTab, stateAnnouncement } fr
 import { decisionMode, decisionRenderers, HelpButtons, HelpResults } from './HelpPanel'
 import { CostTab } from './CostTab'
 import { PlanTab } from './PlanTab'
+import { arrivals, proposalHelpAnnouncement, proposalsKey, ProposalsTab } from './ProposalsTab'
 import { PrTab } from './PrTab'
 import { SpecTab } from './SpecTab'
 import { testCommandLine } from './testCommandLine'
@@ -46,8 +47,21 @@ export function CardDrawer() {
   // A help that ends is announced here, whichever tab is showing: the status region is the
   // card's, and a result arrives without navigation.
   const waiting = task.data?.state === 'needs_approval' || task.data?.state === 'blocked'
+  const proposals = useQuery({
+    queryKey: proposalsKey(taskId),
+    queryFn: () => api.proposals(taskId),
+  })
+  const openProposals = (proposals.data ?? []).filter((p) => p.outcome === null).length
   const offeredDecisions =
-    task.data === undefined ? [] : decisionsFor(task.data.state, task.data.block)
+    task.data === undefined ? [] : decisionsFor(task.data.state, task.data.block, openProposals)
+  // A proposal that arrives while the card is open is announced once; the first load is not.
+  const seenProposals = useRef<Set<string> | undefined>(undefined)
+  useEffect(() => {
+    if (proposals.data === undefined) return
+    const fresh = arrivals(seenProposals.current, proposals.data)
+    seenProposals.current = new Set(proposals.data.map((p) => p.id))
+    if (fresh.length > 0) setMessage(fresh.map((p) => `New proposal: ${p.title}.`).join(' '))
+  }, [proposals.data])
   const helps = useQuery({
     queryKey: ['helps', taskId],
     queryFn: () => api.helps(taskId),
@@ -72,14 +86,28 @@ export function CardDrawer() {
       )
       .join('. ')
     const decisions = ended
-      .filter((help) => help.decision !== 'question')
+      .filter((help) => help.decision !== 'question' && help.decision !== 'proposal')
       .map((help) => decisionAnnouncement(help))
       .filter((text) => text !== null)
+    const proposalHelps = ended
+      .filter((help) => help.decision === 'proposal')
+      .map((help) =>
+        proposalHelpAnnouncement(
+          help,
+          proposals.data?.find((p) => p.id === help.subject?.proposal_id)?.title ?? 'a proposal',
+        ),
+      )
+      .filter((text) => text !== null)
+    const notProposal = (list: HelpView[]) => list.filter((help) => help.decision !== 'proposal')
     const gone =
-      before === undefined ? [] : goneResults(before.helps, helps.data, before.state !== state)
-    const text = [questions, ...decisions, ...gone].filter((part) => part !== '').join(' ')
+      before === undefined
+        ? []
+        : goneResults(notProposal(before.helps), notProposal(helps.data), before.state !== state)
+    const text = [questions, ...decisions, ...proposalHelps, ...gone]
+      .filter((part) => part !== '')
+      .join(' ')
     if (text !== '') setMessage(text)
-  }, [helps.data, task.data, client, taskId])
+  }, [helps.data, task.data, client, taskId, proposals.data])
 
   // A card waiting on a question opens on it, once, when it first loads.
   const opened = useRef(false)
@@ -208,6 +236,19 @@ export function CardDrawer() {
         />
       ),
     },
+    {
+      id: 'proposals',
+      label: 'Proposals',
+      panel: (
+        <ProposalsTab
+          task={t}
+          onSettled={(text) => {
+            announce(text)
+          }}
+          onProblem={(text) => setProblem({ text })}
+        />
+      ),
+    },
     { id: 'cost', label: 'Cost', panel: <CostTab task={t} /> },
     { id: 'pr', label: 'PR', panel: <PrTab task={t} /> },
   ]
@@ -223,7 +264,7 @@ export function CardDrawer() {
       <Loaded query={task} failure="This card could not be loaded.">
         {(t) => {
           const offered = actionsFor(t.state, t.block, t.plan_to_keep)
-          const decisions = decisionsFor(t.state, t.block)
+          const decisions = decisionsFor(t.state, t.block, openProposals)
           const check = decisionMode(
             'check',
             'Check what is unfinished',
@@ -323,7 +364,9 @@ export function CardDrawer() {
               <Notice tone="danger" className="announce" ref={problemBox} tabIndex={-1}>
                 {problem?.text}
               </Notice>
-              {decisions.some((decision) => decision !== 'spec_review') && (
+              {decisions.some(
+                (decision) => decision !== 'spec_review' && decision !== 'proposal',
+              ) && (
                 <div className="help-results">
                   <HelpResults
                     level={3}
