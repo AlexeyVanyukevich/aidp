@@ -419,7 +419,7 @@ test('Clear choice withdraws Approve plan, and an approval with words is refused
   await expect(changes).not.toHaveAttribute('aria-invalid', 'true')
 })
 
-test('Clear choice is for a single request only, and the keyboard reaches it in order', async ({
+test('the keyboard reaches Clear choice after the radio group, and Enter on it clears and focuses the radio', async ({
   page,
   request,
 }) => {
@@ -427,10 +427,8 @@ test('Clear choice is for a single request only, and the keyboard reaches it in 
   const approve = panel.getByRole('radio', { name: 'Approve plan' })
   await approve.check()
   await panel.getByRole('button', { name: 'Suggest an answer' }).focus()
-  for (const name of ['Explain simply']) {
-    await page.keyboard.press('Tab')
-    await expect(panel.getByRole('button', { name })).toBeFocused()
-  }
+  await page.keyboard.press('Tab')
+  await expect(panel.getByRole('button', { name: 'Explain simply' })).toBeFocused()
   await page.keyboard.press('Tab')
   await expect(approve).toBeFocused()
   await page.keyboard.press('Tab')
