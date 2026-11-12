@@ -40,20 +40,31 @@ export function actionsFor(
 }
 
 /** The decisions a card offers help for, besides a waiting question's own. */
-export type CardDecision = 'spec_review' | 'stopped_run' | 'mark_done'
+export type CardDecision = 'spec_review' | 'stopped_run' | 'mark_done' | 'proposal'
 
 /** Which decisions offer help on a card in this state (the server's `offered`, less a question). */
-export function decisionsFor(state: TaskState, block: Block | null): CardDecision[] {
+export function decisionsFor(
+  state: TaskState,
+  block: Block | null,
+  openProposals = 0,
+): CardDecision[] {
   const found: CardDecision[] = []
   if (state === 'spec_review') found.push('spec_review')
   if (state === 'failed' || (state === 'blocked' && block?.cause !== 'approval_expired'))
     found.push('stopped_run')
   if (['backlog', 'spec_review', 'review', 'failed'].includes(state)) found.push('mark_done')
+  if (openProposals > 0) found.push('proposal')
   return found
 }
 
-/** A card waiting on a question opens on it. */
-export function initialTab(task: Pick<TaskView, 'state' | 'block'>): string {
+/** A card waiting on a question opens on it; one waiting on a proposal, on the Proposals tab. */
+export function initialTab(
+  task: Pick<TaskView, 'state' | 'block'> & Partial<Pick<TaskView, 'approval'>>,
+): string {
+  const waiting =
+    task.state === 'needs_approval' ||
+    (task.state === 'blocked' && task.block?.cause === 'approval_expired')
+  if (waiting && task.approval?.kind === 'proposal') return 'proposals'
   return task.state === 'needs_approval' ||
     (task.state === 'blocked' && task.block?.cause === 'approval_expired')
     ? 'approvals'

@@ -3,6 +3,8 @@ import type {
   BatchAnswer,
   ApprovalView,
   HelpDecision,
+  ProposalOutcome,
+  ProposalView,
   HelpMode,
   QuestionHelpMode,
   HelpView,
@@ -141,6 +143,17 @@ export const api = {
     request<HelpView>('POST', `/api/approvals/${approvalId}/helps`, {
       mode,
       ...(questionIndex === null ? {} : { question_index: questionIndex }),
+    }),
+  proposals: (taskId: string) => request<ProposalView[]>('GET', `/api/tasks/${taskId}/proposals`),
+  settleProposal: (taskId: string, proposalId: string, variant: ProposalOutcome) =>
+    request<ProposalView>('POST', `/api/tasks/${taskId}/proposals/${proposalId}/settle`, {
+      variant,
+    }),
+  askProposalHelp: (taskId: string, proposalId: string) =>
+    request<HelpView>('POST', `/api/tasks/${taskId}/helps`, {
+      decision: 'proposal',
+      mode: 'advise',
+      proposal_id: proposalId,
     }),
   askDecisionHelp: (taskId: string, decision: Exclude<HelpDecision, 'question'>, mode: HelpMode) =>
     request<HelpView>('POST', `/api/tasks/${taskId}/helps`, { decision, mode }),
