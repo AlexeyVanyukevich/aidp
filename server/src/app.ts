@@ -8,6 +8,7 @@ import type { Config } from './config.js'
 import type { Database } from './db/schema.js'
 import { registerApprovals } from './modules/approvals/approval.routes.js'
 import { registerCosts } from './modules/costs/cost.routes.js'
+import { registerProposals } from './modules/proposals/proposal.routes.js'
 import { registerMcp } from './modules/mcp/mcp.routes.js'
 import { registerProjects } from './modules/projects/project.routes.js'
 import { createRepoInspector, type RepoInspector } from './modules/projects/repo-inspector.js'
@@ -96,6 +97,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerPrFiles(app)
   registerCosts(app)
   registerApprovals(app)
+  registerProposals(app)
   registerStream(app)
 
   await registerSpa(app)

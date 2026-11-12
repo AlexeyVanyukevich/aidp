@@ -23,6 +23,17 @@ import {
   VARIANT_LABELS,
 } from './proposal.rules.js'
 
+const outcomeWord = (outcome: ProposalOutcome | null): string =>
+  outcome === null
+    ? 'open'
+    : outcome === 'file'
+      ? 'filed'
+      : outcome === 'workaround'
+        ? 'filed with workaround'
+        : outcome === 'wait'
+          ? 'waiting'
+          : 'dismissed'
+
 /** A proposal the board will not take; the reply to the agent is the message. */
 export class ProposalRefused extends Error {}
 
@@ -273,7 +284,7 @@ export class ProposalService {
     const label = runLabel(hit.kind, hit.run_number)
     const who = hit.run_id === input.runId ? label : `${hit.key}-${hit.number}, ${label}`
     throw new ProposalRefused(
-      `The proposal "${hit.title}" (${hit.outcome ?? 'open'}) of ${who} already has this title. Do not propose it again.`,
+      `The proposal "${hit.title}" (${outcomeWord(hit.outcome)}) of ${who} already has this title. Do not propose it again.`,
     )
   }
 

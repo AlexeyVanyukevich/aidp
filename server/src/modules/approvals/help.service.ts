@@ -316,6 +316,10 @@ export class HelpService {
         .forUpdate()
         .executeTakeFirst()
       if (row === undefined) throw new NotFoundError('No such approval request')
+      if (row.kind === 'proposal')
+        throw new ConflictError('A proposal is settled on the Proposals tab; its help is there', {
+          reason: 'not_offered',
+        })
       const block = row.block as Block | null
       if (
         !isCurrent({
