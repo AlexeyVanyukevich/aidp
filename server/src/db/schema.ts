@@ -15,6 +15,7 @@ import type {
   PendingWork,
   PhaseName,
   PhaseStatus,
+  ProposalOutcome,
   RunStatus,
   SpecCriterion,
   SuggestionStatus,
@@ -132,6 +133,29 @@ export interface RunTokensTable {
   created_at: Generated<Date>
   /** Set on a helper's token: it reaches the helper's tools and nothing else. */
   help_id: ColumnType<string | null, string | null | undefined, string | null>
+}
+
+export interface ProposalsTable {
+  id: Generated<string>
+  run_id: string
+  phase_id: string
+  task_id: string
+  project_id: string
+  number: number
+  title: string
+  description_md: string
+  related: boolean
+  bearing_md: string | null
+  workaround_md: string | null
+  approval_id: string | null
+  outcome: ColumnType<
+    ProposalOutcome | null,
+    ProposalOutcome | null | undefined,
+    ProposalOutcome | null
+  >
+  filed_task_id: ColumnType<string | null, string | null | undefined, string | null>
+  created_at: Generated<Date>
+  settled_at: NullableTimestamp
 }
 
 export interface HelpsTable {
@@ -257,6 +281,7 @@ export interface Database {
   runs: RunsTable
   run_tokens: RunTokensTable
   helps: HelpsTable
+  proposals: ProposalsTable
   phases: PhasesTable
   events: EventsTable
   approval_requests: ApprovalRequestsTable

@@ -360,6 +360,9 @@ export function resumeMessage(
         `The owner answered your request for the migration ${code(files)}:`,
         answer.text,
       )
+    case 'proposal':
+      // Settled through the proposal route, which writes its own resume message.
+      return null
     case 'questions':
       // A batch answered without its answers: say so, rather than resume with nothing.
       return batchMessage(approval.questions ?? [], { answers: [] })
