@@ -91,6 +91,8 @@ export function HelpResults({
         return renderers.recommend?.(result)
       case 'check':
         return renderers.check?.(result)
+      case 'advise':
+        return renderers.advise?.(result)
     }
     // Every mode returns above; this satisfies `consistent-return`.
     return null
