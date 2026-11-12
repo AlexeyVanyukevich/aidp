@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { ApiError } from '../../src/api'
-import { answerRefusal, invalidField, isConflict } from '../../src/errors'
+import {
+  noteRefusal,
+  NOTE_TOO_LONG,
+  NO_NOTE,
+  answerRefusal,
+  invalidField,
+  isConflict,
+} from '../../src/errors'
 
 const refused = (details?: Record<string, unknown>) =>
   new ApiError(400, 'validation_error', 'm', details)
@@ -56,5 +63,36 @@ describe('answerRefusal', () => {
     ['a server error', new ApiError(500, 'internal', 'm'), undefined],
   ])('maps %s', (_name, error, expected) => {
     expect(answerRefusal(error)).toBe(expected)
+  })
+})
+
+describe('noteRefusal', () => {
+  it.each([
+    [
+      'a note over the limit',
+      refused({ issues: [{ instancePath: '/note', keyword: 'maxLength' }] }),
+      NOTE_TOO_LONG,
+    ],
+    ['a service refusal naming the note', refused({ field: 'note' }), NO_NOTE],
+    [
+      'another schema issue on the note',
+      refused({ issues: [{ instancePath: '/note', keyword: 'type' }] }),
+      NO_NOTE,
+    ],
+    [
+      'a maxLength issue on another field',
+      refused({ issues: [{ instancePath: '/text', keyword: 'maxLength' }] }),
+      undefined,
+    ],
+    ['a conflict', new ApiError(409, 'conflict', 'm'), undefined],
+    ['a server error', new ApiError(500, 'internal_error', 'm'), undefined],
+    ['anything that is not an ApiError', new Error('network'), undefined],
+  ])('picks the message for %s', (_name, error, message) => {
+    expect(noteRefusal(error)).toBe(message)
+  })
+
+  it('words the messages as the page shows them', () => {
+    expect(NOTE_TOO_LONG).toBe('The note is longer than 4,000 characters.')
+    expect(NO_NOTE).toBe('Say what to change.')
   })
 })
