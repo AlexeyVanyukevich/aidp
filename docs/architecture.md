@@ -1332,7 +1332,7 @@ options as the kit's `RadioGroup` named by the question — the recommended one'
 "(recommended)", an option's impact is its description — a field for an answer in words, and one
 Send answer. Choosing sends nothing. While an option of a single request is chosen, a Clear choice
 button after the group withdraws it, keeps the words and moves focus to the group's first radio. The
-form refuses an approval sent with words before sending it, and a refusal on length says the
+form explains an approval sent with words before sending anything, and a refusal on length says the
 4,000-character limit. Send answer sends the option, the words or both; with neither it
 marks the words field invalid and focuses it. Answering, Resume and Cancel move focus to the card's
 state line before their controls go. A request's context is rendered Markdown, headings starting at

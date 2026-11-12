@@ -120,7 +120,7 @@ test('a question is answered from the keyboard alone, focus landing where it sho
   const card = page.getByRole('dialog', { name: 'Ask about sizes' })
   const panel = card.getByRole('tabpanel', { name: 'Approvals' })
 
-  // The panel's order: the two helps, the options as one group, the field, Send answer.
+  // The panel's order: the two helps, the options as one group, Clear choice, the field, Send answer.
   const suggest = panel.getByRole('button', { name: 'Suggest an answer' })
   const small = panel.getByRole('radio', { name: 'small' })
   const large = panel.getByRole('radio', { name: 'large (recommended)' })
@@ -132,6 +132,8 @@ test('a question is answered from the keyboard alone, focus landing where it sho
   await page.keyboard.press('ArrowDown')
   await expect(large).toBeFocused()
   await expect(large).toBeChecked()
+  await page.keyboard.press('Tab')
+  await expect(panel.getByRole('button', { name: 'Clear choice' })).toBeFocused()
   await page.keyboard.press('Tab')
   await expect(panel.getByRole('textbox', { name: 'Your answer' })).toBeFocused()
   await page.keyboard.press('Tab')
@@ -440,7 +442,7 @@ test('a question shows Clear choice once an option is chosen, and an over-long a
     route.fulfill({
       status: 400,
       json: {
-        code: 'validation_error',
+        error: 'validation_error',
         message: 'm',
         details: { issues: [{ instancePath: '/text', keyword: 'maxLength' }] },
       },
@@ -451,6 +453,58 @@ test('a question shows Clear choice once an option is chosen, and an over-long a
   await expect(words).toBeFocused()
   await expect(words).toHaveAccessibleDescription(/longer than 4,000 characters/)
   await expect(words).not.toHaveAccessibleDescription(/Approving the plan/)
+})
+
+test('a batch question has no Clear choice, even with an option chosen', async ({
+  page,
+  request,
+}) => {
+  const panel = await openApprovals(page, request, 'Clear batch choice', [
+    {
+      ...REQUEST,
+      kind: 'questions',
+      options: [],
+      questions: [
+        { id: 'q1', question: 'First?', context_md: null, options: [{ id: 'a', label: 'Way A' }] },
+        { id: 'q2', question: 'Second?', context_md: null, options: [] },
+      ],
+      question_count: 2,
+    },
+  ])
+  await panel.getByRole('radio', { name: 'Way A' }).check()
+  await expect(panel.getByRole('button', { name: 'Clear choice' })).toHaveCount(0)
+})
+
+test('Use this answer with words at a plan gate unchecks Approve plan and clears the error', async ({
+  page,
+  request,
+}) => {
+  const panel = await openApprovals(page, request, 'Use plan words', [PLAN_REQUEST])
+  const view = {
+    id: '00000000-0000-4000-8000-0000000000a1',
+    approval_id: PLAN_REQUEST.id,
+    decision: 'question',
+    subject: null,
+    question_index: null,
+    mode: 'suggest',
+    status: 'succeeded',
+    result: { mode: 'suggest', text: 'split step 2', reasoning: 'r', unsure: 'u' },
+    reason: null,
+    created_at: '2026-10-20T10:00:00Z',
+  }
+  await page.route('**/api/approvals/*/helps', (route) => route.fulfill({ json: view }))
+  await page.route('**/api/tasks/*/helps', (route) => route.fulfill({ json: [view] }))
+  const approve = panel.getByRole('radio', { name: 'Approve plan' })
+  const changes = panel.getByRole('textbox', { name: 'Changes to ask for' })
+  await approve.check()
+  await changes.fill('but something')
+  await panel.getByRole('button', { name: 'Send answer' }).click()
+  await expect(changes).toHaveAttribute('aria-invalid', 'true')
+  await panel.getByRole('button', { name: 'Suggest an answer' }).click()
+  await panel.getByRole('button', { name: 'Use this answer' }).click()
+  await expect(approve).not.toBeChecked()
+  await expect(changes).toHaveValue('split step 2')
+  await expect(changes).not.toHaveAttribute('aria-invalid', 'true')
 })
 
 test('after Clear choice, words ask the planner for a second plan', async ({ page, request }) => {
@@ -466,6 +520,10 @@ test('after Clear choice, words ask the planner for a second plan', async ({ pag
   await panel.getByRole('button', { name: 'Clear choice' }).click()
   await panel.getByRole('textbox', { name: 'Changes to ask for' }).fill('split step 2')
   await panel.getByRole('button', { name: 'Send answer' }).click()
+  const answered = panel.getByRole('heading', { name: 'Answered' })
+  await expect(answered).toBeVisible(RUN)
   await expect(panel.getByRole('list').filter({ hasText: 'split step 2' })).toBeVisible(RUN)
+  // The planner's second turn opens a second plan request.
   await expect(panel.getByRole('textbox', { name: 'Changes to ask for' })).toBeVisible(RUN)
+  await expect(panel.getByRole('radio', { name: 'Approve plan' })).not.toBeChecked()
 })
