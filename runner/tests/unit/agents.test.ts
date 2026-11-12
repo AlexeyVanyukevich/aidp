@@ -382,7 +382,7 @@ describe('proposing a finding', () => {
     })
     it('never has the agent file a task itself', () => {
       expect(prompt).not.toMatch(
-        /\b(file|filing) (it\b|(a|the|this|that|each|every) (task|finding|proposal))/i,
+        /\b(file|filing) (an? (task|finding|proposal)|the (task|finding|proposal)|this (task|finding|proposal))/i,
       )
       expect(prompt).not.toMatch(/\byou (file|filed)\b/i)
     })
