@@ -399,3 +399,69 @@ describe('list_proposals', () => {
     expect(missing.statusCode).toBe(404)
   })
 })
+
+describe('the advise helper (AC30)', () => {
+  it('reads the proposal and saves an offered variant', async () => {
+    const w = await world()
+    await propose(w, { title: 'Radio cannot be unticked' })
+    const proposal = await db()
+      .selectFrom('proposals')
+      .select('id')
+      .where('run_id', '=', w.runId)
+      .executeTakeFirstOrThrow()
+    const helpRun = await db()
+      .insertInto('runs')
+      .values({ task_id: w.taskId, kind: 'help', number: 1, status: 'running' })
+      .returning('id')
+      .executeTakeFirstOrThrow()
+    const help = await db()
+      .insertInto('helps')
+      .values({
+        run_id: helpRun.id,
+        approval_id: null,
+        decision: 'proposal',
+        subject: JSON.stringify({ proposal_id: proposal.id }),
+        question_index: null,
+        mode: 'advise',
+        status: 'running',
+        result: null,
+        reason: null,
+        phase_id: null,
+        runner_id: null,
+        started_at: new Date(),
+        ended_at: null,
+        last_heartbeat_at: new Date(),
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow()
+    const call = await toolsFor(w.taskId, helpRun.id, undefined, help.id)
+    const decision = JSON.parse((await call('get_decision')).text)
+    expect(decision.proposal).toMatchObject({
+      title: 'Radio cannot be unticked',
+      offered: ['file', 'dismiss'],
+    })
+    expect(decision.offered).toEqual(['file', 'dismiss'])
+    const record = JSON.parse((await call('get_phase_record')).text)
+    expect(JSON.stringify(record.entries)).toContain('Proposed: Radio cannot be unticked')
+    const rows: { args: Record<string, unknown>; names: string | null }[] = [
+      { args: { variant: 'workaround', reasoning: 'r', unsure: 'u' }, names: 'variant' },
+      { args: { variant: 'file', unsure: 'u' }, names: 'reasoning' },
+      { args: { reasoning: 'r', unsure: 'u' }, names: 'variant' },
+      { args: { variant: 'dismiss', reasoning: 'r', unsure: 'u' }, names: null },
+    ]
+    for (const row of rows) {
+      const out = await call('save_help_result', row.args)
+      expect(out.isError).toBe(row.names !== null)
+      if (row.names !== null) expect(out.text).toContain(row.names)
+    }
+    const saved = await db()
+      .selectFrom('helps')
+      .select(['status', 'result'])
+      .where('id', '=', help.id)
+      .executeTakeFirstOrThrow()
+    expect(saved).toMatchObject({
+      status: 'succeeded',
+      result: { mode: 'advise', variant: 'dismiss' },
+    })
+  })
+})

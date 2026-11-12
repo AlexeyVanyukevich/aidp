@@ -39,7 +39,15 @@ export type PhaseName = (typeof PHASE_NAMES)[number]
 export const PHASE_STATUSES = ['running', 'paused', 'succeeded', 'failed'] as const
 export type PhaseStatus = (typeof PHASE_STATUSES)[number]
 
-export const HELP_MODES = ['suggest', 'explain', 'review', 'restate', 'recommend', 'check'] as const
+export const HELP_MODES = [
+  'suggest',
+  'explain',
+  'review',
+  'restate',
+  'recommend',
+  'check',
+  'advise',
+] as const
 export type HelpMode = (typeof HELP_MODES)[number]
 
 /** The modes of a question help; the others belong to a decision of the card. */
