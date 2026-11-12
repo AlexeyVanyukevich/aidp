@@ -360,3 +360,112 @@ test('a question context shows hostile markup as text, and its white space is no
   expect(await context.evaluate((node) => getComputedStyle(node).whiteSpace)).toBe('normal')
   await expectAccessible(page)
 })
+
+const PLAN_REQUEST = {
+  ...REQUEST,
+  kind: 'plan',
+  options: [{ id: 'approve', label: 'Approve plan' }],
+}
+
+test('Clear choice withdraws Approve plan, and an approval with words is refused before sending', async ({
+  page,
+  request,
+}) => {
+  const panel = await openApprovals(page, request, 'Clear plan choice', [PLAN_REQUEST])
+  const clear = panel.getByRole('button', { name: 'Clear choice' })
+  const approve = panel.getByRole('radio', { name: 'Approve plan' })
+  const changes = panel.getByRole('textbox', { name: 'Changes to ask for' })
+  await expect(clear).toHaveCount(0)
+  await expect(panel.getByRole('button', { name: 'Suggest an answer' })).toBeVisible()
+  await expect(panel.getByRole('button', { name: 'Explain simply' })).toBeVisible()
+  await approve.check()
+  await expect(clear).toBeVisible()
+  await expectAccessible(page)
+
+  let posted = 0
+  await page.route('**/api/approvals/*/answer', (route) => {
+    posted += 1
+    return route.abort()
+  })
+  await changes.fill('but split step 2')
+  await panel.getByRole('button', { name: 'Send answer' }).click()
+  expect(posted).toBe(0)
+  await expect(changes).toBeFocused()
+  await expect(changes).toHaveAttribute('aria-invalid', 'true')
+  await expect(changes).toHaveAccessibleDescription(/press Clear choice to ask for changes/)
+
+  await clear.click()
+  await expect(approve).not.toBeChecked()
+  await expect(approve).toBeFocused()
+  await expect(clear).toHaveCount(0)
+  await expect(changes).toHaveValue('but split step 2')
+  await expect(changes).not.toHaveAttribute('aria-invalid', 'true')
+})
+
+test('Clear choice is for a single request only, and the keyboard reaches it in order', async ({
+  page,
+  request,
+}) => {
+  const panel = await openApprovals(page, request, 'Clear plan keys', [PLAN_REQUEST])
+  const approve = panel.getByRole('radio', { name: 'Approve plan' })
+  await approve.check()
+  await panel.getByRole('button', { name: 'Suggest an answer' }).focus()
+  for (const name of ['Explain simply']) {
+    await page.keyboard.press('Tab')
+    await expect(panel.getByRole('button', { name })).toBeFocused()
+  }
+  await page.keyboard.press('Tab')
+  await expect(approve).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(panel.getByRole('button', { name: 'Clear choice' })).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(panel.getByRole('textbox', { name: 'Changes to ask for' })).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(panel.getByRole('button', { name: 'Send answer' })).toBeFocused()
+  await panel.getByRole('button', { name: 'Clear choice' }).focus()
+  await page.keyboard.press('Enter')
+  await expect(approve).not.toBeChecked()
+  await expect(approve).toBeFocused()
+})
+
+test('a question shows Clear choice once an option is chosen, and an over-long answer is explained', async ({
+  page,
+  request,
+}) => {
+  const panel = await openApprovals(page, request, 'Clear question choice', [REQUEST])
+  await expect(panel.getByRole('button', { name: 'Clear choice' })).toHaveCount(0)
+  await panel.getByRole('radio', { name: 'Way A' }).check()
+  await expect(panel.getByRole('button', { name: 'Clear choice' })).toBeVisible()
+  await page.route('**/api/approvals/*/answer', (route) =>
+    route.fulfill({
+      status: 400,
+      json: {
+        code: 'validation_error',
+        message: 'm',
+        details: { issues: [{ instancePath: '/text', keyword: 'maxLength' }] },
+      },
+    }),
+  )
+  await panel.getByRole('button', { name: 'Send answer' }).click()
+  const words = panel.getByRole('textbox', { name: 'Your answer' })
+  await expect(words).toBeFocused()
+  await expect(words).toHaveAccessibleDescription(/longer than 4,000 characters/)
+  await expect(words).not.toHaveAccessibleDescription(/Approving the plan/)
+})
+
+test('after Clear choice, words ask the planner for a second plan', async ({ page, request }) => {
+  const key = await approvedTask(request, ask(), 'Clear choice at the plan gate')
+  await page.goto(appUrl('/p/ASK'))
+  await page
+    .getByRole('region', { name: 'Needs approval' })
+    .getByRole('link', { name: new RegExp(`^${key} `) })
+    .click({ timeout: RUN.timeout })
+  const card = page.getByRole('dialog', { name: 'Clear choice at the plan gate' })
+  const panel = card.getByRole('tabpanel', { name: 'Approvals' })
+  await panel.getByRole('radio', { name: 'Approve plan' }).check()
+  await panel.getByRole('button', { name: 'Clear choice' }).click()
+  await panel.getByRole('textbox', { name: 'Changes to ask for' }).fill('split step 2')
+  await panel.getByRole('button', { name: 'Send answer' }).click()
+  await expect(panel.getByRole('list').filter({ hasText: 'split step 2' })).toBeVisible(RUN)
+  await expect(panel.getByRole('textbox', { name: 'Changes to ask for' })).toBeVisible(RUN)
+})
