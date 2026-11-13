@@ -173,6 +173,8 @@ export interface DecisionResultInput {
         file?: string | undefined
         line?: number | undefined
         matters?: string | undefined
+        choices?: string[] | undefined
+        recommended?: number | undefined
       }[]
     | undefined
   unsure?: string | undefined
@@ -242,6 +244,9 @@ export type DecisionResultMode =
   'review' | 'restate' | 'recommend' | 'check' | 'advise' | 'code_review'
 const LIST_LIMIT = 30
 const WHERE_LIMIT = 100
+const CHOICES_MIN = 2
+const CHOICES_MAX = 5
+const CHOICE_LIMIT = 200
 
 /** A field to fix in a decision help's result, and why. */
 export interface DecisionFinding {
@@ -257,6 +262,9 @@ export interface DecisionFinding {
     | 'not_offered'
     | 'wrong_source'
     | 'invalid_line'
+    | 'too_few'
+    | 'duplicate'
+    | 'unknown_choice'
 }
 
 /** What a decision help's saved result must be. Each finding names the field to fix. */
@@ -281,7 +289,15 @@ export function checkDecisionResult(
   }
   const items = (
     field: 'findings' | 'unfinished',
-    list: { kind?: string; where?: string | undefined; text: string }[] | undefined,
+    list:
+      | {
+          kind?: string
+          where?: string | undefined
+          text: string
+          choices?: string[] | undefined
+          recommended?: number | undefined
+        }[]
+      | undefined,
   ) => {
     if (list === undefined) return
     if (list.length > LIST_LIMIT) findings.push({ field, code: 'too_many' })
@@ -293,7 +309,28 @@ export function checkDecisionResult(
         findings.push({ field, code: 'too_long' })
       if (item.where !== undefined && item.where.trim().length > WHERE_LIMIT)
         findings.push({ field, code: 'too_long' })
+      if (field === 'findings') choiceFindings(item.choices, item.recommended)
     }
+  }
+  const choiceFindings = (choices: string[] | undefined, recommended: number | undefined) => {
+    const field = 'findings'
+    if (choices === undefined) {
+      if (recommended !== undefined) findings.push({ field, code: 'not_allowed' })
+      return
+    }
+    if (choices.length < CHOICES_MIN) findings.push({ field, code: 'too_few' })
+    if (choices.length > CHOICES_MAX) findings.push({ field, code: 'too_many' })
+    const seen = new Set<string>()
+    for (const choice of choices) {
+      const trimmed = choice.trim()
+      if (trimmed === '') findings.push({ field, code: 'required' })
+      else if (trimmed.length > CHOICE_LIMIT) findings.push({ field, code: 'too_long' })
+      else if (seen.has(trimmed)) findings.push({ field, code: 'duplicate' })
+      seen.add(trimmed)
+    }
+    if (recommended === undefined) findings.push({ field, code: 'required' })
+    else if (!Number.isInteger(recommended) || recommended < 0 || recommended >= choices.length)
+      findings.push({ field, code: 'unknown_choice' })
   }
 
   const codeItems = () => {
@@ -304,6 +341,8 @@ export function checkDecisionResult(
       if (!CODE_FINDING_KINDS.includes(item.kind))
         findings.push({ field: 'findings', code: 'unknown_kind' })
       if (item.where !== undefined) findings.push({ field: 'findings', code: 'not_allowed' })
+      if (item.choices !== undefined || item.recommended !== undefined)
+        findings.push({ field: 'findings', code: 'not_allowed' })
       if (blank(item.file)) findings.push({ field: 'findings', code: 'required' })
       else if ((item.file ?? '').trim().length > FILE_LIMIT)
         findings.push({ field: 'findings', code: 'too_long' })
@@ -409,6 +448,12 @@ export function decisionResultOf(
         kind: item.kind as 'missing' | 'contradiction' | 'uncheckable' | 'risk',
         ...where(item.where),
         text: item.text.trim(),
+        ...(item.choices === undefined || item.recommended === undefined
+          ? {}
+          : {
+              choices: item.choices.map((choice) => choice.trim().replace(/\s+/g, ' ')),
+              recommended: item.recommended,
+            }),
       })),
       unsure: t(input.unsure),
     }

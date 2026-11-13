@@ -565,7 +565,7 @@ function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string):
     'save_help_result',
     {
       description:
-        'Save your result. A suggestion: option_id (one the question offers), text, or both, with reasoning and unsure (what you are unsure of). An explanation: asked (what is being asked), matters (why it matters to the task) and leads_to (what each option, or an answer in words, would lead to), and no option. For a decision help the fields depend on the mode. review: verdict (changes or nothing_to_change), findings (kind, where, text) and unsure. restate: changes, requirements and left_out. recommend: why_stopped, action, reasoning and unsure. check: checked_against, produced, unfinished (where, text) and unsure. advise: variant (one the proposal offers now), reasoning and unsure. code_review: verdict (changes or nothing_to_change), findings (kind: bug, breaks, duplicate, fit or test; file; line, optional; text; matters) and unsure. Refused with the field to fix when it does not fit; fix it and save again.',
+        'Save your result. A suggestion: option_id (one the question offers), text, or both, with reasoning and unsure (what you are unsure of). An explanation: asked (what is being asked), matters (why it matters to the task) and leads_to (what each option, or an answer in words, would lead to), and no option. For a decision help the fields depend on the mode. review: verdict (changes or nothing_to_change), findings (kind, where, text; a finding may carry choices, 2 to 5 short ways to settle it, with recommended the index of the one you would choose) and unsure. restate: changes, requirements and left_out. recommend: why_stopped, action, reasoning and unsure. check: checked_against, produced, unfinished (where, text) and unsure. advise: variant (one the proposal offers now), reasoning and unsure. code_review: verdict (changes or nothing_to_change), findings (kind: bug, breaks, duplicate, fit or test; file; line, optional; text; matters) and unsure. Refused with the field to fix when it does not fit; fix it and save again.',
       inputSchema: {
         option_id: z.string().optional(),
         text: z.string().optional(),
@@ -584,6 +584,8 @@ function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string):
               file: z.string().optional(),
               line: z.number().optional(),
               matters: z.string().optional(),
+              choices: z.array(z.string()).optional(),
+              recommended: z.number().optional(),
             }),
           )
           .optional(),
