@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import type { PlanData, ReportData, RunView, Work } from './contract.js'
 import type { RunnerConfig } from './config.js'
 import type { Git } from './git.js'
-import { buildHandoff, type HandoffInput } from './phases/handoff.js'
+import { buildHandoff, DIFF_MAX, type HandoffInput } from './phases/handoff.js'
+import { diffSections, type DiffSection } from './pr-diff.js'
+import { cutLines } from './verify-cuts.js'
 import { formatViolations, newlyChanged, readApprovedCopies, violationsOf } from './files-gate.js'
 import {
   BASE_CONFLICT_REPORT,
@@ -89,6 +91,10 @@ const PR_UNTESTED = 20
 const PLAN_QUESTION =
   'The planner is not confident in this plan. Approve it, or say what to change.'
 
+const VERIFY_DIFF_FILE = 'verify.diff'
+const TEST_OUTPUT_FILE = 'test-output.txt'
+const VERIFY_CUTS_FILE = 'verify-cuts.md'
+
 /**
  * Carries a delivery run out from where it stands (slice 2 spec, §6): from the start, or from a
  * checkpoint with the owner's answer or a nudge. Each stage sends a checkpoint as it begins and
@@ -159,6 +165,7 @@ export async function carryOut(
     ])
     const text = `exit code: ${result.timedOut ? 'killed after timeout' : String(result.exitCode)}\n${result.truncated ? '[output cut to its end]\n' : ''}${result.output}`
     testOutput = text
+    writeFileSync(join(runDir, TEST_OUTPUT_FILE), text)
     return result
   }
 
@@ -263,12 +270,26 @@ export async function carryOut(
         ? undefined
         : `Before the test command ran, the runner undid these paths the build left uncommitted:\n${undone.join('\n')}\nOnly committed work is tested, shown in the diff and pushed.`
     const note = [moved, undoneNote].filter((n) => n !== undefined).join('\n\n')
+    const diff = await deps.git.diff(worktree, project.base_branch)
+    const output = testOutput ?? ''
+    writeFileSync(join(runDir, VERIFY_DIFF_FILE), diff)
+    let sections: DiffSection[] | null = null
+    if (diff.length > DIFF_MAX) {
+      try {
+        sections = diffSections(diff, await deps.git.diffPaths(worktree, project.base_branch))
+      } catch {
+        sections = null
+      }
+    }
+    const cuts = cutLines(diff, sections, output)
+    if (cuts === '') rmSync(join(runDir, VERIFY_CUTS_FILE), { force: true })
+    else writeFileSync(join(runDir, VERIFY_CUTS_FILE), cuts)
     return buildHandoff({
       ...common,
       ...(note === '' ? {} : { note }),
       plan: plan.body_md,
-      testOutput: testOutput ?? '',
-      diff: await deps.git.diff(worktree, project.base_branch),
+      testOutput: { text: output, path: resolve(runDir, TEST_OUTPUT_FILE) },
+      diff: { text: diff, path: resolve(runDir, VERIFY_DIFF_FILE) },
       planAnswers: run.plan_answers ?? [],
     })
   }
@@ -354,6 +375,12 @@ export async function carryOut(
         ? ''
         : `## Not tested with this change\n\n${[...listed, ...(more > 0 ? [`and ${more} more`] : [])].join('\n')}\n\n`
     return `Tested on \`${project.base_branch}\` at \`${tested}\`.\n\n${section}`
+  }
+
+  /** The pull request body's note on what the Verify handoff left out; '' when it left out nothing. */
+  const verifyCuts = (): string => {
+    const file = join(runDir, VERIFY_CUTS_FILE)
+    return existsSync(file) ? readFileSync(file, 'utf8') : ''
   }
 
   const gateReport = () => {
@@ -755,7 +782,7 @@ export async function carryOut(
               base: project.base_branch,
               branch,
               title: `${task.key}: ${task.title}`,
-              body: `${task.key}, run ${run.number}, spec v${specOf().version}.\n\n${testedSection()}## Verify report\n\n${report?.body_md ?? ''}\n`,
+              body: `${task.key}, run ${run.number}, spec v${specOf().version}.\n\n${testedSection()}${verifyCuts()}## Verify report\n\n${report?.body_md ?? ''}\n`,
             }))
           return { outcome: 'review' as const, extra: { pr_number: pr.number, pr_url: pr.url } }
         }

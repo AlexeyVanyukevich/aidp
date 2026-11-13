@@ -83,6 +83,10 @@ export interface Script {
     output?: string
     truncated?: boolean
   }[]
+  /** The diff each Verify handoff reads, in turn (the last repeats); `+change` when none. */
+  diffs?: string[]
+  /** The paths the diff's listing returns; the diff's own `diff --git` paths when none. */
+  diffPaths?: string[]
   /** The worktree's HEAD once each Build that ends ok has run, in turn; none leaves it be. */
   buildHeads?: (string | undefined)[]
   setupCommand?: string
@@ -131,6 +135,7 @@ export function harness(script: Script) {
   const gitCalls: string[] = []
   /** The body of each pull request created. */
   const prBodies: string[] = []
+  let diffCalls = 0
   /** Where each push and pull request was made. */
   const writes: string[] = []
   const used: Record<string, number> = {}
@@ -293,7 +298,15 @@ export function harness(script: Script) {
       gitCalls.push(`worktree ${branch}`)
     },
     newCommits: async () => script.commits?.[Math.max(builds - 1, 0)] ?? 1,
-    diff: async () => '+change',
+    diff: async () => {
+      const list = script.diffs ?? ['+change']
+      return list[Math.min(diffCalls++, list.length - 1)] ?? ''
+    },
+    diffPaths: async () =>
+      script.diffPaths ??
+      [
+        ...(script.diffs?.[Math.max(diffCalls - 1, 0)] ?? '').matchAll(/^diff --git a\/(.*) b\//gm),
+      ].map((m) => m[1] ?? ''),
     head: async () => headNow,
     changedPaths: async () => {
       changedCalls += 1

@@ -25,8 +25,10 @@ export interface HandoffInput {
   /** Build only: the migrations the owner approved, each with the text they reviewed. */
   approvedMigrations?: { path: string; content: string }[] | undefined
   verifyReport?: string
-  testOutput?: string
-  diff?: string
+  /** Verify only: the test output text and the absolute path of the file that holds all of it. */
+  testOutput?: { text: string; path: string }
+  /** Verify only: the diff and the absolute path of the file that holds all of it. */
+  diff?: { text: string; path: string }
   /** The read-only checkouts of the projects this one links to. */
   linked?: LinkedElement[]
 }
@@ -60,6 +62,46 @@ function cut(label: string, text: string, max: number): string {
   return text.length <= max
     ? text
     : `${text.slice(0, max)}\n[${label} cut: ${text.length - max} more characters]`
+}
+
+export const DIFF_MAX = 60_000
+export const TEST_OUTPUT_MAX = 20_000
+const OUTPUT_CUT_LINE = '[output cut to its end]'
+
+/** What a diff longer than the bound loses: its length past the bound, and the line it resumes on. */
+export function diffCutPoint(diff: string): { more: number; line: number } {
+  const kept = diff.slice(0, DIFF_MAX)
+  return { more: diff.length - DIFF_MAX, line: kept.split('\n').length }
+}
+
+/** The diff as the handoff shows it: the first 60,000 characters and a marker naming the rest. */
+export function diffCut(diff: string, path: string): string {
+  if (diff.length <= DIFF_MAX) return diff
+  const kept = diff.slice(0, DIFF_MAX)
+  const { more, line } = diffCutPoint(diff)
+  return `${kept}${kept.endsWith('\n') ? '' : '\n'}[diff cut: ${more} more characters; the rest begins at line ${line} of ${path}]`
+}
+
+/** The test-output text split into its head (its first line, and the runner's cut line) and rest. */
+export function splitTestOutput(text: string): { head: string; rest: string } {
+  const first = text.indexOf('\n')
+  if (first === -1) return { head: '', rest: text }
+  let end = first + 1
+  if (text.startsWith(`${OUTPUT_CUT_LINE}\n`, end)) end += OUTPUT_CUT_LINE.length + 1
+  return { head: text.slice(0, end), rest: text.slice(end) }
+}
+
+/** How many characters of the rest the test-output cut leaves out; 0 when it cuts nothing. */
+export function testOutputLeftOut(text: string): number {
+  return Math.max(0, splitTestOutput(text).rest.length - TEST_OUTPUT_MAX)
+}
+
+/** The test output as the handoff shows it: its head and the last 20,000 characters of the rest. */
+export function testOutputCut(text: string, path: string): string {
+  const { head, rest } = splitTestOutput(text)
+  if (rest.length <= TEST_OUTPUT_MAX) return text
+  const left = rest.length - TEST_OUTPUT_MAX
+  return `${head}[test output cut: ${left} earlier characters; all of them are in ${path}]\n${rest.slice(left)}`
 }
 
 const PLAN_ANSWERS_MAX = 20_000
@@ -138,10 +180,10 @@ export function buildHandoff(input: HandoffInput): string {
     parts.push(`<verify_report>\n${escape(input.verifyReport)}\n</verify_report>`)
   if (input.testOutput !== undefined)
     parts.push(
-      `<test_output>\n${escape(cut('test output', input.testOutput, 20_000))}\n</test_output>`,
+      `<test_output>\n${escape(testOutputCut(input.testOutput.text, input.testOutput.path))}\n</test_output>`,
     )
   if (input.diff !== undefined)
-    parts.push(`<diff>\n${escape(cut('diff', input.diff, 60_000))}\n</diff>`)
+    parts.push(`<diff>\n${escape(diffCut(input.diff.text, input.diff.path))}\n</diff>`)
   const linked = input.linked ?? []
   if (linked.length > 0) parts.push(linkedProjects(linked))
   parts.push(

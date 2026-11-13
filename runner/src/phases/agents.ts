@@ -1,4 +1,5 @@
 import type { PhaseName } from '../contract.js'
+import { GENERATED_SUFFIXES, LOCKFILES } from '../pr-diff.js'
 
 const BOARD = (tools: string[]) => tools.map((tool) => `mcp__board__${tool}`)
 
@@ -140,6 +141,15 @@ export const PHASES: Record<PhaseName, PhaseConfig> = {
   },
 }
 
+/** How the verifier reads what the handoff cut: R9 of the cuts spec. */
+const VERIFIER_READING = [
+  'The files the markers of the handoff name are in the run directory, outside the worktree. You may read them, with Read, Grep and read-only Bash commands, though the handoff says to work only inside the worktree. Never change them.',
+  'When <diff> ends with the `[diff cut: …]` marker, the rest of the diff is in the file the marker names, from the line it gives. Before reading on, Grep that file for `^diff --git ` with output_mode content, line numbers on and head_limit 0, so no match is dropped. When the Grep result was saved to a file, Read that file. Keep the matches at or after the line the marker gives and, when no match is on that line, the last match before it, which begins the section the cut splits. The kept matches are the files not wholly in the handoff, each with the line where its section begins.',
+  `Then read, from the given line to the end, every section except a lockfile’s or a generated file’s. Lockfiles are the files named ${[...LOCKFILES].map((n) => `\`${n}\``).join(', ')}; generated files are those whose names end in ${GENERATED_SUFFIXES.map((n) => `\`${n}\``).join(', ')}. Use Read’s offset and limit, in parts of at most 1,000 lines, and halve a part that Read refuses as too large. When Read cuts a line at 2,000 characters, read the rest of that line with a read-only Bash command, for example \`sed -n '<L>p' <file>\` piped to \`cut -c 2001-4000\`.`,
+  'When <test_output> carries the `[test output cut: …]` marker, the characters left out are in the file the marker names. The `[output cut to its end]` line means the runner kept only the end of the command’s output, and what came before it is in no file.',
+  'Never give pass to a criterion whose evidence lies in a part of the diff or of the test output you did not read: read that part first. A file counts as read in part when a line of it that Read cut was not then read whole with Bash, or when reading stopped before the end of its section. Your summary names each changed file you did not read whole, including any lockfile or generated file you skipped, or says that you read every changed file whole.',
+].join('\n\n')
+
 const SUBAGENTS =
   'When you use the explorer agent, always pass run_in_background: false and wait for its answer.'
 
@@ -262,7 +272,8 @@ export const AGENTS: Record<
     model: 'sonnet',
     tools: PHASES.verify.tools,
     prompt: [
-      'You verify one task of a board. You did not write this code; judge it by the spec, the plan’s `Withdrawn by the owner` list, the owner’s plan-gate answers (the <plan_answer> tags), the diff and the test output in the handoff.',
+      'You verify one task of a board. You did not write this code; judge it by the spec, the plan’s `Withdrawn by the owner` list, the owner’s plan-gate answers (the <plan_answer> tags), the diff and the test output in the handoff, and the files those two name.',
+      VERIFIER_READING,
       'For every acceptance criterion decide a verdict, with evidence: a test name, a line of the diff, a command and its output. You may run read-only commands to check; do not edit files.',
       'A criterion the spec marks as an owner check (owner in its parentheses) gets fail when you can see the work is wrong, and otherwise owner, with evidence of what you did check; it never gets pass. An owner verdict sends the criterion to the owner at the pull request, not back to Build. Every other criterion gets pass or fail, never owner.',
       'A criterion the plan lists as withdrawn gets withdrawn, with evidence naming the owner’s answer it rests on. No other criterion gets withdrawn. A withdrawn criterion never goes back to Build.',
