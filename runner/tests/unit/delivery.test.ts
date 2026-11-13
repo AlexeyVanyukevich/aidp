@@ -2422,6 +2422,24 @@ describe('the test command’s result', () => {
     expect(starts(h)).toEqual(['verify-2'])
   })
 
+  it('R14: a Build that leaves only uncommitted changes, HEAD unchanged, blocks', async () => {
+    const h = harness({ testResults: [FAIL], trees: [{}, { uncommitted: ['src/retry.ts'] }] })
+    expect(await carryOut(START as Extract<Work, { kind: 'start' }>, h.deps)).toBe('released')
+    expect(h.testRuns).toHaveLength(1)
+    const [block] = blocks(h)
+    expect(
+      block?.output?.startsWith('the build changed nothing after the test command failed\n'),
+    ).toBe(true)
+  })
+
+  it('R14: with no gate-head.txt a Build is not checked', async () => {
+    const h = withPlan(harness({}))
+    const cp = { ...checkpoint('build', 2), failing_report_id: TEST_FAILED }
+    expect(await carryOut(resumed(cp), h.deps)).toBe('review')
+    expect(blocks(h)).toEqual([])
+    expect(h.testRuns).toHaveLength(1)
+  })
+
   describe('a Verify that finds the test command not passing', () => {
     const verifyAt = (attempt: number, phase?: string) =>
       resumed(checkpoint('verify', attempt, phase))
