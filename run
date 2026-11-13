@@ -315,6 +315,31 @@ scenario_check() {
   ok "Everything is clean"
 }
 
+# The journeys launch Chromium: without it they all fail, long after the checks have run.
+need_chromium() {
+  node -e "import('@playwright/test').then(async ({ chromium }) => { await (await chromium.launch()).close() })" \
+    >/dev/null 2>&1 ||
+    die "Chromium cannot start." "Install it:  npx playwright install chromium"
+}
+
+# `check`, then the browser journeys with one retry, then the flaky journeys. The journeys' exit
+# code is the scenario's. The flaky block is printed only once the journeys ran: Playwright
+# empties test-results/ when it starts, so before then the report is the previous run's.
+scenario_check_all() {
+  need_node; need_deps; need_docker; need_chromium
+  local check_rc=0 journeys_rc=0
+  # Not `|| check_rc=$?`: that would switch errexit off inside scenario_check.
+  set +e
+  ( set -e; scenario_check )
+  check_rc=$?
+  set -e
+  [ "$check_rc" -eq 0 ] || return "$check_rc"
+  step "The browser journeys against the whole product"
+  npx playwright test --retries=1 || journeys_rc=$?
+  npx tsx runner/scripts/flaky-journeys.ts || true
+  return "$journeys_rc"
+}
+
 scenario_migrate() {
   need_node; need_deps; need_plugins; need_hooks; need_local_env
   start_db
@@ -354,6 +379,7 @@ ${BOLD}./run <scenario>${OFF}
   ${BOLD}test${OFF}       every workspace's suite
   ${BOLD}test:ui${OFF}    the browser journeys, with a fake claude
   ${BOLD}check${OFF}      types, lint, formatting and the suites
+  ${BOLD}check:all${OFF}  check, then the browser journeys (one retry each) and the flaky ones they list
   ${BOLD}migrate${OFF}    apply migrations to the local database
   ${BOLD}smoke${OFF}      one real task against a throwaway repository (spends tokens); --draft: drafted spec
   ${BOLD}price:set${OFF}  record a model's price: <model> <input> <output> <cache_read> <cache_write> [from]
@@ -370,6 +396,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     test)         scenario_test ;;
     test:ui)      scenario_test_ui ;;
     check)        scenario_check ;;
+    check:all)    scenario_check_all ;;
     migrate)      scenario_migrate ;;
     price:set)    scenario_price_set "$@" ;;
     smoke)        scenario_smoke "$@" ;;
