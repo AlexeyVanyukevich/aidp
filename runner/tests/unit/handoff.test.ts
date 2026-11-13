@@ -466,7 +466,7 @@ describe('the flaky block at the end of a long test output', () => {
     const text = `exit code: 0\n${'r'.repeat(30_000)}\n${BLOCK}`
     const handoff = buildHandoff({ ...BASE, phase: 'verify', testOutput: { text, path: T } })
     expect(handoff).toContain('[test output cut:')
-    expect(handoff).toContain(BLOCK.replace('›', '›'))
+    expect(handoff).toContain(BLOCK)
   })
 })
 
