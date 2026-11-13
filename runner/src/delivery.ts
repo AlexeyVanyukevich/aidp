@@ -693,6 +693,8 @@ export async function carryOut(
             if (!(error instanceof TestsNotPassed)) throw error
             await steps.stopIfShuttingDown()
             await actOnTests(error.result)
+            // The board's checkpoint still names the verify phase just ended: replace it now.
+            await steps.checkpoint()
             break
           }
           if (!result.ok) await steps.failPhase('verify')

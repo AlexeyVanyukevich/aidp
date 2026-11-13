@@ -2457,8 +2457,13 @@ describe('the test command’s result', () => {
       expect(h.calls).toContain('end verify-1 failed')
       expect(h.restarts).toEqual([])
       expect(starts(h)[0]).toBe('build-2')
-      const first = h.checkpoints().find((c) => c.stage === 'build' && c.attempt === 2)
-      expect(first?.phase_id).not.toBe('ph')
+      // Written before anything else: a runner that dies now resumes at Build, not at the ended phase.
+      expect(h.checkpoints()[0]).toMatchObject({
+        stage: 'build',
+        attempt: 2,
+        phase_id: null,
+        failing_report_id: 'test_command',
+      })
     })
 
     it('AC14: on attempt 3 the same ends the phase and blocks', async () => {
