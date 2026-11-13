@@ -9,7 +9,9 @@ export default defineConfig({
   fullyParallel: false,
   retries: 0,
   timeout: 120_000,
-  reporter: [['list']],
+  // The json report lands in test-results/, which Playwright empties at the start of each run;
+  // `./run check:all` reads it for the flaky journeys.
+  reporter: [['list'], ['json', { outputFile: 'test-results/report.json' }]],
   use: { trace: 'retain-on-failure' },
   projects: [
     {
