@@ -306,6 +306,12 @@ goes to the field. Spec runs and delivery runs are numbered apart: "Draft 2", "R
 delivery branch `board/<KEY>-r<n>` counts delivery runs only. Claiming a spec run moves no card,
 and one whose card has left Spec draft is cancelled at claim.
 
+In a redraft note, a line that begins after its indent with "Open choice, ask me:" leaves the choice
+under the line before it to the owner: the spec-writer asks about it in its batch of questions,
+offering the line's choices as options without the "(recommended)" mark and giving the marked one
+as the question's recommendation, and never decides it. A line that begins with "Decision:" is the
+owner's decision on the finding above it, and the writer follows it.
+
 The runner (`runner/src/drafting.ts`) checks out a detached worktree of `origin/<base>` — no
 branch, nothing is pushed — then runs one phase, `spec`: the spec-writer on Opus at high effort,
 with Read, Grep, Glob and the board's `get_task`, `get_spec`, `list_projects`, `list_tasks`,
@@ -727,13 +733,17 @@ delivery run with its report and pull request). For a stopped run, `get_phase_re
 run's latest non-help phase: the newest 300 entries in time order and `earlier_left_out`, the
 number before them. A question help's `get_phase_record` still takes the first 300 events, as the
 backlog says. `save_help_result` checks a result by mode and names the field to fix: `review` (a
-verdict, findings that are empty exactly when nothing is to change, what it is unsure of),
+verdict, findings that are empty exactly when nothing is to change, what it is unsure of; a
+finding may carry `choices`, 2 to 5 strings of at most 200 characters each, none blank or equal
+after trimming, with `recommended`, the index of one of them, given together: refused as too few,
+too many, required, too long, duplicate, not allowed (`recommended` alone) or unknown choice; each
+choice is stored trimmed with its whitespace runs turned into one space),
 `restate` (what changes, what it requires, what it leaves out), `recommend` (why it stopped, an
 action among the recommendable ones, reasoning, unsure) and `check` (what it checked against,
 which must equal the source for the card's state, what the runs produced, the unfinished items,
 unsure), and `code_review` (a verdict as in `review`; findings of at most 30, each a `kind` among
 `bug`, `breaks`, `duplicate`, `fit` and `test`, a `file`, an optional `line` of at least 1, `text`
-and `matters`). A saved review stores each finding as `{ kind, where, text, matters }`, `where`
+and `matters`; neither `choices` nor `recommended` is allowed on one). A saved review stores each finding as `{ kind, where, text, matters }`, `where`
 being `file` or `file:line`, and the result carries `commit` and `skipped`, which the server
 takes from the payload of the help run's `help_checkout` event: the commit or null, and the files
 skipped by name (`{ path, skip }`) or none. The PR tab shows `skipped` as "Not reviewed", so the
@@ -1405,10 +1415,19 @@ form is shown, the button Use these findings; "v<n> in plain words": What change
 requires, What it leaves out), with a failure line "No spec review for v<n>: <reason>". Use these
 findings puts one line per finding, `- <kind> (<where>): <text>` or `- <kind>: <text>` without a
 where, into What to change: alone when the field is blank, else after the words already there and
-a blank line. A second press adds the lines again. Unsure about stays out. It sends nothing and
-changes no decision button; focus moves to the field with the caret at its end, any error on the
-field is cleared, and "Findings put in What to change." is announced in the tab's status region on
-every press, repeated ones included. The card's action bar reads Move up, Move down, Mark done,
+a blank line. A second press adds the lines again. Unsure about stays out. When the Redraft form is
+shown, each finding also holds a radio group "What to do with finding <n>": "Use as written"
+(checked first), the finding's own choices in their saved order with " (recommended)" on the
+helper's pick, then "Leave out"; no choice is checked by default. The picks are held in the page
+only and reset to "Use as written" when a different review result is shown. A picked choice adds
+the line `  Decision: <choice>` (the choice alone, without the mark) under its finding; a finding
+with choices left "Use as written" adds `  Open choice, ask me: A (recommended); or B`, the
+choices in order with "or" before the last; a finding left out adds nothing. Without the form a
+finding with choices shows "Choices: A; B (recommended)" as text. It sends nothing and changes no
+decision button; focus moves to the field with the caret at its end, any error on the field is
+cleared, and "Findings put in What to change." is announced in the tab's status region on every
+press, repeated ones included. When every finding is left out the note stays as it was, and
+"Every finding is left out; What to change is unchanged." is announced instead. The card's action bar reads Move up, Move down, Mark done,
 Check what is unfinished, Resume, Cancel run, Re-run with this plan, Re-run and plan again, Suggest
 what to do, each where it is shown. Their results ("Suggested next step", "What is unfinished") sit
 in one region after the status region and problem notice and before the Test command field, each
