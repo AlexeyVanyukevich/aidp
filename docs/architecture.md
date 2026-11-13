@@ -504,7 +504,8 @@ three verdicts here (a fourth, `withdrawn`, is below) through `save_report`: `pa
 check. `save_report` refuses `owner` on an unmarked criterion (`owner_on_unmarked_criterion`) and
 `pass` on an owner check (`pass_on_owner_check`), saving nothing. A report with no `fail` opens the
 pull request whether the rest are `pass` or `owner`; one `fail` starts the next Build round, and
-the third ends the run `failed` with "verify failed three times". The owner sees what is left to
+the third ends the run `failed` with "verify failed three times" (a failing test command is not a
+criterion failure: see "The tests stage on the current base"). The owner sees what is left to
 them as a sentence — "1 criterion is yours to check: AC5." or "2 criteria are yours to check:
 AC5, AC6." — before the report table in the pull request body and above the table in the card's
 PR tab, where an `owner` verdict is a `warning` badge with the text `owner`. The planner's check
@@ -914,7 +915,7 @@ migration the owner has not approved (even if the plan lists it), is a violation
 runner writes `files-gate-report.md` in the run directory, does not run the test command, and sends Build round again with
 the failing report `files_gate` in the checkpoint; `handoffFor('build')` reads the report from
 the file, or uses a fixed text when it is missing. The report wins over a build with no commit,
-and a run resumed at the `tests` stage runs the gate again. It shares Verify's three attempts;
+and a run resumed at the `tests` stage runs the gate again. It shares the three Build attempts;
 a violation on attempt 3 ends the run `failed` with `the build changed files the run does not
 allow, on attempt 3: <paths>` (the first 20 paths, then `and <n> more`). Each gate run sends a
 runner `tool_call` event `files_gate`: `error` with `<n> paths the run does not allow` and the
@@ -955,7 +956,63 @@ runner:
    success runs setup, rewrites `excluded-paths.json` and writes `setup-base.txt`.
 6. Writes the worktree's HEAD to `gate-head.txt` (its only write), so the push stage compares
    against the rebased HEAD, and the fetched `origin/<base>` commit to `tested-base.txt`. Then the
-   test command runs.
+   test command runs, and the runner acts on its result (below).
+
+_The test command's result._ This applies to every project's test command. Every run of the
+`tests` stage runs the test command, a Resume's included, whatever HEAD is. A run has one of four
+results, decided in this order: timed out (`timedOut`), passed (`exitCode` 0), failed (any other
+number, including one such as 137 from a child killed by a signal), and not run or killed
+(`exitCode` null with `timedOut` false). The `test_command` event is sent first, whatever the
+result. The same applies when the test command runs inside a Verify started afresh after a resume.
+
+- Passed: the run goes on to Verify.
+- Failed on attempt 1 or 2: no verifier starts. The runner writes `test-command-report.md` (the
+  command, `exit code: <n>`, a line `[output cut to its end]` when the output was cut, the last
+  20,000 characters of the output, and the instruction to make the command pass and commit,
+  changing only the plan's files, and to say in the summary, changing nothing, when the failure is
+  not in them), and Build goes round again with the failing report `test_command` in the
+  checkpoint. `handoffFor('build')` reads the file, or a fixed text naming the test command when it
+  is missing.
+- Failed on attempt 3: the run is blocked, not ended, as `step_failed` at `tests`, with the attempt
+  at 3. The block's command is the test command; its output is the first line below, the line
+  `exit code: <n>`, the last 4,096 characters of the output, and the instruction.
+- Timed out, or not run or killed, on any attempt: the run is blocked the same way with the attempt
+  unchanged and no Build or Verify. The output is the matching first line below, the last 4,096
+  characters of the output, the line on a cause outside the code below, and the instruction.
+- A Build that changed nothing: when a Build ends ok on an attempt whose failing report is
+  `test_command` and HEAD equals the commit in `gate-head.txt`, the runner does not run the test
+  command again. The Build phase ends as succeeded and the run is blocked at `tests`, attempt
+  unchanged, with the first line below and the instruction. This check is made when a Build ends,
+  never by the `tests` stage.
+
+The blocks' first lines, and the line on a cause outside the code that only a timeout or a
+command that did not run adds before the instruction:
+
+```
+the test command failed on attempt 3
+the test command was killed after its timeout
+the test command did not run or was killed
+the build changed nothing after the test command failed
+If the cause was outside the code, for example the machine slept or the disk was full, Resume runs the command again as it is.
+```
+
+The instruction that ends each block reads: ``In <worktree>, make `<test command>` pass and
+commit the fix, then Resume. A failure in a file outside the plan is fixed on the base branch
+instead: push the fix to `origin/<base>`, then Resume, and the tests stage rebases the branch onto
+it before the command runs. Only committed work is tested: Resume undoes uncommitted changes first,
+and a path outside the plan committed in the worktree fails the files gate, which ends the run on
+attempt 3.`` Resume runs the `tests` stage again from step 1.
+
+In a Verify started afresh after a resume, a result other than passed acts the same way from the
+`tests` stage: a fresh verify phase is dropped without a `phase_end`, a recorded phase whose
+session is gone ends as not succeeded (`phase_end` `failed`) and is never restarted, and the
+checkpoint then written names no verify phase.
+
+A failure outside the plan's files costs one Build round, not two: the builder says so and changes
+nothing, and the run blocks with `the build changed nothing after the test command failed`. A run
+whose test command already fails on the base, or fails at random, and whose Builds keep
+committing, uses up the three Build attempts and then blocks, or ends `failed` at the files gate
+when a Build changed a path outside the plan.
 
 Before every run of the test command, in this stage and in a Verify resumed with no test output,
 the runner undoes the builder's uncommitted paths (those not in `excluded-paths.json`) and keeps
@@ -994,7 +1051,7 @@ rebase --abort` (which leaves the branch as it was), undoes every uncommitted pa
 instruction to run `git rebase origin/<base>`, resolve, `git add` and `git rebase --continue`. A
 `base_rebase` event with status `error`, target `<n> paths conflict with the base` and payload `to`
 and `conflicts` is sent. On attempt 1 or 2 Build goes round again with the failing report
-`base_conflict` in the checkpoint, sharing Verify's three attempts; `handoffFor('build')` reads the
+`base_conflict` in the checkpoint, sharing the three Build attempts; `handoffFor('build')` reads the
 report from the file, or uses a fixed text when it is missing. On attempt 3 the run is blocked
 instead of ended: `step_failed` at `tests`, command `git rebase origin/<base>`, output the paths
 and the instruction to rebase by hand and Resume. The attempt stays at 3, and Resume runs the
