@@ -33,6 +33,14 @@ Backlog → (Draft spec, or the owner saves a spec) → Spec draft → Spec revi
   Needs approval and Blocked → Failed on Cancel of a delivery run. Failed → Ready on Re-run,
   which has two choices (below).
 
+Every move runs in a transaction: `moveTask` takes only a `Transaction`, locks the task row with
+`for update` before it checks the move is legal, and holds the lock to the commit, so a move that
+conflicts with one committed meanwhile waits and then fails with a `409 conflict` instead of
+overwriting it. The same transaction settles the task's decision helps (`settleHelps`). This holds
+for the PR poller's merge and close and for the owner's drag to Done and Mark done as for every
+other move; the poller logs a `ConflictError` on one card ("the PR poller could not move a card",
+with the task's id, its key and the move) and goes on to the next card in the tick.
+
 Every move goes through `server/src/modules/tasks/transitions.ts`, a pure table; nothing else
 writes `tasks.state`. Where a destination depends on the latest run's kind or on whether the task
 has a spec, the caller reads those facts (`moveFacts`) and the table picks the state. The
@@ -679,12 +687,21 @@ decision, its modes and when it is offered, and `tests/fixtures/decisions.json` 
 the server's rules and the web's `actionsFor` and `decisionsFor` are all tested against.
 `spec_review` (modes `review`, `restate`) is offered in Spec review; `stopped_run` (`recommend`)
 on a Failed card, or a Blocked one whose cause is not `approval_expired`; `mark_done` (`check`) in
-Backlog, Spec review, Review and Failed. `POST /api/tasks/:id/helps` takes `{ decision, mode }`:
+Backlog, Spec review, Review and Failed; `pull_request` (`code_review`) in Review when the latest
+delivery run has a pull request (`hasPullRequest`, shown to the web as `has_pull_request`). `POST /api/tasks/:id/helps` takes `{ decision, mode }`:
 inside one transaction it takes the task row lock that `moveTask` takes, checks the decision is
 offered (`409 not_offered` when it is not), and records a `helps` row with a **subject** (the spec
 version; or the stopped run, the task state and the block; or the task state, spec version and
 delivery run) and a run of its own of kind `help`. A press while a help of that decision and mode
 is queued or running answers with it.
+
+A `pull_request` help's subject is `{ pr_run_id }`, the latest delivery run's id when it was asked.
+It stands while the decision is offered and that run is still the latest, so a push to the branch
+outside the board does not retire it: the owner presses Review pull request again to review the new
+head. A review runs only when the owner asks. It is never posted to GitHub: helpers are read-only,
+and the board runs exactly three `gh` commands, `pr view`, `pr list` and `pr create`. The server's
+`realGh` and the runner's `Git.run` check the first two arguments against that list before they
+spawn anything and refuse any other with "the board does not run gh <first> <second>".
 
 A `help` run never has status `running` and is never claimed through `POST /api/runner/claim`
 (which refuses `help` in `kinds`): it is `queued` with a null `queued_at`, and it ends in the
@@ -714,7 +731,13 @@ verdict, findings that are empty exactly when nothing is to change, what it is u
 `restate` (what changes, what it requires, what it leaves out), `recommend` (why it stopped, an
 action among the recommendable ones, reasoning, unsure) and `check` (what it checked against,
 which must equal the source for the card's state, what the runs produced, the unfinished items,
-unsure).
+unsure), and `code_review` (a verdict as in `review`; findings of at most 30, each a `kind` among
+`bug`, `breaks`, `duplicate`, `fit` and `test`, a `file`, an optional `line` of at least 1, `text`
+and `matters`). A saved review stores each finding as `{ kind, where, text, matters }`, `where`
+being `file` or `file:line`, and the result carries `commit`, which the server takes from the
+payload of the help run's `help_checkout` event, or null. For a `pull_request` help `get_decision`
+returns the run's number, branch and pull request, the approved spec, the run's accepted plan or
+null, and its latest Verify report or null.
 
 A decision help is claimed on the help lane (`POST /api/runner/helps/claim`) and shares its three
 slots with question helps. The work carries the project's `repo_path` and `base_branch`, the
@@ -726,10 +749,25 @@ to `origin/<base>` when origin no longer has it; `paused_run` uses the paused ru
 when it exists — copying its `linked.json`, making and removing nothing — and a detached
 `origin/<base>` worktree when it does not; `base` makes that worktree. A worktree it makes comes
 with linked checkouts under `~/.aidp/worktrees/<help run id>-linked/`, and no setup command runs.
-A `help_checkout` event records the ref read, the source and whether it fell back; the helper's
-first message carries a `<checkout ref source/>` element. A failed fetch or worktree add fails the
+A `help_checkout` event records the ref read, the source, whether it fell back and `commit`, the
+full hash of HEAD in the worktree the helper reads (for a reused paused run's worktree, its HEAD,
+without changes not committed there); the helper's first message carries a `<checkout ref source/>`
+element and, when the help has linked checkouts, a `<linked_projects>` element with one `<project>`
+per checkout and the line "The linked checkouts may be read and never changed." The source
+`pull_request` fetches the run's branch and the base and makes a detached worktree of
+`origin/<branch>`; it never falls back to the base, and fails the help with "the help's checkout
+could not be made: the branch `<branch>` is not on origin" when the branch is gone. Before the
+helper starts, the runner writes the whole of `git diff --no-renames origin/<base>...origin/<branch>`
+to `pr.diff` in the help's run directory, uncut. The first message carries
+`<diff path bytes lines/>` and a `<changed_files>` element with one `<file path first_line lines/>`
+per changed file, in the diff's order (`first_line` is the line of `pr.diff` where its section
+begins); a lockfile or a generated file (`.min.js`, `.min.css`, `.map`) carries `skip="lockfile"` or
+`skip="generated"`. The helper reads the diff section by section in parts of at most 1,000 lines,
+skips marked files, and lists under `unsure` every file it skipped, read in part or did not read. A failed fetch or worktree add fails the
 help with "the help's checkout could not be made: …". The guard lets the helper read inside its
-working directory and inside the linked checkouts of its `linked.json`.
+working directory and inside the linked checkouts of its `linked.json`, and Read and Grep exactly
+the file `pr.diff` in its `BOARD_RUN_DIR`; every other path in the run directory stays refused, and
+no other phase may read `pr.diff`.
 
 When a decision help ends, whatever the outcome, the runner reads `help.json`: when it made the
 worktree it removes the linked checkouts, the `-linked` directory and the worktree through
@@ -1365,7 +1403,16 @@ every press, repeated ones included. The card's action bar reads Move up, Move d
 Check what is unfinished, Resume, Cancel run, Re-run with this plan, Re-run and plan again, Suggest
 what to do, each where it is shown. Their results ("Suggested next step", "What is unfinished") sit
 in one region after the status region and problem notice and before the Test command field, each
-under an `h3`, with no control in them and no button that acts on a result. Every help button is
+under an `h3`, with no control in them and no button that acts on a result. In Review a card with a pull request shows, on the PR tab right after the paragraph with the
+pull request link, the button Review pull request, then its result before the Files changed
+section, under an `h3` "Pull request review of <short commit>" (the commit's first 7 characters;
+"Pull request review" when there is none): Nothing to change, or the findings, each with its kind
+as a neutral badge, where and text, and "Why it matters:", then Unsure about; a failure reads "No
+pull request review: <reason>". The tab's focus order is the pull request link, Review pull
+request, then what follows; the result holds no control, and a refused request uses the card's
+problem notice through the tab's `onProblem`. The status region announces "Pull request review
+ready for <short commit>." or "No pull request review: <reason>." on any tab. The review shows only
+while the card is in Review. Every help button is
 busy while its help runs and stays focusable, and focus stays on the button pressed. A refused or failed request shows the problem notice with
 focus moved to it: "This card changed meanwhile; its latest state is shown." for a 409, else "That
 did not work. Try again." The card's status region announces each decision help that ends,
