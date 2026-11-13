@@ -11,6 +11,9 @@ export class GitError extends Error {
   }
 }
 
+/** The only `gh` commands the board runs: it reads and opens pull requests, and posts nowhere. */
+const GH_COMMANDS: readonly string[] = ['pr view', 'pr list', 'pr create']
+
 export class Git {
   /**
    * The last step queued on each repository. The daemon's two lanes share one `Git`, and a
@@ -41,6 +44,11 @@ export class Git {
     args: string[],
     options: { cwd?: string; input?: string } = {},
   ): Promise<string> {
+    if (cmd === this.ghBin) {
+      const command = `${args[0] ?? ''} ${args[1] ?? ''}`
+      if (!GH_COMMANDS.includes(command))
+        throw new GitError(`gh ${args.join(' ')}`, `the board does not run gh ${command}`)
+    }
     const result = await this.exec(cmd, args, options)
     if (result.code !== 0)
       throw new GitError(
