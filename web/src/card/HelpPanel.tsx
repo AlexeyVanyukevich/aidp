@@ -1,5 +1,5 @@
-import { Fragment, useId, type ReactNode } from 'react'
-import { Badge, Button } from '@zellige/react'
+import { Fragment, useId, useState, type ReactNode } from 'react'
+import { Badge, Button, Radio, RadioGroup } from '@zellige/react'
 import type {
   ApprovalOption,
   HelpMode,
@@ -8,8 +8,10 @@ import type {
   StoppedRunAction,
 } from '../types'
 import {
+  choicesLabel,
   decisionFailure,
   failureText,
+  type FindingPick,
   resultHeading,
   type ModeHelp,
   type QuestionHelp,
@@ -114,7 +116,11 @@ export function HelpResults({
         const result = mode.state.shown
         if (result === undefined || result.mode !== mode.id) return null
         return (
-          <section key={mode.id} aria-labelledby={`${id}-${mode.id}`} className="help-result">
+          <section
+            key={`${mode.id}-${mode.state.id ?? ''}`}
+            aria-labelledby={`${id}-${mode.id}`}
+            className="help-result"
+          >
             <Heading id={`${id}-${mode.id}`}>{mode.heading}</Heading>
             {render(result)}
           </section>
@@ -240,38 +246,82 @@ const Part = ({ title, children }: { title: string; children: ReactNode }) => (
   </p>
 )
 
+const pickValue = (pick: FindingPick) => (typeof pick === 'number' ? `choice-${pick}` : pick)
+const pickOf = (value: string): FindingPick =>
+  value === 'out' || value === 'written' ? value : Number(value.slice('choice-'.length))
+
 /**
- * Renderers for the modes of the card's decisions. The Spec review result holds Use these
- * findings when a handler is given and its verdict is `changes`; no other result holds a
- * focusable control.
+ * A Spec review result: its findings, Unsure about and, when a handler is given and the verdict is
+ * `changes`, a radio group per finding and Use these findings. The picks live here, so a different
+ * result, which remounts this, starts from "Use as written" again.
  */
-export function decisionRenderers(
-  checkedVersion: number | null,
-  onUseFindings?: (result: ReviewResult) => void,
-): Renderers {
-  return {
-    review: (result) => (
-      <>
-        {result.verdict === 'nothing_to_change' ? (
-          <p>Nothing to change.</p>
-        ) : (
-          <ul>
-            {result.findings.map((finding, index) => (
+function ReviewView({
+  result,
+  onUseFindings,
+}: {
+  result: ReviewResult
+  onUseFindings: ((result: ReviewResult, picks: FindingPick[]) => void) | undefined
+}) {
+  const [picks, setPicks] = useState<FindingPick[]>(() => result.findings.map(() => 'written'))
+  const picking = onUseFindings !== undefined && result.verdict === 'changes'
+  return (
+    <>
+      {result.verdict === 'nothing_to_change' ? (
+        <p>Nothing to change.</p>
+      ) : (
+        <ul>
+          {result.findings.map((finding, index) => {
+            const choices = finding.choices ?? []
+            return (
               <li key={index}>
                 <strong>{finding.kind}</strong>
                 {finding.where === undefined ? '' : ` (${finding.where})`}: {finding.text}
+                {!picking && choices.length > 0 && (
+                  <> Choices: {choicesLabel(choices, finding.recommended)}</>
+                )}
+                {picking && (
+                  <RadioGroup
+                    label={`What to do with finding ${index + 1}`}
+                    value={pickValue(picks[index] ?? 'written')}
+                    onChange={(value) =>
+                      setPicks((now) => now.map((pick, i) => (i === index ? pickOf(value) : pick)))
+                    }
+                  >
+                    <Radio value="written">Use as written</Radio>
+                    {choices.map((choice, at) => (
+                      <Radio key={at} value={pickValue(at)}>
+                        {at === finding.recommended ? `${choice} (recommended)` : choice}
+                      </Radio>
+                    ))}
+                    <Radio value="out">Leave out</Radio>
+                  </RadioGroup>
+                )}
               </li>
-            ))}
-          </ul>
-        )}
-        <Part title="Unsure about">{result.unsure}</Part>
-        {onUseFindings !== undefined && result.verdict === 'changes' && (
-          <Button type="button" onClick={() => onUseFindings(result)}>
-            Use these findings
-          </Button>
-        )}
-      </>
-    ),
+            )
+          })}
+        </ul>
+      )}
+      <Part title="Unsure about">{result.unsure}</Part>
+      {picking && (
+        <Button type="button" onClick={() => onUseFindings(result, picks)}>
+          Use these findings
+        </Button>
+      )}
+    </>
+  )
+}
+
+/**
+ * Renderers for the modes of the card's decisions. The Spec review result holds a radio group per
+ * finding and Use these findings when a handler is given and its verdict is `changes`; no other
+ * result holds a focusable control.
+ */
+export function decisionRenderers(
+  checkedVersion: number | null,
+  onUseFindings?: (result: ReviewResult, picks: FindingPick[]) => void,
+): Renderers {
+  return {
+    review: (result) => <ReviewView result={result} onUseFindings={onUseFindings} />,
     code_review: (result) => (
       <>
         {result.verdict === 'nothing_to_change' ? (

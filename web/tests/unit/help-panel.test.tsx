@@ -16,8 +16,27 @@ import {
 } from '../../src/card/approvals'
 import type { HelpMode, HelpResult, HelpView } from '../../src/types'
 
-// The kit's published build cannot load in Node here; the panel uses only Button.
+// The kit's published build cannot load in Node here; the panel uses Badge, Button and the radios.
 vi.mock('@zellige/react', () => ({
+  RadioGroup: ({
+    label,
+    value,
+    children,
+  }: {
+    label: string
+    value: string | null
+    children?: unknown
+  }) => (
+    <div role="radiogroup" aria-label={label} data-value={value}>
+      {children as string}
+    </div>
+  ),
+  Radio: ({ value, children }: { value: string; children?: unknown }) => (
+    <label>
+      <input type="radio" value={value} />
+      {children as string}
+    </label>
+  ),
   Badge: ({ tone, children }: { tone?: string; children?: unknown }) => (
     <span data-tone={tone}>{children as string}</span>
   ),
@@ -439,6 +458,57 @@ describe('decisionRenderers and Use these findings', () => {
       expect(markup).toContain('Use these findings')
       expect(markup.indexOf('Unsure about')).toBeLessThan(markup.indexOf('Use these findings'))
     }
+  })
+})
+
+describe('the radios of a Spec review result', () => {
+  const withChoices: HelpResult = {
+    mode: 'review',
+    verdict: 'changes',
+    findings: [
+      { kind: 'missing', where: 'R1', text: 'X', choices: ['A', 'B'], recommended: 1 },
+      { kind: 'risk', text: 'Slow' },
+    ],
+    unsure: 'u',
+  }
+  const markup = (result: HelpResult, handler: boolean) => {
+    const node = decisionRenderers(null, handler ? () => undefined : undefined).review?.(
+      result as never,
+    )
+    return renderToStaticMarkup(<>{node}</>)
+  }
+  const radios = (html: string, n: number) => {
+    const group = html.split('<div role="radiogroup"').filter((_, i) => i > 0)[n - 1] ?? ''
+    return [...group.matchAll(/<\/label>|<label><input[^>]*\/>([^<]*)/g)]
+      .map((m) => m[1])
+      .filter((label): label is string => label !== undefined)
+  }
+  const rows: { name: string; finding: number; labels: string[] }[] = [
+    {
+      name: 'a finding with choices',
+      finding: 1,
+      labels: ['Use as written', 'A', 'B (recommended)', 'Leave out'],
+    },
+    { name: 'a finding without', finding: 2, labels: ['Use as written', 'Leave out'] },
+  ]
+  it.each(rows)('with a handler, $name has its radios in order', ({ finding, labels }) => {
+    const html = markup(withChoices, true)
+    expect(html).toContain(`aria-label="What to do with finding ${finding}"`)
+    expect(radios(html, finding)).toEqual(labels)
+  })
+  it('checks only Use as written first', () => {
+    const html = markup(withChoices, true)
+    expect(html.match(/data-value="written"/g)).toHaveLength(2)
+  })
+  it('without a handler holds no radio and lists the choices as text', () => {
+    const html = markup(withChoices, false)
+    expect(html).not.toContain('radio')
+    expect(html).toContain('Choices: A; B (recommended)')
+  })
+  it('holds no control for nothing to change', () => {
+    const html = markup(RESULTS.review, true)
+    expect(html).not.toContain('radio')
+    expect(html).not.toContain('<button')
   })
 })
 
