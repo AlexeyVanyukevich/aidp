@@ -40,6 +40,8 @@ export interface TaskView {
   title_suggestion: TitleSuggestion | null
   /** The task's latest rephrase run, with its suggestion while one is pending; null before any. */
   rephrase: RephraseView | null
+  /** Whether the latest delivery run opened a pull request. */
+  has_pull_request: boolean
 }
 
 export interface RephraseView {
@@ -177,6 +179,14 @@ export class TaskRepository {
             .where('status', 'in', ['open', 'expired'])
             .orderBy('created_at', 'desc')
             .executeTakeFirst()
+    const delivery = await this.db
+      .selectFrom('runs')
+      .select('pr_number')
+      .where('task_id', '=', id)
+      .where('kind', '=', 'delivery')
+      .orderBy('created_at', 'desc')
+      .limit(1)
+      .executeTakeFirst()
     const title = await latestTitleRun(this.db, id)
     const kept = row.state === 'failed' ? await planToKeepFor(this.db, id) : undefined
     return {
@@ -205,6 +215,7 @@ export class TaskRepository {
       plan_to_keep: kept === undefined ? null : { run: kept.runNumber },
       title_suggestion: readTitleSuggestion(title),
       rephrase: await latestRephrase(this.db, id, row.description_md),
+      has_pull_request: delivery?.pr_number != null,
     }
   }
 

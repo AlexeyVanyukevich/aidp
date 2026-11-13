@@ -11,6 +11,7 @@ export const DECISIONS = [
   'stopped_run',
   'mark_done',
   'proposal',
+  'pull_request',
 ] as const
 export type Decision = (typeof DECISIONS)[number]
 
@@ -21,6 +22,7 @@ export const DECISION_MODES = {
   stopped_run: ['recommend'],
   mark_done: ['check'],
   proposal: ['advise'],
+  pull_request: ['code_review'],
 } as const satisfies Record<Decision, readonly string[]>
 
 export type DecisionMode = (typeof DECISION_MODES)[Decision][number]
@@ -50,6 +52,8 @@ export interface DecisionFacts {
   approvalCurrent: boolean
   /** The ids of the task's open proposals. */
   openProposals: readonly string[]
+  /** Whether the task's latest delivery run has a pull request. */
+  hasPullRequest: boolean
 }
 
 /** Whether the stopped run is one the owner can recommend an action for. */
@@ -72,6 +76,8 @@ export function offered(decision: Decision, facts: DecisionFacts): boolean {
       return ['backlog', 'spec_review', 'review', 'failed'].includes(facts.taskState)
     case 'proposal':
       return facts.openProposals.length > 0
+    case 'pull_request':
+      return facts.taskState === 'review' && facts.hasPullRequest
   }
 }
 
@@ -116,6 +122,7 @@ export function subjectOf(
   proposalId?: string,
 ): Subject {
   if (decision === 'proposal') return { proposal_id: proposalId ?? '' }
+  if (decision === 'pull_request') return { pr_run_id: facts.latestDeliveryRunId ?? '' }
   if (decision === 'spec_review') return { spec_version: facts.latestSpecVersion ?? 0 }
   if (decision === 'stopped_run')
     return {

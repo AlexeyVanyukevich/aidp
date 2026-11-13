@@ -51,6 +51,8 @@ export interface TaskCard {
   question_waiting: boolean
 }
 export interface TaskView {
+  /** Whether the latest delivery run opened a pull request. */
+  has_pull_request: boolean
   id: string
   key: string
   number: number

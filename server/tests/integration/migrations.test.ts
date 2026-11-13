@@ -543,3 +543,83 @@ describe('the helps migration', () => {
     )
   })
 })
+
+describe('migration 013', () => {
+  const migrator013 = () =>
+    new Migrator({ db: getTestDb(), provider: { getMigrations: async () => migrations } })
+
+  /** The three `helps` checks as text, with the quoted words of each. */
+  async function helpChecks(): Promise<Record<string, string[]>> {
+    const { rows } = await sql<{ conname: string; def: string }>`
+      select conname, pg_get_constraintdef(oid) as def from pg_constraint
+      where contype = 'c' and conrelid = 'helps'::regclass
+        and conname in ('helps_mode_known', 'helps_decision_known', 'helps_mode_of_decision')`.execute(
+      getTestDb(),
+    )
+    return Object.fromEntries(
+      rows.map((row) => [row.conname, [...row.def.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]!)]),
+    )
+  }
+
+  async function runId(): Promise<string> {
+    const db = getTestDb()
+    const { id: projectId } = await project()
+    const task = await sql<{ id: string }>`
+      insert into tasks (project_id, number, title, state, position, updated_at)
+      values (${projectId}, 1, 'A', 'review', 1, now()) returning id`.execute(db)
+    const run = await sql<{ id: string }>`
+      insert into runs (task_id, kind, number, status, queued_at)
+      values (${task.rows[0]!.id}, 'help', 1, 'queued', null) returning id`.execute(db)
+    return run.rows[0]!.id
+  }
+
+  const insertHelp = (run: string, mode: string) =>
+    sql`insert into helps (run_id, decision, mode, status, subject)
+      values (${run}, 'pull_request', ${mode}, 'queued', '{"pr_run_id":"x"}')`.execute(getTestDb())
+
+  const lists = {
+    before: {
+      helps_mode_known: ['suggest', 'explain', 'review', 'restate', 'recommend', 'check', 'advise'],
+      helps_decision_known: ['question', 'spec_review', 'stopped_run', 'mark_done', 'proposal'],
+    },
+    added: { helps_mode_known: 'code_review', helps_decision_known: 'pull_request' },
+  }
+
+  it('adds this slice’s values to 012’s lists and nothing else, and down restores them', async () => {
+    expect((await migrator013().migrateTo('012_proposals')).error).toBeUndefined()
+    const at012 = await helpChecks()
+    expect((await migrator013().migrateToLatest()).error).toBeUndefined()
+    const at013 = await helpChecks()
+    expect(at013.helps_mode_known).toEqual([...lists.before.helps_mode_known, 'code_review'])
+    expect(at013.helps_decision_known).toEqual([
+      ...lists.before.helps_decision_known,
+      'pull_request',
+    ])
+    expect(at013.helps_mode_of_decision).toEqual([
+      ...at012.helps_mode_of_decision!,
+      'pull_request',
+      'code_review',
+    ])
+    expect((await migrator013().migrateTo('012_proposals')).error).toBeUndefined()
+    expect(await helpChecks()).toEqual(at012)
+    expect((await migrator013().migrateToLatest()).error).toBeUndefined()
+  })
+
+  it('accepts a code review and refuses another mode for the decision', async () => {
+    expect((await migrator013().migrateToLatest()).error).toBeUndefined()
+    const run = await runId()
+    await insertHelp(run, 'code_review')
+    await expect(insertHelp(run, 'review')).rejects.toThrow(/helps_mode_of_decision/)
+  })
+
+  it('refuses to roll back while a review exists, and changes nothing', async () => {
+    expect((await migrator013().migrateToLatest()).error).toBeUndefined()
+    await insertHelp(await runId(), 'code_review')
+    const before = await helpChecks()
+    const result = await migrator013().migrateTo('012_proposals')
+    expect(String(result.error)).toContain(
+      'Cannot roll back 013: pull-request reviews exist, and removing them would lose their phases, events and cost.',
+    )
+    expect(await helpChecks()).toEqual(before)
+  })
+})

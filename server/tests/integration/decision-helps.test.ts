@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { GOOD_SPEC, seedProject, seedTask } from './fixtures.js'
-import { buildTestApp, closeTestDb, getTestDb, resetDb } from './helpers.js'
+import { GOOD_SPEC, seedProject, seedQueuedRun, seedTask } from './fixtures.js'
+import { buildTestApp, closeTestDb, getTestDb, resetDb, TEST_RUNNER_KEY } from './helpers.js'
 import type { TaskState } from '../../src/shared/vocabulary.js'
 
 let app: FastifyInstance
@@ -223,5 +223,124 @@ describe('settling helps', () => {
       .executeTakeFirstOrThrow()
     const listed = (await app.inject({ url: `/api/tasks/${taskId}/helps` })).json()
     expect(listed.map((help: { id: string }) => help.id)).toEqual([failed.id])
+  })
+})
+
+describe('the pull request review', () => {
+  const PR = { decision: 'pull_request', mode: 'code_review' }
+
+  /** A card in Review whose delivery run opened pull request #7, or none. */
+  async function inReview(overrides: { pr?: number | null; branch?: string | null } = {}) {
+    const ids = await seedQueuedRun(db(), { state: 'review' })
+    const pr = overrides.pr === undefined ? 7 : overrides.pr
+    await db()
+      .updateTable('runs')
+      .set({
+        status: 'succeeded',
+        queued_at: null,
+        pr_number: pr,
+        pr_url: pr === null ? null : `https://github.com/owner/pay/pull/${pr}`,
+        branch: overrides.branch ?? null,
+      })
+      .where('id', '=', ids.runId)
+      .execute()
+    return ids
+  }
+
+  const claim = async () =>
+    (
+      await app.inject({
+        method: 'POST',
+        url: '/api/runner/helps/claim',
+        headers: { authorization: `Bearer ${TEST_RUNNER_KEY}` },
+        payload: { runner_id: 'r1', wait_ms: 0 },
+      })
+    ).json().help as Record<string, any> | null
+
+  it('queues a help run and a help whose subject is the latest delivery run (AC6)', async () => {
+    const { taskId, runId } = await inReview()
+    const response = await ask(taskId, PR)
+    expect(response.statusCode).toBe(201)
+    expect(await helpRuns(taskId)).toHaveLength(1)
+    const [help] = await helpRows(taskId)
+    expect(help).toMatchObject({ status: 'queued', subject: { pr_run_id: runId } })
+    expect(response.json()).toMatchObject({ decision: 'pull_request', mode: 'code_review' })
+    const again = await ask(taskId, PR)
+    expect(again.json().id).toBe(response.json().id)
+  })
+
+  const refused: {
+    name: string
+    pr: number | null
+    state: TaskState
+    body: Record<string, unknown>
+    status: number
+    field?: string
+    reason?: string
+  }[] = [
+    {
+      name: 'a card without a pull request',
+      pr: null,
+      state: 'review',
+      body: PR,
+      status: 409,
+      reason: 'not_offered',
+    },
+    { name: 'a card in Done', pr: 7, state: 'done', body: PR, status: 409, reason: 'not_offered' },
+    {
+      name: 'another mode',
+      pr: 7,
+      state: 'review',
+      body: { ...PR, mode: 'check' },
+      status: 400,
+      field: 'mode',
+    },
+    {
+      name: 'a proposal_id',
+      pr: 7,
+      state: 'review',
+      body: { ...PR, proposal_id: crypto.randomUUID() },
+      status: 400,
+      field: 'proposal_id',
+    },
+  ]
+  it.each(refused)('refuses $name (AC7)', async ({ pr, state, body, status, field, reason }) => {
+    const { taskId } = await inReview({ pr })
+    await db().updateTable('tasks').set({ state }).where('id', '=', taskId).execute()
+    const response = await ask(taskId, body)
+    expect(response.statusCode).toBe(status)
+    if (field !== undefined) expect(JSON.stringify(response.json())).toContain(field)
+    if (reason !== undefined) expect(response.json().details.reason).toBe(reason)
+    expect(await helpRuns(taskId)).toHaveLength(0)
+  })
+
+  const branches: { name: string; branch: string | null; expected: string }[] = [
+    { name: 'the run’s branch', branch: 'feat/x', expected: 'feat/x' },
+    { name: 'the board’s name when the run has none', branch: null, expected: 'board/PAY-1-r1' },
+  ]
+  it.each(branches)('checks out $name as a pull_request source (AC2)', async (row) => {
+    const { taskId } = await inReview({ branch: row.branch })
+    await ask(taskId, PR)
+    const help = await claim()
+    expect(help?.decision_work.checkout).toEqual({ source: 'pull_request', branch: row.expected })
+  })
+
+  it('still lists a succeeded review after a push outside the board (AC24)', async () => {
+    const { taskId } = await inReview()
+    const created = (await ask(taskId, PR)).json()
+    await db()
+      .updateTable('helps')
+      .set({ status: 'succeeded' })
+      .where('id', '=', created.id)
+      .execute()
+    const listed = (await app.inject({ url: `/api/tasks/${taskId}/helps` })).json()
+    expect(listed.map((help: { id: string }) => help.id)).toEqual([created.id])
+  })
+
+  it('reports has_pull_request on the task (AC1)', async () => {
+    const withPr = await inReview()
+    expect((await app.inject({ url: `/api/tasks/${withPr.taskId}` })).json().has_pull_request).toBe(
+      true,
+    )
   })
 })

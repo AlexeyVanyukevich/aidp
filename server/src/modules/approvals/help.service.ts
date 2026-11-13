@@ -59,6 +59,7 @@ export interface HelpView {
 export type CheckoutSource =
   | { source: 'base' }
   | { source: 'pr_branch'; branch: string }
+  | { source: 'pull_request'; branch: string }
   | { source: 'paused_run'; run_id: string }
 
 /** What a decision help carries beyond a question help: the project, the links and the source. */
@@ -115,7 +116,7 @@ export async function readSubjectFacts(db: Db, taskId: string): Promise<SubjectF
     .executeTakeFirst()
   const delivery = await db
     .selectFrom('runs')
-    .select('id')
+    .select(['id', 'pr_number'])
     .where('task_id', '=', taskId)
     .where('kind', '=', 'delivery')
     .orderBy('created_at', 'desc')
@@ -164,6 +165,7 @@ export async function readSubjectFacts(db: Db, taskId: string): Promise<SubjectF
         blockCause: block?.cause ?? null,
       }),
     openProposals,
+    hasPullRequest: delivery?.pr_number !== null && delivery?.pr_number !== undefined,
     latestSpecVersion: latest,
     approvedSpecVersion: approved,
     latestRunId: run?.id ?? null,
@@ -649,6 +651,17 @@ export class HelpService {
     if (subject !== null && 'run_id' in subject) {
       if (subject.task_state === 'blocked')
         checkout = { source: 'paused_run', run_id: subject.run_id }
+    } else if (subject !== null && 'pr_run_id' in subject) {
+      const run = await trx
+        .selectFrom('runs')
+        .select(['number', 'branch'])
+        .where('id', '=', subject.pr_run_id)
+        .executeTakeFirst()
+      if (run !== undefined)
+        checkout = {
+          source: 'pull_request',
+          branch: run.branch ?? `board/${from.taskKey}-r${run.number}`,
+        }
     } else if (subject !== null && 'delivery_run_id' in subject) {
       if (subject.task_state === 'review' && subject.delivery_run_id !== null) {
         const run = await trx

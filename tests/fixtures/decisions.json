@@ -6,9 +6,12 @@
     "plan_to_keep": false,
     "checkpoint": false,
     "approval_current": false,
-    "offered": ["mark_done"],
+    "offered": [
+      "mark_done"
+    ],
     "stopped_run_actions": [],
-    "recommendable_actions": []
+    "recommendable_actions": [],
+    "has_pull_request": false
   },
   {
     "name": "Spec review",
@@ -17,9 +20,13 @@
     "plan_to_keep": false,
     "checkpoint": false,
     "approval_current": false,
-    "offered": ["spec_review", "mark_done"],
+    "offered": [
+      "spec_review",
+      "mark_done"
+    ],
     "stopped_run_actions": [],
-    "recommendable_actions": []
+    "recommendable_actions": [],
+    "has_pull_request": false
   },
   {
     "name": "Spec draft",
@@ -30,7 +37,8 @@
     "approval_current": false,
     "offered": [],
     "stopped_run_actions": [],
-    "recommendable_actions": []
+    "recommendable_actions": [],
+    "has_pull_request": false
   },
   {
     "name": "Ready",
@@ -41,7 +49,8 @@
     "approval_current": false,
     "offered": [],
     "stopped_run_actions": [],
-    "recommendable_actions": []
+    "recommendable_actions": [],
+    "has_pull_request": false
   },
   {
     "name": "Running",
@@ -52,7 +61,8 @@
     "approval_current": false,
     "offered": [],
     "stopped_run_actions": [],
-    "recommendable_actions": []
+    "recommendable_actions": [],
+    "has_pull_request": false
   },
   {
     "name": "Needs approval with a current question",
@@ -61,20 +71,41 @@
     "plan_to_keep": false,
     "checkpoint": false,
     "approval_current": true,
-    "offered": ["question"],
+    "offered": [
+      "question"
+    ],
     "stopped_run_actions": [],
-    "recommendable_actions": []
+    "recommendable_actions": [],
+    "has_pull_request": false
   },
   {
-    "name": "Review",
+    "name": "Review without a pull request",
     "state": "review",
     "block_cause": null,
     "plan_to_keep": false,
     "checkpoint": false,
     "approval_current": false,
-    "offered": ["mark_done"],
+    "offered": [
+      "mark_done"
+    ],
     "stopped_run_actions": [],
-    "recommendable_actions": []
+    "recommendable_actions": [],
+    "has_pull_request": false
+  },
+  {
+    "name": "Review with a pull request",
+    "state": "review",
+    "block_cause": null,
+    "plan_to_keep": false,
+    "checkpoint": false,
+    "approval_current": false,
+    "offered": [
+      "mark_done",
+      "pull_request"
+    ],
+    "stopped_run_actions": [],
+    "recommendable_actions": [],
+    "has_pull_request": true
   },
   {
     "name": "Done",
@@ -85,7 +116,20 @@
     "approval_current": false,
     "offered": [],
     "stopped_run_actions": [],
-    "recommendable_actions": []
+    "recommendable_actions": [],
+    "has_pull_request": false
+  },
+  {
+    "name": "Done with a pull request",
+    "state": "done",
+    "block_cause": null,
+    "plan_to_keep": false,
+    "checkpoint": false,
+    "approval_current": false,
+    "offered": [],
+    "stopped_run_actions": [],
+    "recommendable_actions": [],
+    "has_pull_request": true
   },
   {
     "name": "Blocked, step failed, checkpoint",
@@ -94,9 +138,18 @@
     "plan_to_keep": false,
     "checkpoint": true,
     "approval_current": false,
-    "offered": ["stopped_run"],
-    "stopped_run_actions": ["resume", "cancel"],
-    "recommendable_actions": ["resume", "cancel"]
+    "offered": [
+      "stopped_run"
+    ],
+    "stopped_run_actions": [
+      "resume",
+      "cancel"
+    ],
+    "recommendable_actions": [
+      "resume",
+      "cancel"
+    ],
+    "has_pull_request": false
   },
   {
     "name": "Blocked, no checkpoint",
@@ -105,9 +158,17 @@
     "plan_to_keep": false,
     "checkpoint": false,
     "approval_current": false,
-    "offered": ["stopped_run"],
-    "stopped_run_actions": ["resume", "cancel"],
-    "recommendable_actions": ["cancel"]
+    "offered": [
+      "stopped_run"
+    ],
+    "stopped_run_actions": [
+      "resume",
+      "cancel"
+    ],
+    "recommendable_actions": [
+      "cancel"
+    ],
+    "has_pull_request": false
   },
   {
     "name": "Blocked, runner stopped",
@@ -116,9 +177,18 @@
     "plan_to_keep": false,
     "checkpoint": true,
     "approval_current": false,
-    "offered": ["stopped_run"],
-    "stopped_run_actions": ["resume", "cancel"],
-    "recommendable_actions": ["resume", "cancel"]
+    "offered": [
+      "stopped_run"
+    ],
+    "stopped_run_actions": [
+      "resume",
+      "cancel"
+    ],
+    "recommendable_actions": [
+      "resume",
+      "cancel"
+    ],
+    "has_pull_request": false
   },
   {
     "name": "Blocked, approval expired",
@@ -127,9 +197,16 @@
     "plan_to_keep": false,
     "checkpoint": false,
     "approval_current": true,
-    "offered": ["question"],
-    "stopped_run_actions": ["cancel"],
-    "recommendable_actions": ["cancel"]
+    "offered": [
+      "question"
+    ],
+    "stopped_run_actions": [
+      "cancel"
+    ],
+    "recommendable_actions": [
+      "cancel"
+    ],
+    "has_pull_request": false
   },
   {
     "name": "Failed, no plan to keep",
@@ -138,9 +215,19 @@
     "plan_to_keep": false,
     "checkpoint": false,
     "approval_current": false,
-    "offered": ["stopped_run", "mark_done"],
-    "stopped_run_actions": ["rerun_again", "mark_done"],
-    "recommendable_actions": ["rerun_again", "mark_done"]
+    "offered": [
+      "stopped_run",
+      "mark_done"
+    ],
+    "stopped_run_actions": [
+      "rerun_again",
+      "mark_done"
+    ],
+    "recommendable_actions": [
+      "rerun_again",
+      "mark_done"
+    ],
+    "has_pull_request": false
   },
   {
     "name": "Failed, plan to keep",
@@ -149,9 +236,21 @@
     "plan_to_keep": true,
     "checkpoint": false,
     "approval_current": false,
-    "offered": ["stopped_run", "mark_done"],
-    "stopped_run_actions": ["rerun_again", "mark_done", "rerun_keep"],
-    "recommendable_actions": ["rerun_again", "mark_done", "rerun_keep"]
+    "offered": [
+      "stopped_run",
+      "mark_done"
+    ],
+    "stopped_run_actions": [
+      "rerun_again",
+      "mark_done",
+      "rerun_keep"
+    ],
+    "recommendable_actions": [
+      "rerun_again",
+      "mark_done",
+      "rerun_keep"
+    ],
+    "has_pull_request": false
   },
   {
     "name": "Running with an open proposal",
@@ -161,9 +260,12 @@
     "checkpoint": false,
     "approval_current": false,
     "open_proposals": 1,
-    "offered": ["proposal"],
+    "offered": [
+      "proposal"
+    ],
     "stopped_run_actions": [],
-    "recommendable_actions": []
+    "recommendable_actions": [],
+    "has_pull_request": false
   },
   {
     "name": "Done with an open proposal",
@@ -173,9 +275,12 @@
     "checkpoint": false,
     "approval_current": false,
     "open_proposals": 2,
-    "offered": ["proposal"],
+    "offered": [
+      "proposal"
+    ],
     "stopped_run_actions": [],
-    "recommendable_actions": []
+    "recommendable_actions": [],
+    "has_pull_request": false
   },
   {
     "name": "Needs approval on a proposal only",
@@ -185,9 +290,12 @@
     "checkpoint": false,
     "approval_current": false,
     "open_proposals": 1,
-    "offered": ["proposal"],
+    "offered": [
+      "proposal"
+    ],
     "stopped_run_actions": [],
-    "recommendable_actions": []
+    "recommendable_actions": [],
+    "has_pull_request": false
   },
   {
     "name": "Spec review with an open proposal",
@@ -197,9 +305,14 @@
     "checkpoint": false,
     "approval_current": false,
     "open_proposals": 1,
-    "offered": ["spec_review", "mark_done", "proposal"],
+    "offered": [
+      "spec_review",
+      "mark_done",
+      "proposal"
+    ],
     "stopped_run_actions": [],
-    "recommendable_actions": []
+    "recommendable_actions": [],
+    "has_pull_request": false
   },
   {
     "name": "Running with every proposal settled",
@@ -211,6 +324,7 @@
     "open_proposals": 0,
     "offered": [],
     "stopped_run_actions": [],
-    "recommendable_actions": []
+    "recommendable_actions": [],
+    "has_pull_request": false
   }
 ]
