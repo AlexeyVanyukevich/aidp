@@ -460,6 +460,16 @@ describe('the test output cut', () => {
   })
 })
 
+describe('the flaky block at the end of a long test output', () => {
+  const BLOCK = 'Flaky journeys:\n- tests/ui/spec-view.spec.ts:135 › Spec view › the editor saves'
+  it('stays in <test_output>', () => {
+    const text = `exit code: 0\n${'r'.repeat(30_000)}\n${BLOCK}`
+    const handoff = buildHandoff({ ...BASE, phase: 'verify', testOutput: { text, path: T } })
+    expect(handoff).toContain('[test output cut:')
+    expect(handoff).toContain(BLOCK.replace('›', '›'))
+  })
+})
+
 describe('the handoff module', () => {
   it('declares the file shapes and does no I/O', () => {
     const src = readFileSync(join(import.meta.dirname, '../../src/phases/handoff.ts'), 'utf8')

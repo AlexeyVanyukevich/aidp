@@ -118,6 +118,63 @@ describe('the spec-writer', () => {
   })
 })
 
+const VERIFIER_TEST_RULES: { rule: string; clause: string }[] = [
+  {
+    rule: 'a passing command is evidence for a test in a suite it runs',
+    clause: 'A passing test command is evidence for a test inside a suite that command runs',
+  },
+  {
+    rule: 'the branch’s files show the test exists',
+    clause: 'once the branch’s files show that the test exists',
+  },
+  {
+    rule: 'the suites are read from the step lines',
+    clause: 'Tell which suites ran from the step lines in the test output',
+  },
+  {
+    rule: 'the suites of check:all',
+    clause:
+      '`./run check:all` runs the server, runner and web suites, and the browser journeys in `tests/ui/`',
+  },
+  {
+    rule: 'a suite with no step line counts as not run',
+    clause:
+      'neither <test_output> nor `test-output.txt` counts as not run, so run the named test yourself',
+  },
+  { rule: 'why a step line may be cut', clause: 'the runner keeps only the last 64 KiB' },
+  {
+    rule: 'a test is run only when its suite did not run or it failed or flaked',
+    clause:
+      'Run a test yourself only when the test command did not run that test’s suite, or when the test output shows that test failing or flaky',
+  },
+  {
+    rule: 'only that test, with an example',
+    clause: '`npx playwright test tests/ui/<file>.spec.ts`, never a whole suite',
+  },
+  {
+    rule: 'the command and output lines are cited',
+    clause: 'cites the exact command and the output lines',
+  },
+  {
+    rule: 'a green command is no evidence for another suite',
+    clause: '“check exit 0”, is never evidence for a test that command does not run',
+  },
+  {
+    rule: 'a test that cannot run fails',
+    clause: 'the verdict is fail, and its evidence starts with `not run:`',
+  },
+  {
+    rule: 'the summary names flaky tests',
+    clause: 'Your summary names every test the test output marks flaky',
+  },
+]
+
+describe('the verifier’s rules for tests', () => {
+  it.each(VERIFIER_TEST_RULES)('says $rule', ({ clause }) => {
+    expect(AGENTS.verifier!.prompt).toContain(clause)
+  })
+})
+
 describe('the owner check in the prompts', () => {
   it('tells the planner to name the hand check and what a run can still check', () => {
     const prompt = AGENTS.planner!.prompt
