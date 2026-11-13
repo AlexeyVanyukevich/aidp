@@ -76,6 +76,15 @@ export interface Script {
   afterSetup?: string[]
   /** The worktree's HEAD once each Verify that ends ok has run, in turn. */
   verifyHeads?: string[]
+  /** What each run of the test command returns, in turn, over a passing run; none is a pass. */
+  testResults?: {
+    exitCode?: number | null
+    timedOut?: boolean
+    output?: string
+    truncated?: boolean
+  }[]
+  /** The worktree's HEAD once each Build that ends ok has run, in turn; none leaves it be. */
+  buildHeads?: (string | undefined)[]
   setupCommand?: string
   /** The exit code of each run of the setup command, in turn; 0 when unlisted. */
   setupExits?: number[]
@@ -192,6 +201,7 @@ export function harness(script: Script) {
     }
     if (what === 'ok' && record.phase === 'build') {
       builds += 1
+      headNow = script.buildHeads?.[builds - 1] ?? headNow
       const next = script.trees?.[builds - 1]
       if (next !== undefined) {
         tree.committed = next.committed ?? []
@@ -397,8 +407,10 @@ export function harness(script: Script) {
       } else {
         testSaw.push([...tree.uncommitted])
         tree.uncommitted = [...tree.uncommitted, ...(script.testWrites?.[tests] ?? [])]
+        const own = script.testResults?.[tests]
         tests += 1
         testRuns.push(command)
+        return { ...runResult, ...own }
       }
       return runResult
     },
