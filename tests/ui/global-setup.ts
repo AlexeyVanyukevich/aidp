@@ -1,12 +1,12 @@
 import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { PostgreSqlContainer } from '@testcontainers/postgresql'
 import pg from 'pg'
 
 const REPO = resolve(import.meta.dirname, '../..')
-const PORT = 4131
 const RUNNER_KEY = 'u'.repeat(40)
 const GIT_IDENTITY = {
   GIT_AUTHOR_NAME: 'Test',
@@ -468,11 +468,24 @@ function fixtureModels(): string[] {
   return [...new Set(models)]
 }
 
-async function waitForHealth(): Promise<void> {
+/** A port the OS has just handed out, so a process holding a fixed one cannot break the run. */
+function freePort(): Promise<number> {
+  return new Promise((resolvePort, reject) => {
+    const probe = createServer()
+    probe.once('error', reject)
+    probe.listen(0, '127.0.0.1', () => {
+      const address = probe.address()
+      const port = typeof address === 'object' && address !== null ? address.port : 0
+      probe.close(() => resolvePort(port))
+    })
+  })
+}
+
+async function waitForHealth(port: number): Promise<void> {
   const deadline = Date.now() + 60_000
   while (Date.now() < deadline) {
     try {
-      if ((await fetch(`http://127.0.0.1:${PORT}/api/health`)).ok) return
+      if ((await fetch(`http://127.0.0.1:${port}/api/health`)).ok) return
     } catch {
       // Not listening yet.
     }
@@ -488,6 +501,7 @@ function labelled(child: ChildProcess, label: string): ChildProcess {
 }
 
 export default async function globalSetup(): Promise<() => Promise<void>> {
+  const PORT = await freePort()
   const db = await new PostgreSqlContainer('postgres:16-alpine').start()
   const databaseUrl = db.getConnectionUri()
   const root = mkdtempSync(join(tmpdir(), 'board-ui-'))
@@ -547,7 +561,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     spawn('npx', ['tsx', 'server/src/server.ts'], { cwd: REPO, env }),
     'server',
   )
-  await waitForHealth()
+  await waitForHealth(PORT)
   const runner = labelled(
     spawn(join(REPO, 'runner/bin/board-cli'), ['daemon'], {
       cwd: REPO,
