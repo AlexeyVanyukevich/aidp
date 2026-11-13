@@ -7,7 +7,13 @@ import { useAnnouncer } from '../announce'
 import { invalidField, isConflict, NO_NOTE, noteRefusal } from '../errors'
 import { Loaded } from '../Loaded'
 import type { HelpMode, SpecView, TaskView } from '../types'
-import { decisionHelp, fillNoteFromReview, NO_HELP, type ReviewResult } from './approvals'
+import {
+  decisionHelp,
+  fillNoteFromReview,
+  NO_HELP,
+  type FindingPick,
+  type ReviewResult,
+} from './approvals'
 import { decisionMode, decisionRenderers, HelpButtons, HelpResults } from './HelpPanel'
 import {
   DRAFT_LOCK,
@@ -453,12 +459,16 @@ function SpecEditor({
   })
 
   /** Findings go after the words already in the note; nothing is sent. */
-  const putFindingsInNote = (result: ReviewResult) => {
-    const next = fillNoteFromReview(note, result)
+  const putFindingsInNote = (result: ReviewResult, picks: FindingPick[]) => {
+    const next = fillNoteFromReview(note, result, picks)
     setNote(next)
     setNoteMissing(undefined)
     setFilled((count) => count + 1)
-    announce('Findings put in What to change.')
+    announce(
+      picks.length === result.findings.length && picks.every((pick) => pick === 'out')
+        ? 'Every finding is left out; What to change is unchanged.'
+        : 'Findings put in What to change.',
+    )
   }
 
   const startDraft = () => {
