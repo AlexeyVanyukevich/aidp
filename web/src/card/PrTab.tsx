@@ -1,9 +1,12 @@
 import { useId } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Badge, Empty, Loading } from '@zellige/react'
 import { api } from '../api'
 import { Loaded } from '../Loaded'
-import { prStatus } from './blocks'
+import { isConflict } from '../errors'
+import { decisionHelp, NO_HELP } from './approvals'
+import { prStatus, decisionsFor } from './blocks'
+import { decisionMode, decisionRenderers, HelpButtons, HelpResults } from './HelpPanel'
 import { ownerSentence } from './lint'
 import { latestDeliveryRun } from './timeline'
 import type { ReportData, TaskView } from '../types'
@@ -15,7 +18,8 @@ const VERDICT_TONE = {
   withdrawn: 'neutral',
 } as const
 
-export function PrTab({ task }: { task: TaskView }) {
+export function PrTab({ task, onProblem }: { task: TaskView; onProblem: (text: string) => void }) {
+  const client = useQueryClient()
   const runs = useQuery({ queryKey: ['runs', task.id], queryFn: () => api.runs(task.id) })
   const run = latestDeliveryRun(runs.data ?? [])
   const files = useQuery({
@@ -24,6 +28,29 @@ export function PrTab({ task }: { task: TaskView }) {
     enabled: run?.pr_number != null,
   })
   const filesId = useId()
+  const offered = decisionsFor(task.state, task.block, 0, task.has_pull_request).includes(
+    'pull_request',
+  )
+  const helps = useQuery({
+    queryKey: ['helps', task.id],
+    queryFn: () => api.helps(task.id),
+    enabled: offered,
+  })
+  const ask = useMutation({
+    mutationFn: () => api.askDecisionHelp(task.id, 'pull_request', 'code_review'),
+    onError: (error) =>
+      onProblem(
+        isConflict(error)
+          ? 'This card changed meanwhile; its latest state is shown.'
+          : 'That did not work. Try again.',
+      ),
+    onSettled: () => client.invalidateQueries({ queryKey: ['helps', task.id] }),
+  })
+  const review = decisionMode(
+    'code_review',
+    'Review pull request',
+    decisionHelp(helps.data ?? [], 'pull_request').code_review ?? NO_HELP,
+  )
   return (
     <Loaded query={runs} failure="The runs could not be loaded.">
       {(list) => {
@@ -48,6 +75,14 @@ export function PrTab({ task }: { task: TaskView }) {
               </a>{' '}
               on <code>{latest.branch}</code> · {prStatus(task.state, latest.failure_reason)}
             </p>
+            {offered && (
+              <>
+                <div className="help-buttons">
+                  <HelpButtons modes={[review]} onAsk={() => ask.mutate()} />
+                </div>
+                <HelpResults modes={[review]} level={3} renderers={decisionRenderers(null)} />
+              </>
+            )}
             <section aria-labelledby={filesId}>
               <h3 id={filesId}>Files changed</h3>
               {files.isError || files.data?.files === null ? (

@@ -1,5 +1,5 @@
 import { useId, type ReactNode } from 'react'
-import { Button } from '@zellige/react'
+import { Badge, Button } from '@zellige/react'
 import type {
   ApprovalOption,
   HelpMode,
@@ -94,6 +94,8 @@ export function HelpResults({
         return renderers.check?.(result)
       case 'advise':
         return renderers.advise?.(result)
+      case 'code_review':
+        return renderers.code_review?.(result)
     }
     // Every mode returns above; this satisfies `consistent-return`.
     return null
@@ -209,7 +211,7 @@ export function HelpPanel({
 
 /** The mode of a decision help: its label, state and the words of its heading and failure. */
 export function decisionMode(
-  id: 'review' | 'restate' | 'recommend' | 'check',
+  id: 'review' | 'restate' | 'recommend' | 'check' | 'code_review',
   label: string,
   state: ModeHelp,
 ): PanelMode {
@@ -218,7 +220,7 @@ export function decisionMode(
     id,
     label,
     state,
-    heading: resultHeading(id, subject),
+    heading: resultHeading(id, subject, state.shown),
     failureLine: (reason) => decisionFailure(id, subject, reason),
   }
 }
@@ -268,6 +270,23 @@ export function decisionRenderers(
             Use these findings
           </Button>
         )}
+      </>
+    ),
+    code_review: (result) => (
+      <>
+        {result.verdict === 'nothing_to_change' ? (
+          <p>Nothing to change.</p>
+        ) : (
+          <ul>
+            {result.findings.map((finding, index) => (
+              <li key={index}>
+                <Badge tone="neutral">{finding.kind}</Badge> ({finding.where}): {finding.text}{' '}
+                <strong>Why it matters:</strong> {finding.matters}
+              </li>
+            ))}
+          </ul>
+        )}
+        <Part title="Unsure about">{result.unsure}</Part>
       </>
     ),
     restate: (result) => (

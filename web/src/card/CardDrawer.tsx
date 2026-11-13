@@ -252,7 +252,7 @@ export function CardDrawer() {
       ),
     },
     { id: 'cost', label: 'Cost', panel: <CostTab task={t} /> },
-    { id: 'pr', label: 'PR', panel: <PrTab task={t} /> },
+    { id: 'pr', label: 'PR', panel: <PrTab task={t} onProblem={(text) => setProblem({ text })} /> },
   ]
 
   return (
@@ -367,7 +367,10 @@ export function CardDrawer() {
                 {problem?.text}
               </Notice>
               {decisions.some(
-                (decision) => decision !== 'spec_review' && decision !== 'proposal',
+                (decision) =>
+                  decision !== 'spec_review' &&
+                  decision !== 'proposal' &&
+                  decision !== 'pull_request',
               ) && (
                 <div className="help-results">
                   <HelpResults

@@ -18,6 +18,9 @@ import type { HelpMode, HelpResult, HelpView } from '../../src/types'
 
 // The kit's published build cannot load in Node here; the panel uses only Button.
 vi.mock('@zellige/react', () => ({
+  Badge: ({ tone, children }: { tone?: string; children?: unknown }) => (
+    <span data-tone={tone}>{children as string}</span>
+  ),
   Button: ({
     busy,
     children,
@@ -47,6 +50,15 @@ const RESULTS: Record<HelpMode, HelpResult> = {
     produced: 'p',
     unfinished: [],
     unsure: 'u',
+  },
+  code_review: {
+    mode: 'code_review',
+    verdict: 'changes',
+    findings: [
+      { kind: 'bug', where: 'server/src/a.ts:12', text: 'Off by one', matters: 'Loses a row' },
+    ],
+    unsure: 'u',
+    commit: 'abcdef0123456789',
   },
 }
 
@@ -108,6 +120,15 @@ const rows: Row[] = [
     shown: true,
     level: 3,
     heading: 'What is unfinished',
+  },
+  {
+    mode: 'code_review',
+    label: 'Review pull request',
+    busy: true,
+    shown: false,
+    failure: 'no budget',
+    level: 3,
+    heading: 'Pull request review of abcdef0',
   },
 ]
 
@@ -270,6 +291,41 @@ describe('decision announcements (AC31)', () => {
       text: 'No unfinished-work check for Mark done: x.',
     },
     { name: 'a stopped help', help: help({ status: 'stopped' }), text: null },
+    {
+      name: 'a pull request review',
+      help: help({
+        decision: 'pull_request',
+        mode: 'code_review',
+        subject: { pr_run_id: 'r' },
+        result: RESULTS.code_review,
+      }),
+      text: 'Pull request review ready for abcdef0.',
+    },
+    {
+      name: 'a pull request review with no commit',
+      help: help({
+        decision: 'pull_request',
+        mode: 'code_review',
+        result: { ...RESULTS.code_review, commit: null } as HelpResult,
+      }),
+      text: 'Pull request review ready.',
+    },
+    {
+      name: 'a failed pull request review',
+      help: help({
+        decision: 'pull_request',
+        mode: 'code_review',
+        status: 'failed',
+        result: null,
+        reason: 'the branch is gone',
+      }),
+      text: 'No pull request review: the branch is gone.',
+    },
+    {
+      name: 'a stopped pull request review',
+      help: help({ decision: 'pull_request', mode: 'code_review', status: 'stopped' }),
+      text: null,
+    },
   ]
   it.each(table)('says $name', ({ help: h, text }) => {
     expect(decisionAnnouncement(h)).toBe(text)
@@ -340,7 +396,9 @@ describe('decisionRenderers and Use these findings', () => {
             ? renderers.recommend?.(result)
             : result.mode === 'check'
               ? renderers.check?.(result)
-              : null
+              : result.mode === 'code_review'
+                ? renderers.code_review?.(result)
+                : null
     return renderToStaticMarkup(<>{node}</>)
   }
   const table: { name: string; result: HelpResult; handler: boolean; button: boolean }[] = [
@@ -380,5 +438,49 @@ describe('decisionRenderers and Use these findings', () => {
       expect(markup).toContain('Use these findings')
       expect(markup.indexOf('Unsure about')).toBeLessThan(markup.indexOf('Use these findings'))
     }
+  })
+})
+
+describe('the pull request review result', () => {
+  const markup = (result: HelpResult) => {
+    const node = decisionRenderers(null).code_review?.(result as never)
+    return renderToStaticMarkup(<>{node}</>)
+  }
+  it('shows each finding with a neutral kind badge, where, text and why it matters', () => {
+    const html = markup(RESULTS.code_review)
+    expect(html).toContain('<span data-tone="neutral">bug</span>')
+    expect(html).toContain('server/src/a.ts:12')
+    expect(html).toContain('Off by one')
+    expect(html).toContain('<strong>Why it matters:</strong> Loses a row')
+    expect(html.indexOf('Why it matters:')).toBeLessThan(html.indexOf('Unsure about'))
+  })
+  it('says Nothing to change. and holds no focusable control', () => {
+    const html = markup({
+      mode: 'code_review',
+      verdict: 'nothing_to_change',
+      findings: [],
+      unsure: 'u',
+      commit: null,
+    })
+    expect(html).toContain('Nothing to change.')
+    for (const html2 of [html, markup(RESULTS.code_review)]) {
+      expect(html2).not.toMatch(/<(button|a|input|select|textarea)\b/)
+    }
+  })
+  it('heads the result with the short commit, or plainly without one', () => {
+    expect(resultHeading('code_review', null, RESULTS.code_review)).toBe(
+      'Pull request review of abcdef0',
+    )
+    expect(resultHeading('code_review', null)).toBe('Pull request review')
+  })
+  it('lists the review beside a decision of its own in decisionHelp', () => {
+    const review = help({
+      decision: 'pull_request',
+      mode: 'code_review',
+      result: RESULTS.code_review,
+    })
+    const state = decisionHelp([review], 'pull_request').code_review
+    expect(state?.shown).toEqual(RESULTS.code_review)
+    expect(decisionHelp([review], 'mark_done').code_review?.shown).toBeUndefined()
   })
 })

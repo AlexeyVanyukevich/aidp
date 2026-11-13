@@ -140,14 +140,29 @@ export interface ApprovalView {
   answered_at: string | null
 }
 export type QuestionHelpMode = 'suggest' | 'explain'
-export type HelpMode = QuestionHelpMode | 'review' | 'restate' | 'recommend' | 'check'
-export type HelpDecision = 'question' | 'spec_review' | 'stopped_run' | 'mark_done' | 'proposal'
+export type HelpMode =
+  QuestionHelpMode | 'review' | 'restate' | 'recommend' | 'check' | 'code_review'
+export type HelpDecision =
+  'question' | 'spec_review' | 'stopped_run' | 'mark_done' | 'proposal' | 'pull_request'
 export type HelpStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'stopped'
 export type StoppedRunAction = 'resume' | 'cancel' | 'rerun_again' | 'rerun_keep' | 'mark_done'
 /** What a helper saved: a suggestion, a plain restatement, or advice on a decision of the card. */
 export type HelpResult =
   | { mode: 'suggest'; option_id?: string; text?: string; reasoning: string; unsure: string }
   | { mode: 'explain'; asked: string; matters: string; leads_to: string }
+  | {
+      mode: 'code_review'
+      verdict: 'changes' | 'nothing_to_change'
+      findings: {
+        kind: 'bug' | 'breaks' | 'duplicate' | 'fit' | 'test'
+        where: string
+        text: string
+        matters: string
+      }[]
+      unsure: string
+      /** The commit the helper read; null when the board has none. */
+      commit: string | null
+    }
   | {
       mode: 'review'
       verdict: 'changes' | 'nothing_to_change'
@@ -182,6 +197,7 @@ export interface HelpSubject {
   block?: string | null
   delivery_run_id?: string | null
   proposal_id?: string
+  pr_run_id?: string
 }
 export interface HelpView {
   id: string
