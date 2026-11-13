@@ -48,7 +48,7 @@ export function loadRunnerConfig(env: NodeJS.ProcessEnv): RunnerConfig {
     claudeBin: env.CLAUDE_BIN?.trim() || 'claude',
     ghBin: env.GH_BIN?.trim() || 'gh',
     home: env.BOARD_HOME?.trim() || join(homedir(), '.aidp'),
-    testTimeoutMs: positiveInt(env, 'TEST_TIMEOUT_MS', 900_000),
+    testTimeoutMs: positiveInt(env, 'TEST_TIMEOUT_MS', 1_800_000),
     claimWaitMs: positiveInt(env, 'CLAIM_WAIT_MS', 30_000),
     heartbeatMs: positiveInt(env, 'HEARTBEAT_MS', 30_000),
     pauseGraceMs: positiveInt(env, 'PAUSE_GRACE_MS', 60_000),
