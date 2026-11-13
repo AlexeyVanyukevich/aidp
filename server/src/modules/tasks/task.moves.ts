@@ -6,7 +6,7 @@ import type { TaskState } from '../../shared/vocabulary.js'
 import { settleHelps } from '../approvals/help.service.js'
 import { DELIVERY_FACTS, nextState, type Facts, type Move } from './transitions.js'
 
-type Db = Kysely<Database> | Transaction<Database>
+type Db = Transaction<Database>
 
 /** The moves a rephrase run in flight holds back: each fixes the description it reads. */
 const HELD_BY_REPHRASE: readonly Move[] = ['draft_spec', 'redraft', 'approve']
@@ -15,7 +15,10 @@ const HELD_BY_REPHRASE: readonly Move[] = ['draft_spec', 'redraft', 'approve']
  * What a move's destination can depend on (`Facts`), read where the move is made: the kind of
  * the task's latest run, and whether the task has a spec version.
  */
-export async function moveFacts(db: Db, taskId: string): Promise<Facts> {
+export async function moveFacts(
+  db: Kysely<Database> | Transaction<Database>,
+  taskId: string,
+): Promise<Facts> {
   const run = await db
     .selectFrom('runs')
     .select('kind')
@@ -34,8 +37,9 @@ export async function moveFacts(db: Db, taskId: string): Promise<Facts> {
 }
 
 /**
- * The only writer of `tasks.state`. The row is locked first, so two movers — the owner's tab
- * and the runner — are serialised, and the loser gets a 409 rather than a lost update. A move
+ * The only writer of `tasks.state`, always inside a transaction. The row is locked first and
+ * held to the commit, so two movers — the owner's tab and the runner — are serialised, and the
+ * loser gets a 409 rather than a lost update. A move
  * whose destination depends on the run's kind or on a spec existing takes `facts`.
  */
 export async function moveTask(
@@ -94,7 +98,7 @@ export async function moveTask(
   return { from: task.state, to }
 }
 
-/** Settles the task's decision helps in the move's own transaction, when it has one. */
+/** Settles the task's decision helps in the move's own transaction. */
 async function settleHelpsIn(db: Db, taskId: string): Promise<void> {
-  if (db.isTransaction) await settleHelps(db as Transaction<Database>, taskId, new Date())
+  await settleHelps(db, taskId, new Date())
 }
