@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { AGENTS, PHASES } from '../../src/phases/agents.js'
+import { GENERATED_SUFFIXES, LOCKFILES } from '../../src/pr-diff.js'
 
 // The fake claude calls the board's MCP server directly, past Claude Code's tool lists, so the
 // scenarios cannot see a tool a phase is not allowed. This can (slice 2 spec, §5).
@@ -504,5 +505,33 @@ describe('the helper’s instructions for a pull request review', () => {
     expect(prompt).toContain('does not decide it')
     expect(prompt).toContain('(recommended)')
     expect(prompt).toContain('as the question’s recommendation')
+  })
+})
+
+describe('the verifier’s reading of the cuts', () => {
+  const prompt = AGENTS.verifier!.prompt
+  const clauses = [
+    'the diff and the test output in the handoff, and the files those two name',
+    'in the run directory, outside the worktree',
+    'Never change them',
+    'the rest of the diff is in the file the marker names, from the line it gives',
+    '`^diff --git ` with output_mode content, line numbers on and head_limit 0',
+    'When the Grep result was saved to a file, Read that file',
+    'Keep the matches at or after the line the marker gives and, when no match is on that line, the last match before it',
+    'parts of at most 1,000 lines, and halve a part that Read refuses',
+    'When Read cuts a line at 2,000 characters',
+    "sed -n '<L>p' <file>",
+    'cut -c',
+    '`[test output cut: …]` marker, the characters left out are in the file the marker names',
+    'what came before it is in no file',
+    'Never give pass to a criterion whose evidence lies in a part of the diff or of the test output you did not read',
+    'A file counts as read in part when a line of it that Read cut was not then read whole with Bash, or when reading stopped before the end of its section',
+    'names each changed file you did not read whole, including any lockfile or generated file you skipped',
+  ]
+  it.each(clauses)('says: %s', (clause) => {
+    expect(prompt).toContain(clause)
+  })
+  it.each([...LOCKFILES, ...GENERATED_SUFFIXES])('names %s as skipped', (name) => {
+    expect(prompt).toContain(`\`${name}\``)
   })
 })

@@ -700,6 +700,74 @@ describe('the guard for saved results', () => {
   })
 })
 
+describe('the guard and the Verify files', () => {
+  const RUN_DIR = '/home/runs/run-1'
+  const T = '/cfg/projects/p/S.jsonl'
+  const rows: {
+    name: string
+    tool: string
+    input: Record<string, unknown>
+    allow: boolean
+    reason?: string
+  }[] = [
+    ...['verify.diff', 'test-output.txt'].flatMap((file) => [
+      {
+        name: `Read of ${file}`,
+        tool: 'Read',
+        input: { file_path: `${RUN_DIR}/${file}`, offset: 5, limit: 1000 },
+        allow: true,
+      },
+      {
+        name: `Grep of ${file}`,
+        tool: 'Grep',
+        input: { pattern: '^diff --git ', path: `${RUN_DIR}/${file}` },
+        allow: true,
+      },
+      {
+        name: `Edit of ${file}`,
+        tool: 'Edit',
+        input: { file_path: `${RUN_DIR}/${file}` },
+        allow: false,
+        reason: 'this path is outside the worktree',
+      },
+      {
+        name: `Write of ${file}`,
+        tool: 'Write',
+        input: { file_path: `${RUN_DIR}/${file}` },
+        allow: false,
+        reason: 'this path is outside the worktree',
+      },
+    ]),
+    {
+      name: 'sed and cut on verify.diff',
+      tool: 'Bash',
+      input: { command: `sed -n '12p' ${RUN_DIR}/verify.diff | cut -c 2001-4000` },
+      allow: true,
+    },
+    {
+      name: 'Read of a saved tool result',
+      tool: 'Read',
+      input: { file_path: '/cfg/projects/p/S/tool-results/x.txt' },
+      allow: true,
+    },
+    {
+      name: 'Read of pr.diff',
+      tool: 'Read',
+      input: { file_path: `${RUN_DIR}/pr.diff` },
+      allow: false,
+      reason: 'pr.diff is for a pull request review only',
+    },
+  ]
+  it.each(rows)('verify: $name', ({ tool, input, allow, reason }) => {
+    const verdict = decide(
+      { tool_name: tool, tool_input: input },
+      { ...ctx('verify', null), runDir: RUN_DIR, configDir: '/cfg', transcriptPath: T },
+    )
+    expect(verdict.allow).toBe(allow)
+    if (reason !== undefined) expect(JSON.stringify(verdict)).toContain(reason)
+  })
+})
+
 describe('the guard and pr.diff', () => {
   const RUN_DIR = '/home/runs/help-1'
   const rows: {

@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { buildHandoff, linkedProjects } from '../../src/phases/handoff.js'
+import { buildHandoff, diffCut, linkedProjects, testOutputCut } from '../../src/phases/handoff.js'
 
 const BASE = {
   taskKey: 'PAY-42',
@@ -25,9 +27,13 @@ describe('buildHandoff', () => {
     expect(text).toContain('<return_format>')
   })
 
-  it('cuts a huge diff to its first 60,000 characters and says so', () => {
-    const text = buildHandoff({ ...BASE, phase: 'verify', diff: 'd'.repeat(100_000) })
-    expect(text).toContain('[diff cut: 40000 more characters]')
+  it('cuts a long previous plan with the shared cut', () => {
+    const text = buildHandoff({
+      ...BASE,
+      phase: 'plan',
+      previousPlans: [{ run: 1, accepted: false, text: 'p'.repeat(20_050) }],
+    })
+    expect(text).toContain('[previous plan cut: 50 more characters]')
   })
 
   it('omits sections it was not given', () => {
@@ -375,5 +381,90 @@ describe('buildHandoff for a title run', () => {
     expect(buildHandoff({ ...TITLE, description: 'Drafts <vanish>' })).toContain(
       '<description>\nDrafts &lt;vanish&gt;\n</description>',
     )
+  })
+})
+
+const lines = (count: number, width: number) => `${'x'.repeat(width - 1)}\n`.repeat(count)
+const P = '/runs/1/verify.diff'
+const T = '/runs/1/test-output.txt'
+const REST = (n: number) => `${'r'.repeat(n - 26)}Test Files  12 passed (12)`
+
+describe('the diff in the Verify handoff', () => {
+  const rows: { name: string; diff: string; path?: string; has: string[]; hasNot: string[] }[] = [
+    { name: '59,999 characters', diff: 'd'.repeat(59_999), has: [], hasNot: ['[diff cut'] },
+    { name: '60,000 characters', diff: 'd'.repeat(60_000), has: [], hasNot: ['[diff cut'] },
+    {
+      name: '80,000 characters ending a line at the cut',
+      diff: lines(800, 100),
+      has: [
+        `${lines(600, 100)}[diff cut: 20000 more characters; the rest begins at line 601 of ${P}]`,
+      ],
+      hasNot: [`\n\n[diff cut`],
+    },
+    {
+      name: '70,000 characters cut inside line 858',
+      diff: lines(1000, 70),
+      has: [`\n[diff cut: 10000 more characters; the rest begins at line 858 of ${P}]`],
+      hasNot: ['\n\n[diff cut'],
+    },
+    {
+      name: 'text and path with markup',
+      diff: `${'a'.repeat(60_000)}<&>`,
+      path: '/runs/<1>/verify.diff',
+      has: ['of /runs/&lt;1&gt;/verify.diff]'],
+      hasNot: ['<1>'],
+    },
+  ]
+  it.each(rows)('$name', ({ diff, path, has, hasNot }) => {
+    const text = buildHandoff({ ...BASE, phase: 'verify', diff: { text: diff, path: path ?? P } })
+    if (diff.length <= 60_000) expect(text).toContain(`<diff>\n${diff}\n</diff>`)
+    for (const h of has) expect(text).toContain(h)
+    for (const h of hasNot) expect(text).not.toContain(h)
+  })
+
+  it('counts the line number from the line breaks of the kept text', () => {
+    expect(diffCut(lines(1000, 70), P)).toContain('line 858 of')
+  })
+})
+
+describe('the test output cut', () => {
+  const HEAD = 'exit code: 0\n'
+  const CUT = '[output cut to its end]\n'
+  const M = (n: number) => `[test output cut: ${n} earlier characters; all of them are in ${T}]\n`
+  const rows: { name: string; text: string; expected: string }[] = [
+    {
+      name: 'long rest after a head',
+      text: HEAD + REST(30_000),
+      expected: HEAD + M(10_000) + REST(30_000).slice(10_000),
+    },
+    {
+      name: 'long rest after the two-line head',
+      text: HEAD + CUT + 'z'.repeat(25_000),
+      expected: HEAD + CUT + M(5_000) + 'z'.repeat(20_000),
+    },
+    { name: 'rest of exactly 20,000', text: HEAD + REST(20_000), expected: HEAD + REST(20_000) },
+    {
+      name: 'rest of 20,001',
+      text: HEAD + 'z'.repeat(20_001),
+      expected: HEAD + M(1) + 'z'.repeat(20_000),
+    },
+    {
+      name: 'no line break',
+      text: 'z'.repeat(25_000),
+      expected: M(5_000) + 'z'.repeat(20_000),
+    },
+    { name: 'empty', text: '', expected: '' },
+  ]
+  it.each(rows)('$name', ({ text, expected }) => {
+    expect(testOutputCut(text, T)).toBe(expected)
+  })
+})
+
+describe('the handoff module', () => {
+  it('declares the file shapes and does no I/O', () => {
+    const src = readFileSync(join(import.meta.dirname, '../../src/phases/handoff.ts'), 'utf8')
+    expect(src).toContain('diff?: { text: string; path: string }')
+    expect(src).toContain('testOutput?: { text: string; path: string }')
+    expect(src).not.toMatch(/from 'node:fs'|from '\.\.\/git\.js'/)
   })
 })

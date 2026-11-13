@@ -2078,6 +2078,64 @@ describe('the tests stage on the current base', () => {
     expect(h.handoffs['verify-1']).not.toContain(paths[100]!)
   })
 
+  describe('the Verify handoff’s cuts', () => {
+    const section = (path: string, chars: number) => {
+      const head = `diff --git a/${path} b/${path}\n`
+      return `${head}${'y'.repeat(chars - head.length - 1)}\n`
+    }
+    const LONG = `${section('a.ts', 40_000)}${section('b.ts', 30_000)}`
+    const SHORT = section('a.ts', 100)
+    const verified = async (script: Script) => {
+      const h = withPlan(harness(script))
+      seed(h, { 'gate-head.txt': 'abc123' })
+      await carryOut(at('verify', 1), h.deps)
+      return h
+    }
+    const LINE = `The diff was 70000 characters. The Verify handoff held its first 60000 and told the verifier to read the rest in verify.diff`
+
+    it('AC3: writes the whole diff and the test output into the run directory', async () => {
+      const h = withPlan(harness({ diffs: [LONG, SHORT], testResults: [{ output: 'tests ok\n' }] }))
+      seed(h, { 'gate-head.txt': 'abc123' })
+      await carryOut(at('verify', 1), h.deps)
+      expect(text(h, 'verify.diff')).toBe(LONG)
+      expect(text(h, 'test-output.txt')).toBe('exit code: 0\ntests ok\n')
+      expect(h.handoffs['verify-1']).toContain(join(dir(h), 'verify.diff'))
+      await carryOut(at('verify', 1), h.deps)
+      expect(text(h, 'verify.diff')).toBe(SHORT)
+    })
+
+    it('AC11: puts the diff line between the tested line and the report', async () => {
+      const h = await verified({ diffs: [LONG] })
+      expect(has(h, 'verify-cuts.md')).toBe(true)
+      const body = h.prBodies[0]!
+      expect(body).toContain(
+        `${LINE}. Files not wholly in the handoff: \`b.ts\`.\n\n## Verify report`,
+      )
+      expect(body.indexOf('Tested on')).toBeLessThan(body.indexOf(LINE))
+    })
+
+    it('AC11: a listing one path short goes on and gives the line to read from', async () => {
+      const h = await verified({ diffs: [LONG], diffPaths: ['a.ts'] })
+      expect(h.prBodies[0]).toContain(`${LINE}, from line 4.`)
+    })
+
+    it('AC11: a short diff and output leave no file and the body as before', async () => {
+      const h = await verified({ diffs: [SHORT] })
+      expect(has(h, 'verify-cuts.md')).toBe(false)
+      expect(h.prBodies[0]).not.toContain('The diff was')
+    })
+
+    it('AC11: a later short diff removes the earlier note', async () => {
+      const h = withPlan(harness({ diffs: [LONG, SHORT] }))
+      seed(h, { 'gate-head.txt': 'abc123' })
+      await carryOut(at('verify', 1), h.deps)
+      expect(has(h, 'verify-cuts.md')).toBe(true)
+      await carryOut(at('verify', 1), h.deps)
+      expect(has(h, 'verify-cuts.md')).toBe(false)
+      expect(h.prBodies[1]).not.toContain('The diff was')
+    })
+  })
+
   describe('the push stage and the pull request', () => {
     const LATE = [{ sha: 'abc1234', subject: 'fix: late' }]
     const pushed = async (script: Script, files: Record<string, string>) => {
