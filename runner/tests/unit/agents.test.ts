@@ -490,4 +490,19 @@ describe('the helper’s instructions for a pull request review', () => {
   it.each(rows)('$name', ({ words }) => {
     expect(prompt).toContain(words)
   })
+
+  it('tells the helper a review finding may carry choices and a recommended one', () => {
+    const line = AGENTS.helper!.prompt.split('\n\n').find((part) => part.startsWith('review:'))!
+    expect(line).toContain('choices')
+    expect(line).toContain('recommended')
+  })
+
+  it('tells the spec-writer to ask about an open choice, not decide it', () => {
+    const prompt = AGENTS['spec-writer']!.prompt
+    expect(prompt).toContain('Open choice, ask me:')
+    expect(prompt).toContain('Decision:')
+    expect(prompt).toContain('does not decide it')
+    expect(prompt).toContain('(recommended)')
+    expect(prompt).toContain('as the question’s recommendation')
+  })
 })
