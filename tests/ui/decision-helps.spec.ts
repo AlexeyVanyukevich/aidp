@@ -153,6 +153,74 @@ test('Review spec and Explain simply give results under their headings, announce
   await expectAccessible(page)
 })
 
+test('Use these findings puts the picked choices, open choices and left-out findings in the note', async ({
+  page,
+  request,
+}) => {
+  const task = await specTask(request, 'Choices at Spec review')
+  const { card, spec } = await openSpec(page, task.key, 'Choices at Spec review')
+  const note = spec.getByRole('textbox', { name: 'What to change' })
+  const use = spec.getByRole('button', { name: 'Use these findings' })
+  const group = (n: number) =>
+    spec.getByRole('radiogroup', { name: `What to do with finding ${n}` })
+  await spec.getByRole('button', { name: 'Review spec' }).click()
+  await expect(spec.getByRole('heading', { level: 4, name: 'Spec review of v1' })).toBeVisible(RUN)
+
+  // Each group holds its radios in order, with Use as written checked.
+  for (const n of [1, 2, 3]) {
+    await expect(group(n).getByRole('radio', { name: 'Use as written' })).toBeChecked()
+    await expect(group(n).getByRole('radio', { name: 'Leave out' })).not.toBeChecked()
+  }
+  await expect(
+    group(1).getByRole('radio', { name: 'Key the list by position (recommended)' }),
+  ).not.toBeChecked()
+
+  const requests: string[] = []
+  page.on('request', (req) => {
+    if (req.url().includes('/api/')) requests.push(`${req.method()} ${req.url()}`)
+  })
+  const status = spec.getByRole('status').first()
+
+  // Keyboard only: the arrow keys move within a group, Tab leaves it.
+  await tabTo(page, group(1).getByRole('radio', { name: 'Use as written' }))
+  await page.keyboard.press('ArrowDown')
+  await expect(group(1).getByRole('radio', { name: 'Refuse duplicate paths' })).toBeChecked()
+  await tabTo(page, group(2).getByRole('radio', { name: 'Use as written' }))
+  await page.keyboard.press('ArrowDown')
+  await expect(group(2).getByRole('radio', { name: 'Leave out' })).toBeChecked()
+  await tabTo(page, use)
+  await page.keyboard.press('Enter')
+  await expect(note).toHaveValue(
+    [
+      '- contradiction (R2): The fixtures list is ambiguous',
+      '  Decision: Refuse duplicate paths',
+      '- risk (R4): The fixture search is slow',
+      '  Open choice, ask me: Name the fixture files (recommended); or Drop the fixture search',
+    ].join('\n'),
+  )
+  await expect(note).toBeFocused()
+  await expect(status).toHaveText('Findings put in What to change.')
+  expect(requests.filter((request) => !request.startsWith('GET '))).toEqual([])
+  await expectAccessible(page)
+
+  // Leave every finding out: the note stays as it was, with focus and its own announcement.
+  await note.fill('Keep this.')
+  for (const n of [1, 2, 3]) await group(n).getByText('Leave out').click()
+  await use.click()
+  await expect(note).toHaveValue('Keep this.')
+  await expect(note).toBeFocused()
+  await expect(status).toHaveText('Every finding is left out; What to change is unchanged.')
+
+  // The same result shown again keeps the picks; a new result starts from Use as written.
+  await spec.getByRole('button', { name: 'Explain simply' }).click()
+  await expect(spec.getByRole('heading', { level: 4, name: 'v1 in plain words' })).toBeVisible(RUN)
+  await expect(group(1).getByRole('radio', { name: 'Leave out' })).toBeChecked()
+  await spec.getByRole('button', { name: 'Review spec' }).click()
+  await expect(spec.getByText('A second look')).toBeVisible(RUN)
+  await expect(group(1).getByRole('radio', { name: 'Use as written' })).toBeChecked()
+  await expect(card).toBeVisible()
+})
+
 test('a failed review shows its reason in the Help section', async ({ page, request }) => {
   const task = await specTask(request, 'A spec review that fails')
   const { spec } = await openSpec(page, task.key, 'A spec review that fails')
