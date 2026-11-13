@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import type { Kysely } from 'kysely'
 import type { Database } from '../../db/schema.js'
+import { ConflictError } from '../../shared/errors.js'
 import { moveTask } from '../tasks/task.moves.js'
 
 export type Gh = (args: string[]) => Promise<{ code: number; stdout: string; stderr: string }>
@@ -31,7 +32,14 @@ export class PrPoller {
       .selectFrom('tasks')
       .innerJoin('projects', 'projects.id', 'tasks.project_id')
       .innerJoin('runs', 'runs.task_id', 'tasks.id')
-      .select(['tasks.id as taskId', 'runs.id as runId', 'runs.pr_number', 'projects.github_repo'])
+      .select([
+        'tasks.id as taskId',
+        'tasks.number',
+        'projects.key as projectKey',
+        'runs.id as runId',
+        'runs.pr_number',
+        'projects.github_repo',
+      ])
       .where('tasks.state', '=', 'review')
       .where('runs.pr_number', 'is not', null)
       .distinctOn('tasks.id')
@@ -56,16 +64,24 @@ export class PrPoller {
         continue
       }
       const { state } = JSON.parse(result.stdout) as { state: string }
-      if (state === 'MERGED') await moveTask(this.db, row.taskId, 'merge')
-      if (state === 'CLOSED') {
+      const move = state === 'MERGED' ? 'merge' : state === 'CLOSED' ? 'close_pr' : undefined
+      if (move === undefined) continue
+      try {
         await this.db.transaction().execute(async (trx) => {
-          await moveTask(trx, row.taskId, 'close_pr')
-          await trx
-            .updateTable('runs')
-            .set({ failure_reason: 'pull request closed without merging' })
-            .where('id', '=', row.runId)
-            .execute()
+          await moveTask(trx, row.taskId, move)
+          if (move === 'close_pr')
+            await trx
+              .updateTable('runs')
+              .set({ failure_reason: 'pull request closed without merging' })
+              .where('id', '=', row.runId)
+              .execute()
         })
+      } catch (error) {
+        if (!(error instanceof ConflictError)) throw error
+        this.log.warn(
+          { taskId: row.taskId, key: `${row.projectKey}-${row.number}`, move },
+          'the PR poller could not move a card',
+        )
       }
     }
   }

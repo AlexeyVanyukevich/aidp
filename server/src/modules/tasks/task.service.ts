@@ -103,7 +103,9 @@ export class TaskService {
     }
     // Review is the owner's drag; any other state asks for `mark_done`, which refuses what it must.
     if (state === 'done')
-      await moveTask(this.db, id, task.state === 'review' ? 'drag_done' : 'mark_done')
+      await this.db
+        .transaction()
+        .execute((trx) => moveTask(trx, id, task.state === 'review' ? 'drag_done' : 'mark_done'))
     if (Object.keys(fields).length > 0) {
       await this.tasks.update(id, fields)
       await publish(this.db, { topic: 'task.updated', taskId: id })

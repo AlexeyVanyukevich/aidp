@@ -237,18 +237,80 @@ describe('PATCH /api/tasks/:id', () => {
   })
 })
 
+describe('PATCH state done under a concurrent move', () => {
+  type Row = {
+    name: string
+    from: 'review' | 'backlog'
+    meanwhile: 'close_pr' | 'draft_spec'
+    ends: string
+  }
+  const rows: Row[] = [
+    {
+      name: 'a card in Review closed meanwhile',
+      from: 'review',
+      meanwhile: 'close_pr',
+      ends: 'failed',
+    },
+    {
+      name: 'a card in Backlog drafted meanwhile',
+      from: 'backlog',
+      meanwhile: 'draft_spec',
+      ends: 'spec_draft',
+    },
+  ]
+  it.each(rows)('waits for the lock, then answers 409: $name', async (row) => {
+    const { id } = await seedTask(getTestDb(), projectId, { state: row.from })
+    let release!: () => void
+    const held = new Promise<void>((resolve) => (release = resolve))
+    let locked!: () => void
+    const isLocked = new Promise<void>((resolve) => (locked = resolve))
+    const holder = getTestDb()
+      .transaction()
+      .execute(async (trx) => {
+        await moveTask(trx, id, row.meanwhile)
+        locked()
+        await held
+      })
+    await isLocked
+    let settled = false
+    const request = app
+      .inject({ method: 'PATCH', url: `/api/tasks/${id}`, payload: { state: 'done' } })
+      .then((response) => {
+        settled = true
+        return response
+      })
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    expect(settled).toBe(false)
+    release()
+    await holder
+    const response = await request
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'conflict' })
+    const after = await getTestDb()
+      .selectFrom('tasks')
+      .select('state')
+      .where('id', '=', id)
+      .executeTakeFirstOrThrow()
+    expect(after.state).toBe(row.ends)
+  })
+})
+
 describe('moveTask', () => {
   it('announces the move', async () => {
     const { id } = await seedTask(getTestDb(), projectId, { state: 'review' })
     const announced = app.bus.next('task.updated', 5_000)
-    await moveTask(getTestDb(), id, 'merge')
+    await getTestDb()
+      .transaction()
+      .execute((trx) => moveTask(trx, id, 'merge'))
     expect(await announced).toEqual({ topic: 'task.updated', taskId: id })
   })
 
   it('places a moved card last in its new column', async () => {
     await seedTask(getTestDb(), projectId, { number: 1, state: 'done', position: 7 })
     const { id } = await seedTask(getTestDb(), projectId, { number: 2, state: 'review' })
-    await moveTask(getTestDb(), id, 'merge')
+    await getTestDb()
+      .transaction()
+      .execute((trx) => moveTask(trx, id, 'merge'))
     const row = await getTestDb()
       .selectFrom('tasks')
       .select('position')
