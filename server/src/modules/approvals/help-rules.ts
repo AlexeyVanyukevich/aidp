@@ -372,11 +372,17 @@ export function checkDecisionResult(
   return findings
 }
 
+/** What a review's checkout read, from its `help_checkout` event. */
+export interface CheckoutRead {
+  commit: string | null
+  skipped: { path: string; skip: 'lockfile' | 'generated' }[]
+}
+
 /** The decision result as it is stored: only the fields of its mode, trimmed. */
 export function decisionResultOf(
   mode: DecisionResultMode,
   input: DecisionResultInput,
-  commit: string | null = null,
+  read: CheckoutRead = { commit: null, skipped: [] },
 ): HelpResult {
   const t = (value: string | undefined) => (value ?? '').trim()
   if (mode === 'code_review')
@@ -390,7 +396,8 @@ export function decisionResultOf(
         matters: t(item.matters),
       })),
       unsure: t(input.unsure),
-      commit,
+      commit: read.commit,
+      skipped: read.skipped,
     }
   const where = (value: string | undefined) =>
     value === undefined || blank(value) ? {} : { where: value.trim() }

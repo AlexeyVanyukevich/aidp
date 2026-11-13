@@ -162,6 +162,8 @@ export type HelpResult =
       unsure: string
       /** The commit the helper read; null when the board has none. */
       commit: string | null
+      /** The files the board skipped by name; absent on a review saved before it recorded them. */
+      skipped?: { path: string; skip: 'lockfile' | 'generated' }[]
     }
   | {
       mode: 'review'

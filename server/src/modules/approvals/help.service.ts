@@ -36,6 +36,7 @@ import {
   isCurrent,
   questionOf,
   resultOf,
+  type CheckoutRead,
   type DecisionResultInput,
   type DecisionResultMode,
   type HelpResultInput,
@@ -264,8 +265,11 @@ export async function endHelpRun(
     .execute()
 }
 
-/** The commit the helper read: the payload of the help run's `help_checkout` event, or none. */
-async function checkoutCommit(trx: Transaction<Database>, runId: string): Promise<string | null> {
+/**
+ * What the help run's `help_checkout` event says the helper read: the commit, or null, and the
+ * files skipped by name, or none.
+ */
+async function checkoutRead(trx: Transaction<Database>, runId: string): Promise<CheckoutRead> {
   const event = await trx
     .selectFrom('events')
     .select('payload')
@@ -275,7 +279,20 @@ async function checkoutCommit(trx: Transaction<Database>, runId: string): Promis
     .limit(1)
     .executeTakeFirst()
   const commit = event?.payload.commit
-  return typeof commit === 'string' ? commit : null
+  const skipped = event?.payload.skipped
+  return {
+    commit: typeof commit === 'string' ? commit : null,
+    skipped: Array.isArray(skipped) ? skipped.flatMap(skippedFile) : [],
+  }
+}
+
+/** One well-formed entry of the event's `skipped`, or none. */
+function skippedFile(value: unknown): CheckoutRead['skipped'] {
+  if (typeof value !== 'object' || value === null) return []
+  const { path, skip } = value as { path?: unknown; skip?: unknown }
+  return typeof path === 'string' && (skip === 'lockfile' || skip === 'generated')
+    ? [{ path, skip }]
+    : []
 }
 
 const TOKEN_LIFETIME_MS = 4 * 3600_000
@@ -959,7 +976,7 @@ export class HelpService {
           decisionResultOf(
             mode,
             input,
-            mode === 'code_review' ? await checkoutCommit(trx, help.run_id) : null,
+            mode === 'code_review' ? await checkoutRead(trx, help.run_id) : undefined,
           ),
         ),
         ended_at: now,

@@ -471,12 +471,20 @@ describe('the helper’s instructions for a pull request review', () => {
       words: 'Save nothing_to_change when nothing should change',
     },
     {
-      name: 'it lists skipped, partial and unread files under unsure',
-      words: 'list by path every file you skipped, read in part or did not read',
+      name: 'it leaves the skipped files to the board',
+      words: 'The board lists the files marked skip on the review itself; do not list them.',
+    },
+    {
+      name: 'it lists partial and unread files under unsure',
+      words: 'list by path every file you read in part or did not read',
+    },
+    {
+      name: 'it groups a list too long to fit',
+      words: 'name each directory and how many of its files instead',
     },
     {
       name: 'it says when every file was read whole',
-      words: 'when every file was read whole, say so',
+      words: 'When every file you did not skip was read whole, say so.',
     },
   ]
   it.each(rows)('$name', ({ words }) => {

@@ -734,8 +734,11 @@ which must equal the source for the card's state, what the runs produced, the un
 unsure), and `code_review` (a verdict as in `review`; findings of at most 30, each a `kind` among
 `bug`, `breaks`, `duplicate`, `fit` and `test`, a `file`, an optional `line` of at least 1, `text`
 and `matters`). A saved review stores each finding as `{ kind, where, text, matters }`, `where`
-being `file` or `file:line`, and the result carries `commit`, which the server takes from the
-payload of the help run's `help_checkout` event, or null. For a `pull_request` help `get_decision`
+being `file` or `file:line`, and the result carries `commit` and `skipped`, which the server
+takes from the payload of the help run's `help_checkout` event: the commit or null, and the files
+skipped by name (`{ path, skip }`) or none. The PR tab shows `skipped` as "Not reviewed", so the
+helper never lists those files under `unsure`, whose 4,000 characters a large pull request's
+lockfiles and generated files would otherwise fill. For a `pull_request` help `get_decision`
 returns the run's number, branch and pull request, the approved spec, the run's accepted plan or
 null, and its latest Verify report or null.
 
@@ -751,7 +754,8 @@ when it exists — copying its `linked.json`, making and removing nothing — an
 with linked checkouts under `~/.aidp/worktrees/<help run id>-linked/`, and no setup command runs.
 A `help_checkout` event records the ref read, the source, whether it fell back and `commit`, the
 full hash of HEAD in the worktree the helper reads (for a reused paused run's worktree, its HEAD,
-without changes not committed there); the helper's first message carries a `<checkout ref source/>`
+without changes not committed there), and for a `pull_request` help `skipped`, each file marked
+`skip` with its mark; the helper's first message carries a `<checkout ref source/>`
 element and, when the help has linked checkouts, the same `<linked_projects>` element a phase
 handoff carries (`linkedProjects` in `runner/src/phases/handoff.ts`) and the line "The linked
 checkouts may be read and never changed." The source
@@ -766,7 +770,9 @@ cannot colour, replace or convert the text. The first message carries
 per changed file, in the diff's order (`first_line` is the line of `pr.diff` where its section
 begins); a lockfile or a generated file (`.min.js`, `.min.css`, `.map`) carries `skip="lockfile"` or
 `skip="generated"`. The helper reads the diff section by section in parts of at most 1,000 lines,
-skips marked files, and lists under `unsure` every file it skipped, read in part or did not read. A failed fetch or worktree add fails the
+skips marked files, which the board lists itself, and lists under `unsure` every file it read in
+part or did not read, by directory and count when they are too many to name. A failed fetch or
+worktree add fails the
 help with "the help's checkout could not be made: …". The guard lets the helper read inside its
 working directory and inside the linked checkouts of its `linked.json`, and Read and Grep exactly
 the file `pr.diff` in its `BOARD_RUN_DIR`; every other path in the run directory stays refused, and
@@ -1410,7 +1416,8 @@ under an `h3`, with no control in them and no button that acts on a result. In R
 pull request link, the button Review pull request, then its result before the Files changed
 section, under an `h3` "Pull request review of <short commit>" (the commit's first 7 characters;
 "Pull request review" when there is none): Nothing to change, or the findings, each with its kind
-as a neutral badge, where and text, and "Why it matters:", then Unsure about; a failure reads "No
+as a neutral badge, where and text, and "Why it matters:", then "Not reviewed:" with each skipped
+file and its mark when the board skipped any, then Unsure about; a failure reads "No
 pull request review: <reason>". The tab's focus order is the pull request link, Review pull
 request, then what follows; the result holds no control, and a refused request uses the card's
 problem notice through the tab's `onProblem`. The status region announces "Pull request review
