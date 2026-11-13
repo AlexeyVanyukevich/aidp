@@ -2189,3 +2189,285 @@ describe('the help prompt', () => {
     expect(text.match(/<\/task>/g)).toHaveLength(1)
   })
 })
+
+describe('the test command’s result', () => {
+  const dir = (h: ReturnType<typeof harness>) => RUN_DIR(h.home)
+  const worktreeOf = (h: ReturnType<typeof harness>) => join(h.home, 'worktrees', RUN.id)
+  const starts = (h: ReturnType<typeof harness>) =>
+    h.calls.filter((c) => c.startsWith('start ')).map((c) => c.slice('start '.length))
+  const blocks = (h: ReturnType<typeof harness>) =>
+    h
+      .of('error')
+      .map(
+        (e) =>
+          e.payload as {
+            blocks?: boolean
+            cause?: string
+            stage?: string
+            command?: string
+            output?: string
+          },
+      )
+      .filter((p) => p.blocks === true)
+  const instruction = (h: ReturnType<typeof harness>) =>
+    `In ${worktreeOf(h)}, make \`npm test\` pass and commit the fix, then Resume. A failure in a file outside the plan is fixed on the base branch instead: push the fix to \`origin/main\`, then Resume, and the tests stage rebases the branch onto it before the command runs. Only committed work is tested: Resume undoes uncommitted changes first, and a path outside the plan committed in the worktree fails the files gate, which ends the run on attempt 3.`
+  const OUTSIDE =
+    'If the cause was outside the code, for example the machine slept or the disk was full, Resume runs the command again as it is.'
+  const resumed = (cp: Checkpoint, message: string | null = null) =>
+    resume(cp, message) as Extract<Work, { kind: 'resume' }>
+  const TEST_FAILED: Checkpoint['failing_report_id'] = 'test_command'
+
+  interface Result {
+    exitCode: number | null
+    timedOut?: boolean
+    output?: string
+    truncated?: boolean
+  }
+  interface Row {
+    name: string
+    results: Result[]
+    buildHeads: (string | undefined)[]
+    starts: string[]
+    testRuns: number
+    outcome: 'review' | 'released'
+    /** The block's first line, its attempt, and whether R7's line belongs to it. */
+    block?: { first: string; attempt: number; outside: boolean }
+    /** The failing report id on the checkpoint that opens build-2. */
+    failing?: string
+  }
+  const PASS: Result = { exitCode: 0 }
+  const FAIL: Result = { exitCode: 1 }
+  const KILLED: Result = { exitCode: null, timedOut: true }
+  const HEADS = [undefined, 'head-2', 'head-3']
+  const ROWS: Row[] = [
+    {
+      name: 'exit 0',
+      results: [PASS],
+      buildHeads: [],
+      starts: ['plan-1', 'build-1', 'verify-1'],
+      testRuns: 1,
+      outcome: 'review',
+    },
+    {
+      name: 'exit 1, then exit 0',
+      results: [FAIL, PASS],
+      buildHeads: HEADS,
+      starts: ['plan-1', 'build-1', 'build-2', 'verify-2'],
+      testRuns: 2,
+      outcome: 'review',
+      failing: 'test_command',
+    },
+    {
+      name: 'exit 137, then exit 0',
+      results: [{ exitCode: 137 }, PASS],
+      buildHeads: HEADS,
+      starts: ['plan-1', 'build-1', 'build-2', 'verify-2'],
+      testRuns: 2,
+      outcome: 'review',
+      failing: 'test_command',
+    },
+    {
+      name: 'a timeout on attempt 1',
+      results: [KILLED],
+      buildHeads: [],
+      starts: ['plan-1', 'build-1'],
+      testRuns: 1,
+      outcome: 'released',
+      block: { first: 'the test command was killed after its timeout', attempt: 1, outside: true },
+    },
+    {
+      name: 'not run or killed on attempt 1',
+      results: [{ exitCode: null, timedOut: false }],
+      buildHeads: [],
+      starts: ['plan-1', 'build-1'],
+      testRuns: 1,
+      outcome: 'released',
+      block: { first: 'the test command did not run or was killed', attempt: 1, outside: true },
+    },
+    {
+      name: 'exit 1 on all three attempts',
+      results: [FAIL, FAIL, FAIL],
+      buildHeads: HEADS,
+      starts: ['plan-1', 'build-1', 'build-2', 'build-3'],
+      testRuns: 3,
+      outcome: 'released',
+      block: { first: 'the test command failed on attempt 3', attempt: 3, outside: false },
+    },
+    {
+      name: 'exit 1 twice, then a timeout on attempt 3',
+      results: [FAIL, FAIL, KILLED],
+      buildHeads: HEADS,
+      starts: ['plan-1', 'build-1', 'build-2', 'build-3'],
+      testRuns: 3,
+      outcome: 'released',
+      block: { first: 'the test command was killed after its timeout', attempt: 3, outside: true },
+    },
+    {
+      name: 'exit 1, then a Build that commits nothing',
+      results: [FAIL],
+      buildHeads: [],
+      starts: ['plan-1', 'build-1', 'build-2'],
+      testRuns: 1,
+      outcome: 'released',
+      block: {
+        first: 'the build changed nothing after the test command failed',
+        attempt: 2,
+        outside: false,
+      },
+    },
+  ]
+
+  it.each(ROWS)('AC1–AC3, AC7, AC9, AC10, AC15, AC19: $name', async (row) => {
+    const h = harness({ testResults: row.results, buildHeads: row.buildHeads })
+    expect(await carryOut(START as Extract<Work, { kind: 'start' }>, h.deps)).toBe(row.outcome)
+    expect(starts(h)).toEqual(row.starts)
+    expect(h.testRuns).toHaveLength(row.testRuns)
+    expect(h.runEnd()?.payload).not.toMatchObject({ reason: 'verify failed three times' })
+    if (row.outcome === 'review')
+      expect(h.runEnd()).toMatchObject({ payload: { outcome: 'review' } })
+    else expect(h.runEnd()).toBeUndefined()
+
+    const events = h.of('tool_call').filter((e) => e.tool === 'test_command')
+    expect(events).toHaveLength(row.testRuns)
+    events.forEach((e, i) => {
+      const result = row.results[i] ?? PASS
+      expect(e.status).toBe(result.exitCode === 0 ? 'ok' : 'error')
+      expect(e.payload).toMatchObject({
+        exit_code: result.exitCode,
+        timed_out: result.timedOut ?? false,
+      })
+    })
+
+    if (row.failing !== undefined) {
+      const second = h.checkpoints().find((c) => c.stage === 'build' && c.attempt === 2)
+      expect(second?.failing_report_id).toBe(row.failing)
+    }
+    if (row.block === undefined) {
+      expect(blocks(h)).toEqual([])
+      return
+    }
+    const [block, ...more] = blocks(h)
+    expect(more).toEqual([])
+    expect(block).toMatchObject({ cause: 'step_failed', stage: 'tests', command: 'npm test' })
+    const output = block?.output ?? ''
+    expect(output.startsWith(row.block.first)).toBe(true)
+    expect(output.endsWith(instruction(h))).toBe(true)
+    if (row.block.outside) expect(output).toContain(`${OUTSIDE}\n${instruction(h)}`)
+    else expect(output).not.toContain('If the cause was outside the code')
+    expect(h.checkpoints().at(-1)).toMatchObject({ stage: 'tests', attempt: row.block.attempt })
+    if (row.block.attempt === 3 && row.block.first.includes('failed'))
+      expect(output).toContain('exit code: 1')
+    const phaseEnds = h.calls.filter((c) => c.startsWith('end build-2'))
+    if (row.block.first.includes('changed nothing')) expect(phaseEnds).toEqual(['end build-2 ok'])
+  })
+
+  const LONG = 'FIRST-LINE\n' + 'x'.repeat(30_000) + '\nLAST-LINE'
+  it('AC4: the report keeps the end of a long output and names the rules', async () => {
+    const h = withPlan(
+      harness({
+        testResults: [{ exitCode: 1, output: LONG, truncated: false }],
+        acts: { 'build-2': ['paused'] },
+        buildHeads: HEADS,
+      }),
+    )
+    await carryOut(START as Extract<Work, { kind: 'start' }>, h.deps)
+    const report = h.handoffs['build-2'] ?? ''
+    expect(report).toContain('`npm test`')
+    expect(report).toContain('exit code: 1')
+    expect(report).toContain('[output cut to its end]')
+    expect(report).toContain('LAST-LINE')
+    expect(report).not.toContain('FIRST-LINE')
+    expect(report).toContain("changing only the plan's files")
+    expect(report).toContain('say so in your summary')
+    expect(existsSync(join(dir(h), 'test-command-report.md'))).toBe(true)
+  })
+
+  it.each([
+    { truncated: true, cut: true },
+    { truncated: false, cut: false },
+  ])('AC5: a short output with truncated $truncated', async ({ truncated, cut }) => {
+    const h = harness({
+      testResults: [{ exitCode: 1, output: 'short', truncated }],
+      acts: { 'build-2': ['paused'] },
+      buildHeads: HEADS,
+    })
+    await carryOut(START as Extract<Work, { kind: 'start' }>, h.deps)
+    const report = h.handoffs['build-2'] ?? ''
+    expect(report.includes('[output cut to its end]')).toBe(cut)
+  })
+
+  it('AC6: a missing report file gives the fixed text', async () => {
+    const h = withPlan(harness({ acts: { 'build-2': ['paused'] } }))
+    const cp = { ...checkpoint('build', 2), failing_report_id: TEST_FAILED }
+    await carryOut(resumed(cp), h.deps)
+    expect(h.handoffs['build-2']).toContain('The test command `npm test` failed')
+  })
+
+  it('AC8: a run blocked on attempt 3 tests again on Resume, and opens the pull request', async () => {
+    const h = withPlan(harness({}))
+    const cp = { ...checkpoint('tests', 3), failing_report_id: TEST_FAILED }
+    expect(await carryOut(resumed(cp), h.deps)).toBe('review')
+    expect(h.testRuns).toHaveLength(1)
+    expect(starts(h)).toEqual(['verify-3'])
+  })
+
+  it('AC20 and AC21: a Resume at tests with HEAD unchanged runs the test command', async () => {
+    const h = withPlan(harness({}))
+    mkdirSync(dir(h), { recursive: true })
+    writeFileSync(join(dir(h), 'gate-head.txt'), 'abc123')
+    const cp = { ...checkpoint('tests', 2), failing_report_id: TEST_FAILED }
+    expect(await carryOut(resumed(cp), h.deps)).toBe('review')
+    expect(h.testRuns).toHaveLength(1)
+    expect(blocks(h)).toEqual([])
+    expect(starts(h)).toEqual(['verify-2'])
+  })
+
+  describe('a Verify that finds the test command not passing', () => {
+    const verifyAt = (attempt: number, phase?: string) =>
+      resumed(checkpoint('verify', attempt, phase))
+
+    it('AC11: a failure sends Build round without a verify phase', async () => {
+      const h = withPlan(harness({ testResults: [FAIL], buildHeads: [undefined, 'head-2'] }))
+      await carryOut(verifyAt(1), h.deps)
+      expect(starts(h)).toEqual(['build-2', 'verify-2'])
+      expect(h.checkpoints().filter((c) => c.stage === 'verify' && c.attempt === 1)).toEqual([])
+      expect(h.handoffs['build-2']).toContain('exit code: 1')
+      expect(h.checkpoints().find((c) => c.stage === 'build')?.failing_report_id).toBe(
+        'test_command',
+      )
+    })
+
+    it('AC12: a timeout blocks at tests, naming no phase', async () => {
+      const h = withPlan(harness({ testResults: [KILLED] }))
+      expect(await carryOut(verifyAt(1), h.deps)).toBe('released')
+      expect(starts(h)).toEqual([])
+      expect(blocks(h)).toMatchObject([{ cause: 'step_failed', stage: 'tests' }])
+      expect(h.checkpoints().at(-1)).toMatchObject({ stage: 'tests', attempt: 1, phase_id: null })
+    })
+
+    it('AC13: a recorded phase whose session is gone ends failed, and is not restarted', async () => {
+      const h = withPlan(
+        harness({
+          acts: { 'verify-1': ['gone'] },
+          testResults: [FAIL],
+          buildHeads: [undefined, 'head-2'],
+        }),
+      )
+      await carryOut(verifyAt(1, 'ph'), h.deps)
+      expect(h.calls).toContain('end verify-1 failed')
+      expect(h.restarts).toEqual([])
+      expect(starts(h)[0]).toBe('build-2')
+      const first = h.checkpoints().find((c) => c.stage === 'build' && c.attempt === 2)
+      expect(first?.phase_id).not.toBe('ph')
+    })
+
+    it('AC14: on attempt 3 the same ends the phase and blocks', async () => {
+      const h = withPlan(harness({ acts: { 'verify-3': ['gone'] }, testResults: [FAIL] }))
+      expect(await carryOut(verifyAt(3, 'ph'), h.deps)).toBe('released')
+      expect(h.calls).toContain('end verify-3 failed')
+      expect(h.restarts).toEqual([])
+      expect(blocks(h)).toMatchObject([{ cause: 'step_failed', stage: 'tests' }])
+      expect(h.checkpoints().at(-1)).toMatchObject({ stage: 'tests', attempt: 3, phase_id: null })
+    })
+  })
+})

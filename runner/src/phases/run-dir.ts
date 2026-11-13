@@ -195,6 +195,8 @@ export function clearMark(dir: string, mark: BaseMark): void {
 
 /** What the tests stage found when the branch did not rebase onto the base; the next Build reads it. */
 export const BASE_CONFLICT_REPORT = 'base-conflict-report.md'
+/** What the runner wrote when the test command failed; the next Build reads it. */
+export const TEST_COMMAND_REPORT = 'test-command-report.md'
 const UNTESTED = 'untested-commits.json'
 
 export interface UntestedCommit {

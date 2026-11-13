@@ -10,6 +10,7 @@ import {
   BASE_CONFLICT_REPORT,
   GATE_HEAD,
   GATE_REPORT,
+  TEST_COMMAND_REPORT,
   type ApprovedMigration,
   clearMark,
   clearPendingAnswer,
@@ -45,7 +46,17 @@ import { ApiError } from './api.js'
 import { linkedForHandoff, removeLinked } from './linked.js'
 import { newEvent } from './sink.js'
 import { removeCheckout, type LogContext } from './worktree-log.js'
-import type { runTestCommand } from './test-command.js'
+import {
+  classifyTestRun,
+  failedBlockOutput,
+  fixInstruction,
+  notPassedBlockOutput,
+  testCommandReport,
+  testCommandReportFallback,
+  unchangedBlockOutput,
+  type runTestCommand,
+  type TestRun,
+} from './test-command.js'
 
 export { INTERRUPTED, type Outcome, type Phases } from './run-steps.js'
 
@@ -65,6 +76,14 @@ const FILES_GATE_TEXT =
 const BASE_CONFLICT = 'base_conflict'
 const BASE_CONFLICT_TEXT =
   'The branch conflicts with the base branch. Run `git rebase origin/<base>`, resolve each conflicting path, `git add` it and `git rebase --continue` until the rebase is done.'
+/** A checkpoint's failing report when the test command failed: its text is in the run directory. */
+const TEST_COMMAND = 'test_command'
+/** Leaves a Verify handoff that ran the test command and found it did not pass. */
+class TestsNotPassed extends Error {
+  constructor(readonly result: TestRun) {
+    super('the test command did not pass')
+  }
+}
 const NOTE_PATHS = 100
 const PR_UNTESTED = 20
 const PLAN_QUESTION =
@@ -138,7 +157,38 @@ export async function carryOut(
         },
       ),
     ])
-    testOutput = `exit code: ${result.timedOut ? 'killed after timeout' : String(result.exitCode)}\n${result.truncated ? '[output cut to its end]\n' : ''}${result.output}`
+    const text = `exit code: ${result.timedOut ? 'killed after timeout' : String(result.exitCode)}\n${result.truncated ? '[output cut to its end]\n' : ''}${result.output}`
+    testOutput = text
+    return result
+  }
+
+  const fix = () =>
+    fixInstruction({ worktree, command: project.test_command, base: project.base_branch })
+
+  /**
+   * Acts on a run of the test command: true when it passed. A failure on attempt 1 or 2 writes
+   * the report and sends the run back to Build; the rest block the run at the tests stage.
+   */
+  const actOnTests = async (result: TestRun): Promise<boolean> => {
+    const verdict = classifyTestRun(result)
+    if (verdict === 'passed') return true
+    state.stage = 'tests'
+    const command = project.test_command
+    if (verdict === 'failed' && state.attempt < MAX_ATTEMPTS) {
+      writeFileSync(join(runDir, TEST_COMMAND_REPORT), testCommandReport(command, result))
+      nextAttempt(TEST_COMMAND)
+      return false
+    }
+    const output =
+      verdict === 'failed' ? failedBlockOutput(result, fix()) : notPassedBlockOutput(result, fix())
+    return steps.block('step_failed', { command, output })
+  }
+
+  const testCommandText = () => {
+    const file = join(runDir, TEST_COMMAND_REPORT)
+    return existsSync(file)
+      ? readFileSync(file, 'utf8')
+      : testCommandReportFallback(project.test_command)
   }
 
   const handoffFor = (name: 'plan' | 'build' | 'verify') => async (): Promise<string> => {
@@ -176,7 +226,9 @@ export async function carryOut(
               ? gateReport()
               : state.failingId === BASE_CONFLICT
                 ? conflictReport()
-                : (await artifact('verify_report', { id: state.failingId }))?.body_md
+                : state.failingId === TEST_COMMAND
+                  ? testCommandText()
+                  : (await artifact('verify_report', { id: state.failingId }))?.body_md
       const undone = readUndone(runDir)
       const report =
         failing === undefined || state.failingId === NO_COMMIT || undone.length === 0
@@ -190,7 +242,20 @@ export async function carryOut(
       })
     }
     // A Verify started afresh after a resume has no test output yet: the tests run again.
-    if (testOutput === undefined) await tests()
+    if (testOutput === undefined) {
+      const result = await tests()
+      if (classifyTestRun(result) !== 'passed') {
+        // The verifier does not start: its phase is dropped, or ended when the board knows it.
+        state.stage = 'tests'
+        const recorded =
+          work.kind === 'resume' &&
+          state.phase !== null &&
+          work.checkpoint.phase_id === state.phase.phaseId
+        if (recorded) await steps.endPhase(false)
+        else state.phase = null
+        throw new TestsNotPassed(result)
+      }
+    }
     const moved = await verifyNote()
     const undone = readUndone(runDir)
     const undoneNote =
@@ -546,6 +611,17 @@ export async function carryOut(
           if (!result.ok) await steps.failPhase('build')
           await steps.endPhase(true)
           state.stage = 'tests'
+          // A Build that fixed nothing is not tested again: the same failure would come back.
+          const gateHead = join(runDir, GATE_HEAD)
+          if (
+            state.failingId === TEST_COMMAND &&
+            existsSync(gateHead) &&
+            (await deps.git.head(worktree)) === readFileSync(gateHead, 'utf8').trim()
+          )
+            await steps.block('step_failed', {
+              command: project.test_command,
+              output: unchangedBlockOutput(fix()),
+            })
           break
         }
         case 'tests': {
@@ -604,13 +680,21 @@ export async function carryOut(
           // Verify may not move the branch that is pushed: the push stage compares against this.
           writeFileSync(join(runDir, GATE_HEAD), await deps.git.head(worktree))
           writeMark(runDir, 'tested', await deps.git.revParse(worktree, `origin/${base}`))
-          await tests()
+          const ran = await tests()
           await steps.stopIfShuttingDown()
-          state.stage = 'verify'
+          if (await actOnTests(ran)) state.stage = 'verify'
           break
         }
         case 'verify': {
-          const result = await steps.phaseStep('verify', handoffFor('verify'))
+          let result
+          try {
+            result = await steps.phaseStep('verify', handoffFor('verify'))
+          } catch (error) {
+            if (!(error instanceof TestsNotPassed)) throw error
+            await steps.stopIfShuttingDown()
+            await actOnTests(error.result)
+            break
+          }
           if (!result.ok) await steps.failPhase('verify')
           const report = await artifact('verify_report', { phaseId: result.record.phaseId })
           if (report === undefined) {
