@@ -5,7 +5,7 @@ import {
   type DecisionResultInput,
 } from '../../src/modules/approvals/help-rules.js'
 
-type Mode = 'review' | 'restate' | 'recommend' | 'check'
+type Mode = 'review' | 'restate' | 'recommend' | 'check' | 'code_review'
 interface Row {
   name: string
   mode: Mode
@@ -174,6 +174,107 @@ const rows: Row[] = [
     expected: ['action:not_allowed'],
   },
 ]
+
+const bug = {
+  kind: 'bug',
+  file: 'server/src/a.ts',
+  line: 12,
+  text: 'Off by one',
+  matters: 'Loses a row',
+}
+const codeRows: Row[] = [
+  {
+    name: 'a code review with a finding',
+    mode: 'code_review',
+    input: { verdict: 'changes', findings: [bug], unsure: 'u' },
+    expected: [],
+  },
+  {
+    name: 'a finding without a line',
+    mode: 'code_review',
+    input: { verdict: 'changes', findings: [{ ...bug, line: undefined }], unsure: 'u' },
+    expected: [],
+  },
+  {
+    name: 'nothing to change in a code review',
+    mode: 'code_review',
+    input: { verdict: 'nothing_to_change', unsure: 'u' },
+    expected: [],
+  },
+  {
+    name: 'a kind of style',
+    mode: 'code_review',
+    input: { verdict: 'changes', findings: [{ ...bug, kind: 'style' }], unsure: 'u' },
+    expected: ['findings:unknown_kind'],
+  },
+  {
+    name: 'a blank file',
+    mode: 'code_review',
+    input: { verdict: 'changes', findings: [{ ...bug, file: ' ' }], unsure: 'u' },
+    expected: ['findings:required'],
+  },
+  {
+    name: 'a file of 301 characters',
+    mode: 'code_review',
+    input: { verdict: 'changes', findings: [{ ...bug, file: 'f'.repeat(301) }], unsure: 'u' },
+    expected: ['findings:too_long'],
+  },
+  {
+    name: 'a line of 0',
+    mode: 'code_review',
+    input: { verdict: 'changes', findings: [{ ...bug, line: 0 }], unsure: 'u' },
+    expected: ['findings:invalid_line'],
+  },
+  {
+    name: 'a fractional line',
+    mode: 'code_review',
+    input: { verdict: 'changes', findings: [{ ...bug, line: 1.5 }], unsure: 'u' },
+    expected: ['findings:invalid_line'],
+  },
+  {
+    name: 'a missing matters',
+    mode: 'code_review',
+    input: { verdict: 'changes', findings: [{ ...bug, matters: undefined }], unsure: 'u' },
+    expected: ['findings:required'],
+  },
+  {
+    name: 'a text that is too long',
+    mode: 'code_review',
+    input: { verdict: 'changes', findings: [{ ...bug, text: long }], unsure: 'u' },
+    expected: ['findings:too_long'],
+  },
+  {
+    name: 'nothing to change with findings',
+    mode: 'code_review',
+    input: { verdict: 'nothing_to_change', findings: [bug], unsure: 'u' },
+    expected: ['findings:not_allowed'],
+  },
+  {
+    name: 'changes with none',
+    mode: 'code_review',
+    input: { verdict: 'changes', findings: [], unsure: 'u' },
+    expected: ['findings:required'],
+  },
+  {
+    name: 'thirty-one findings',
+    mode: 'code_review',
+    input: { verdict: 'changes', findings: Array.from({ length: 31 }, () => bug), unsure: 'u' },
+    expected: ['findings:too_many'],
+  },
+  {
+    name: 'a code review without unsure',
+    mode: 'code_review',
+    input: { verdict: 'nothing_to_change' },
+    expected: ['unsure:required'],
+  },
+  {
+    name: 'a field of another mode',
+    mode: 'code_review',
+    input: { verdict: 'nothing_to_change', unsure: 'u', why_stopped: 'w' },
+    expected: ['why_stopped:not_allowed'],
+  },
+]
+rows.push(...codeRows)
 
 describe('checkDecisionResult', () => {
   it.each(rows)('$name', ({ mode, input, facts, expected }) => {
