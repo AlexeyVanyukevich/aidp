@@ -108,6 +108,29 @@ export class Git {
     })
   }
 
+  /**
+   * The whole of what a pull request changes: `git diff --no-renames origin/<base>...origin/<branch>`,
+   * uncut, and the changed paths from `git diff -z --name-only` over the same range.
+   */
+  async pullRequestDiff(
+    repo: string,
+    base: string,
+    branch: string,
+  ): Promise<{ diff: string; paths: string[] }> {
+    const range = `origin/${base}...origin/${branch}`
+    const diff = await this.run('git', ['-C', repo, 'diff', '--no-renames', range])
+    const names = await this.run('git', [
+      '-C',
+      repo,
+      'diff',
+      '-z',
+      '--name-only',
+      '--no-renames',
+      range,
+    ])
+    return { diff, paths: names.split('\0').filter((path) => path !== '') }
+  }
+
   /** A detached worktree of a ref already fetched, such as `origin/<branch>`. */
   prepareDetachedRef(repo: string, ref: string, dir: string): Promise<void> {
     return this.exclusive(repo, async () => {

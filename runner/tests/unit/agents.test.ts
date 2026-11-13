@@ -439,3 +439,47 @@ describe('proposing a finding', () => {
     expect(AGENTS.helper!.prompt).toContain('recommend one offered variant')
   })
 })
+
+describe('the helper’s instructions for a pull request review', () => {
+  const prompt = AGENTS.helper!.prompt
+  const rows: { name: string; words: string }[] = [
+    { name: 'it names the mode', words: 'code_review:' },
+    { name: 'it reads the diff by section with offset and limit', words: 'section by section' },
+    { name: 'it limits a part to 1,000 lines', words: 'parts of at most 1,000 lines' },
+    { name: 'it uses Read’s offset and limit', words: 'using offset and limit' },
+    { name: 'it halves a part Read refuses', words: 'halve it and read again' },
+    { name: 'it skips marked files', words: 'Skip every file marked skip' },
+    { name: 'a cut line makes a file read in part', words: 'cut a line of it at 2,000 characters' },
+    {
+      name: 'an unfinished section makes a file read in part',
+      words: 'stopped before the end of its section',
+    },
+    { name: 'it judges fit', words: 'fits the code around it' },
+    { name: 'it judges repetition', words: 'repeats what already exists' },
+    { name: 'it judges breakage', words: 'breaks something the spec never mentions' },
+    { name: 'it judges bugs and tests', words: 'has bugs, or lacks tests' },
+    {
+      name: 'it does not repeat the Verify report',
+      words: 'Do not repeat the Verify report’s verdicts',
+    },
+    {
+      name: 'a finding names its file and why it matters',
+      words: 'matters that says why it matters',
+    },
+    {
+      name: 'it may find nothing to change',
+      words: 'Save nothing_to_change when nothing should change',
+    },
+    {
+      name: 'it lists skipped, partial and unread files under unsure',
+      words: 'list by path every file you skipped, read in part or did not read',
+    },
+    {
+      name: 'it says when every file was read whole',
+      words: 'when every file was read whole, say so',
+    },
+  ]
+  it.each(rows)('$name', ({ words }) => {
+    expect(prompt).toContain(words)
+  })
+})

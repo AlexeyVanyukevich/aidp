@@ -10,9 +10,10 @@ export type RunKind = 'spec' | 'delivery' | 'title' | 'rephrase'
 /** One helper session beside a paused run, as the board's help claim hands it over. */
 export interface HelpWork {
   id: string
-  mode: 'suggest' | 'explain' | 'review' | 'restate' | 'recommend' | 'check' | 'advise'
+  mode:
+    'suggest' | 'explain' | 'review' | 'restate' | 'recommend' | 'check' | 'advise' | 'code_review'
   /** `question` for a help with a waiting request; the others are decisions of the card. */
-  decision?: 'question' | 'spec_review' | 'stopped_run' | 'mark_done' | 'proposal'
+  decision?: 'question' | 'spec_review' | 'stopped_run' | 'mark_done' | 'proposal' | 'pull_request'
   subject?: Record<string, unknown> | null
   approval_id: string | null
   question_index: number | null
@@ -24,6 +25,7 @@ export interface HelpWork {
     checkout:
       | { source: 'base' }
       | { source: 'pr_branch'; branch: string }
+      | { source: 'pull_request'; branch: string }
       | { source: 'paused_run'; run_id: string }
   } | null
   /** Chosen by the board, so it can close the phase of a help whose process is lost. */

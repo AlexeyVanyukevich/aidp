@@ -123,9 +123,9 @@ describe('a decision help’s checkout', () => {
   })
 
   it('uses a paused run’s worktree, copies its links, and removes only its own directory (AC15, AC46)', async () => {
-    const { home, removals, work } = setup()
+    const { project, home, removals, work } = setup()
     const paused = runPaths(home, PAUSED_RUN)
-    mkdirSync(paused.worktree, { recursive: true })
+    sh(['worktree', 'add', '--detach', paused.worktree, 'origin/main'], project.repo)
     mkdirSync(join(paused.linked, 'ZLC'), { recursive: true })
     mkdirSync(paused.runDir, { recursive: true })
     const listed = [{ key: 'ZLC', repo_path: '/owner/zlc', path: join(paused.linked, 'ZLC') }]
@@ -163,6 +163,101 @@ describe('a decision help’s checkout', () => {
     const lines = log(home).filter((line) => line.caller === 'help')
     expect(lines.length).toBeGreaterThanOrEqual(3)
     for (const line of lines) expect(['removed', 'deleted', 'absent']).toContain(line.result)
+  })
+})
+
+describe('a pull request review’s checkout', () => {
+  /** A branch with a changed file, a lockfile and a deleted file, pushed to origin. */
+  function pushBranch(repo: string): void {
+    sh(['checkout', '-q', '-b', 'feat/x'], repo)
+    writeFileSync(join(repo, 'new file.txt'), 'one\ntwo\n')
+    writeFileSync(join(repo, 'package-lock.json'), '{}\n')
+    sh(['add', '-A'], repo)
+    sh(['commit', '-q', '-m', 'pr'], repo)
+    sh(['push', '-q', 'origin', 'feat/x'], repo)
+    sh(['checkout', '-q', 'main'], repo)
+  }
+
+  it('reads origin/branch detached, writes pr.diff uncut and records the commit (AC9)', async () => {
+    const { project, home, removals, work } = setup()
+    pushBranch(project.repo)
+    const made = await prepareHelpCheckout(
+      work({ source: 'pull_request', branch: 'feat/x' }),
+      git,
+      home,
+      removals,
+    )
+    expect(made).toMatchObject({ ref: 'origin/feat/x', source: 'pull_request', fallback: false })
+    const head = sh(['rev-parse', 'HEAD'], made.worktree).trim()
+    expect(made.commit).toBe(head)
+    expect(head).toBe(sh(['rev-parse', 'origin/feat/x'], project.repo).trim())
+    expect(sh(['rev-parse', '--abbrev-ref', 'HEAD'], made.worktree).trim()).toBe('HEAD')
+    const expected = sh(['diff', '--no-renames', 'origin/main...origin/feat/x'], project.repo)
+    expect(readFileSync(join(made.runDir, 'pr.diff'), 'utf8')).toBe(expected)
+    expect(made.diff).toMatchObject({
+      path: join(made.runDir, 'pr.diff'),
+      bytes: Buffer.byteLength(expected),
+      lines: expected.split('\n').length - 1,
+    })
+    expect(made.diff?.files.map((f) => [f.path, f.skip])).toEqual([
+      ['new file.txt', undefined],
+      ['package-lock.json', 'lockfile'],
+    ])
+    const text = helpPrompt(work({ source: 'base' }), made)
+    expect(text).toContain(`<diff path="${join(made.runDir, 'pr.diff')}"`)
+    expect(text).toContain('<file path="new file.txt" first_line="1"')
+    expect(text).toContain('<linked_projects>')
+  })
+
+  it('fails when the branch is gone and makes no worktree (AC10)', async () => {
+    const { home, removals, work } = setup()
+    await expect(
+      prepareHelpCheckout(
+        work({ source: 'pull_request', branch: 'feat/gone' }),
+        git,
+        home,
+        removals,
+      ),
+    ).rejects.toThrow('the branch `feat/gone` is not on origin')
+    expect(existsSync(runPaths(home, HELP_RUN).worktree)).toBe(false)
+  })
+
+  it('removes the run directory, pr.diff and the worktree at the end (AC12)', async () => {
+    const { project, home, removals, work } = setup()
+    pushBranch(project.repo)
+    const made = await prepareHelpCheckout(
+      work({ source: 'pull_request', branch: 'feat/x' }),
+      git,
+      home,
+      removals,
+    )
+    await cleanUpHelp(git, home, HELP_RUN)
+    for (const path of [made.worktree, made.runDir, join(made.runDir, 'pr.diff')])
+      expect(existsSync(path)).toBe(false)
+    const paths = log(home)
+      .filter((line) => line.caller === 'help')
+      .map((line) => line.path)
+    expect(paths).toContain(made.runDir)
+    expect(paths).toContain(made.worktree)
+  })
+
+  it('records the HEAD of a paused run’s worktree, with a commit not on origin (AC35)', async () => {
+    const { project, home, removals, work } = setup()
+    const paused = runPaths(home, PAUSED_RUN)
+    sh(['worktree', 'add', '--detach', paused.worktree, 'origin/main'], project.repo)
+    writeFileSync(join(paused.worktree, 'local.txt'), 'x\n')
+    sh(['add', '-A'], paused.worktree)
+    sh(['commit', '-q', '-m', 'unpushed'], paused.worktree)
+    writeFileSync(join(paused.worktree, 'uncommitted.txt'), 'y\n')
+    mkdirSync(paused.runDir, { recursive: true })
+    const made = await prepareHelpCheckout(
+      work({ source: 'paused_run', run_id: PAUSED_RUN }),
+      git,
+      home,
+      removals,
+    )
+    expect(made.ref).toBe(`worktree:${PAUSED_RUN}`)
+    expect(made.commit).toBe(sh(['rev-parse', 'HEAD'], paused.worktree).trim())
   })
 })
 

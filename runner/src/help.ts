@@ -5,7 +5,14 @@ import type { BoardApi } from './api.js'
 import type { RunnerConfig } from './config.js'
 import type { HelpWork } from './contract.js'
 import type { Git } from './git.js'
-import { LINKED_FILE, prepareLinked, readLinked, removeLinked } from './linked.js'
+import {
+  LINKED_FILE,
+  prepareLinked,
+  readLinked,
+  removeLinked,
+  type LinkedCheckout,
+} from './linked.js'
+import { diffSections, type DiffSection } from './pr-diff.js'
 import { deleteRunDirectory, removeCheckout, type LogContext } from './worktree-log.js'
 import { newEvent, EventSink } from './sink.js'
 import { PHASES } from './phases/agents.js'
@@ -13,6 +20,7 @@ import { attr, escape } from './phases/handoff.js'
 import { runPaths } from './run-steps.js'
 import { runProcess, type ProcessTiming } from './phases/process.js'
 import { prepareRunDir } from './phases/run-dir.js'
+import { PR_DIFF } from './hooks/guard.js'
 
 /** Helps a runner carries at once, beside its run. */
 export const HELP_SLOTS = 3
@@ -41,6 +49,30 @@ export function helpPrompt(work: HelpWork, checkout?: CheckoutMade): string {
   )
   if (checkout !== undefined)
     lines.push(`<checkout ref="${attr(checkout.ref)}" source="${attr(checkout.source)}"/>`)
+  if (checkout?.diff !== undefined) {
+    const { path, bytes, lines: count, files } = checkout.diff
+    lines.push(`<diff path="${attr(path)}" bytes="${bytes}" lines="${count}"/>`)
+    lines.push(
+      `<changed_files>\n${files
+        .map(
+          (file) =>
+            `<file path="${attr(file.path)}" first_line="${file.first_line}" lines="${file.lines}"${file.skip === undefined ? '' : ` skip="${file.skip}"`}/>`,
+        )
+        .join('\n')}\n</changed_files>`,
+    )
+  }
+  const linked = checkout?.linked ?? []
+  if (linked.length > 0)
+    lines.push(
+      `<linked_projects>\n${[...linked]
+        .sort((a, b) => a.key.localeCompare(b.key))
+        .map(
+          (p) =>
+            `<project key="${attr(p.key)}" name="${attr(p.name)}" github_repo="${attr(p.github_repo)}" base_branch="${attr(p.base_branch)}" path="${attr(p.path)}">${escape(p.note)}</project>`,
+        )
+        .join('\n')}\n</linked_projects>`,
+      'The linked checkouts may be read and never changed.',
+    )
   return lines.join('\n')
 }
 
@@ -53,10 +85,16 @@ export interface CheckoutMade {
   runDir: string
   /** The ref the helper reads. */
   ref: string
-  source: 'base' | 'pr_branch' | 'paused_run'
+  source: 'base' | 'pr_branch' | 'paused_run' | 'pull_request'
   /** Whether the source named was not there and the base was read instead. */
   fallback: boolean
   madeWorktree: boolean
+  /** The full hash of HEAD in the worktree the helper reads. */
+  commit: string
+  /** The checkouts `linked.json` lists. */
+  linked: LinkedCheckout[]
+  /** The pull request's diff, written to `pr.diff` in the run directory; a review only. */
+  diff?: { path: string; bytes: number; lines: number; files: DiffSection[] }
 }
 
 /** The file in a help's run directory that says what the help made, for its removal. */
@@ -108,10 +146,45 @@ export async function prepareHelpCheckout(
       source: 'paused_run',
       fallback: false,
       madeWorktree: false,
+      commit: await git.head(paused.worktree),
+      linked: readLinked(runDir),
     }
   }
   let ref = `origin/${decision.base_branch}`
   let fallback = source.source === 'paused_run'
+  if (source.source === 'pull_request') {
+    // A review never falls back to the base: there would be nothing of the pull request to read.
+    if ((await git.fetchBranch(decision.repo_path, source.branch)) === 'missing')
+      throw new Error(`the branch \`${source.branch}\` is not on origin`)
+    await git.fetchBase(decision.repo_path, decision.base_branch)
+    ref = `origin/${source.branch}`
+    const { diff, paths } = await git.pullRequestDiff(
+      decision.repo_path,
+      decision.base_branch,
+      source.branch,
+    )
+    const files = diffSections(diff, paths)
+    const path = join(runDir, PR_DIFF)
+    writeFileSync(path, diff)
+    await git.prepareDetachedRef(decision.repo_path, ref, worktree)
+    await prepareLinked(git, decision.links, linked, runDir, removals)
+    return {
+      worktree,
+      runDir,
+      ref,
+      source: 'pull_request',
+      fallback: false,
+      madeWorktree: true,
+      commit: await git.head(worktree),
+      linked: readLinked(runDir),
+      diff: {
+        path,
+        bytes: Buffer.byteLength(diff),
+        lines: diff === '' ? 0 : diff.split('\n').length - (diff.endsWith('\n') ? 1 : 0),
+        files,
+      },
+    }
+  }
   if (source.source === 'pr_branch') {
     const fetched = await git.fetchBranch(decision.repo_path, source.branch)
     if (fetched === 'fetched') ref = `origin/${source.branch}`
@@ -128,6 +201,8 @@ export async function prepareHelpCheckout(
     source: source.source,
     fallback,
     madeWorktree: true,
+    commit: await git.head(worktree),
+    linked: readLinked(runDir),
   }
 }
 
@@ -254,7 +329,7 @@ export async function carryHelp(work: HelpWork, deps: HelpDeps): Promise<void> {
             tool: 'help_checkout',
             target: made.ref,
             status: 'ok',
-            payload: { source: made.source, fallback: made.fallback },
+            payload: { source: made.source, fallback: made.fallback, commit: made.commit },
           },
         ),
       ])
