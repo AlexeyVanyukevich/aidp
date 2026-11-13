@@ -178,6 +178,7 @@ async function check(): Promise<void> {
       approvedMigrations: readApproved(runDir),
       paused: existsSync(join(runDir, PAUSED_MARKER)),
       linked: readLinkedStrict(runDir),
+      runDir,
       cwd,
       configDir: configDir(process.env, homedir()),
       ...(typeof input.transcript_path === 'string'

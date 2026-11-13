@@ -188,6 +188,10 @@ describe('a delivery run end to end', () => {
     expect(await state(taskId)).toBe('review')
     const [run] = await runs(taskId)
     expect(run).toMatchObject({ status: 'succeeded', pr_number: 7, branch: 'board/PAY-1-r1' })
+    // A pull request review runs only when the owner asks for one (AC8).
+    expect(
+      await db.selectFrom('helps').select('id').where('decision', '=', 'pull_request').execute(),
+    ).toEqual([])
     expect(run!.phases.map((p) => `${p.name}:${p.status}`)).toEqual([
       'plan:succeeded',
       'build:succeeded',

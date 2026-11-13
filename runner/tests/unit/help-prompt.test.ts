@@ -60,6 +60,8 @@ describe('the first message', () => {
       source: 'base',
       fallback: false,
       madeWorktree: true,
+      commit: 'c'.repeat(40),
+      linked: [],
     })
     expect(text).toContain('Decision: mark_done. Mode: check.')
     expect(text).toContain('<checkout ref="origin/main" source="base"/>')
@@ -74,6 +76,8 @@ describe('the first message', () => {
         source: 'base',
         fallback: false,
         madeWorktree: true,
+        commit: 'c'.repeat(40),
+        linked: [],
       },
     )
     expect(text).toContain('Decision: proposal. Mode: advise.')
@@ -82,6 +86,77 @@ describe('the first message', () => {
   it('keeps the question words', () => {
     expect(helpPrompt({ ...work('question', 'suggest') })).toContain(
       'Suggest an answer to the open question',
+    )
+  })
+})
+
+describe('the first message with linked checkouts and a diff', () => {
+  const work: HelpWork = {
+    id: 'h',
+    mode: 'code_review',
+    decision: 'pull_request',
+    approval_id: null,
+    question_index: null,
+    phase_id: 'p',
+    attempt: 1,
+    run: {
+      id: 'r',
+      number: 1,
+      worktree_path: null,
+      task: { id: 't', key: 'PAY-1', title: 'T', budget_usd: null },
+    },
+  }
+  const made = {
+    worktree: '/w',
+    runDir: '/r',
+    ref: 'origin/feat',
+    source: 'pull_request' as const,
+    fallback: false,
+    madeWorktree: true,
+    commit: 'c'.repeat(40),
+    linked: [] as import('../../src/linked.js').LinkedCheckout[],
+  }
+  const zlr = {
+    key: 'ZLR',
+    name: 'Zellige React',
+    note: 'the <kit>',
+    repo_path: '/owner/zlr',
+    github_repo: 'owner/zlr',
+    base_branch: 'main',
+    path: '/wt/ZLR',
+  }
+  it('lists the linked checkouts and says they are read only (AC16)', () => {
+    const text = helpPrompt(work, { ...made, linked: [zlr] })
+    expect(text).toContain(
+      '<project key="ZLR" name="Zellige React" github_repo="owner/zlr" base_branch="main" path="/wt/ZLR">the &lt;kit&gt;</project>',
+    )
+    expect(text).toContain('<linked_projects>')
+    expect(text).toContain('The linked checkouts may be read and never changed.')
+  })
+  it('writes neither with no links, nor for a question help (AC16)', () => {
+    const none = helpPrompt(work, made)
+    expect(none).not.toContain('<linked_projects>')
+    expect(none).not.toContain('never changed')
+    const question = helpPrompt({ ...work, decision: 'question', mode: 'suggest' })
+    expect(question).not.toContain('<linked_projects>')
+  })
+  it('carries the diff and the changed files with their marks (AC9)', () => {
+    const text = helpPrompt(work, {
+      ...made,
+      diff: {
+        path: '/r/pr.diff',
+        bytes: 120,
+        lines: 12,
+        files: [
+          { path: 'a.ts', first_line: 1, lines: 7 },
+          { path: 'package-lock.json', first_line: 8, lines: 5, skip: 'lockfile' },
+        ],
+      },
+    })
+    expect(text).toContain('<diff path="/r/pr.diff" bytes="120" lines="12"/>')
+    expect(text).toContain('<file path="a.ts" first_line="1" lines="7"/>')
+    expect(text).toContain(
+      '<file path="package-lock.json" first_line="8" lines="5" skip="lockfile"/>',
     )
   })
 })

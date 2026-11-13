@@ -699,3 +699,98 @@ describe('the guard for saved results', () => {
     expect([...HELP_TOOLS].sort()).toEqual([...PHASES.help.tools].sort())
   })
 })
+
+describe('the guard and pr.diff', () => {
+  const RUN_DIR = '/home/runs/help-1'
+  const rows: {
+    name: string
+    phase: string
+    tool: string
+    input: Record<string, unknown>
+    allow: boolean
+  }[] = [
+    {
+      name: 'Read of pr.diff',
+      phase: 'help',
+      tool: 'Read',
+      input: { file_path: `${RUN_DIR}/pr.diff`, offset: 1, limit: 1000 },
+      allow: true,
+    },
+    {
+      name: 'Grep of pr.diff',
+      phase: 'help',
+      tool: 'Grep',
+      input: { pattern: 'x', path: `${RUN_DIR}/pr.diff` },
+      allow: true,
+    },
+    {
+      name: 'Read of another file in the run directory',
+      phase: 'help',
+      tool: 'Read',
+      input: { file_path: `${RUN_DIR}/linked.json` },
+      allow: false,
+    },
+    {
+      name: 'Read of events.ndjson',
+      phase: 'help',
+      tool: 'Read',
+      input: { file_path: `${RUN_DIR}/events.ndjson` },
+      allow: false,
+    },
+    {
+      name: 'Read of a path that only starts like pr.diff',
+      phase: 'help',
+      tool: 'Read',
+      input: { file_path: `${RUN_DIR}/pr.diff.bak` },
+      allow: false,
+    },
+    {
+      name: 'Glob of the run directory',
+      phase: 'help',
+      tool: 'Glob',
+      input: { pattern: '*', path: RUN_DIR },
+      allow: false,
+    },
+    {
+      name: 'Edit of pr.diff',
+      phase: 'help',
+      tool: 'Edit',
+      input: { file_path: `${RUN_DIR}/pr.diff` },
+      allow: false,
+    },
+    {
+      name: 'Write of pr.diff',
+      phase: 'help',
+      tool: 'Write',
+      input: { file_path: `${RUN_DIR}/pr.diff` },
+      allow: false,
+    },
+    {
+      name: 'Read of pr.diff from Verify',
+      phase: 'verify',
+      tool: 'Read',
+      input: { file_path: `${RUN_DIR}/pr.diff` },
+      allow: false,
+    },
+    {
+      name: 'Read of pr.diff from Build',
+      phase: 'build',
+      tool: 'Read',
+      input: { file_path: `${RUN_DIR}/pr.diff` },
+      allow: false,
+    },
+    {
+      name: 'Read of a source file in Build',
+      phase: 'build',
+      tool: 'Read',
+      input: { file_path: '/work/run-1/src/a.ts' },
+      allow: true,
+    },
+  ]
+  it.each(rows)('$name', ({ phase, tool, input, allow }) => {
+    expect(
+      decide({ tool_name: tool, tool_input: input }, { ...ctx(phase, null), runDir: RUN_DIR })
+        .allow,
+    ).toBe(allow)
+  })
+})

@@ -94,6 +94,9 @@ export interface LinkedPath {
 
 const READ_TOOLS = new Set(['Read', 'Grep', 'Glob'])
 
+/** The file in a pull request review's run directory that holds the whole diff. */
+export const PR_DIFF = 'pr.diff'
+
 const within = (base: string, path: string) => path === base || path.startsWith(base + sep)
 
 /** Whether `command` names `base` as a whole path, not as the start of a longer name. */
@@ -225,6 +228,8 @@ export function decide(
     paused: boolean
     /** Migrations the owner approved for this run; the guard reads them from the run directory. */
     approvedMigrations?: { path: string; content: string }[]
+    /** The process's run directory (`BOARD_RUN_DIR`): the one file a helper reads there is `pr.diff`. */
+    runDir?: string
     /** The run's linked projects, from `linked.json`; absent when it has none. */
     linked?: LinkedPath[]
     /** The directory the last Bash call ended in: it only resolves a relative tool path. */
@@ -245,6 +250,15 @@ export function decide(
   if (ctx.paused) return deny('The run is paused; end your turn.')
   const saved = savedResultsVerdict(input, ctx)
   if (saved !== null) return saved
+  const prDiff = ctx.runDir === undefined ? null : resolve(ctx.runDir, PR_DIFF)
+  const named = (key: (typeof READ_PATH_KEYS)[number]) => {
+    const raw = input.tool_input[key]
+    return typeof raw === 'string' ? (isAbsolute(raw) ? resolve(raw) : resolve(ctx.cwd, raw)) : null
+  }
+  if (ctx.phase !== 'help' && prDiff !== null && READ_TOOLS.has(input.tool_name)) {
+    if (READ_PATH_KEYS.some((key) => named(key) === prDiff))
+      return deny('pr.diff is for a pull request review only')
+  }
   if (ctx.phase === 'help') {
     if (!HELP_TOOLS.has(input.tool_name))
       return deny('a helper only reads and saves its result; it writes nothing and runs nothing')
@@ -252,6 +266,13 @@ export function decide(
       const raw = input.tool_input[key]
       if (typeof raw !== 'string') continue
       const absolute = isAbsolute(raw) ? resolve(raw) : resolve(ctx.cwd, raw)
+      // Exactly the diff file of a pull request review, and nothing else of the run directory.
+      if (
+        prDiff !== null &&
+        absolute === prDiff &&
+        (input.tool_name === 'Read' || input.tool_name === 'Grep')
+      )
+        continue
       // The helper's working directory, and the linked checkouts its `linked.json` lists.
       const roots = [ctx.cwd, ...(ctx.linked ?? []).map((l) => l.path)]
       if (!roots.some((root) => within(root, absolute)))
