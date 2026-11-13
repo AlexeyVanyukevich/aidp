@@ -758,7 +758,9 @@ per checkout and the line "The linked checkouts may be read and never changed." 
 `origin/<branch>`; it never falls back to the base, and fails the help with "the help's checkout
 could not be made: the branch `<branch>` is not on origin" when the branch is gone. Before the
 helper starts, the runner writes the whole of `git diff --no-renames origin/<base>...origin/<branch>`
-to `pr.diff` in the help's run directory, uncut. The first message carries
+to `pr.diff` in the help's run directory, uncut. Both that diff and the `--name-only` one that
+names its sections run with `--no-color --no-ext-diff --no-textconv`, so the owner's git config
+cannot colour, replace or convert the text. The first message carries
 `<diff path bytes lines/>` and a `<changed_files>` element with one `<file path first_line lines/>`
 per changed file, in the diff's order (`first_line` is the line of `pr.diff` where its section
 begins); a lockfile or a generated file (`.min.js`, `.min.css`, `.map`) carries `skip="lockfile"` or

@@ -110,7 +110,8 @@ export class Git {
 
   /**
    * The whole of what a pull request changes: `git diff --no-renames origin/<base>...origin/<branch>`,
-   * uncut, and the changed paths from `git diff -z --name-only` over the same range.
+   * uncut, and the changed paths from `git diff -z --name-only` over the same range. The owner's
+   * colour, external diff and textconv settings are turned off: each would change the text.
    */
   async pullRequestDiff(
     repo: string,
@@ -118,16 +119,9 @@ export class Git {
     branch: string,
   ): Promise<{ diff: string; paths: string[] }> {
     const range = `origin/${base}...origin/${branch}`
-    const diff = await this.run('git', ['-C', repo, 'diff', '--no-renames', range])
-    const names = await this.run('git', [
-      '-C',
-      repo,
-      'diff',
-      '-z',
-      '--name-only',
-      '--no-renames',
-      range,
-    ])
+    const plain = ['--no-color', '--no-ext-diff', '--no-textconv', '--no-renames']
+    const diff = await this.run('git', ['-C', repo, 'diff', ...plain, range])
+    const names = await this.run('git', ['-C', repo, 'diff', '-z', '--name-only', ...plain, range])
     return { diff, paths: names.split('\0').filter((path) => path !== '') }
   }
 

@@ -259,6 +259,43 @@ describe('a pull request review’s checkout', () => {
     expect(made.ref).toBe(`worktree:${PAUSED_RUN}`)
     expect(made.commit).toBe(sh(['rev-parse', 'HEAD'], paused.worktree).trim())
   })
+
+  // The owner's git config must not reach pr.diff: each row would change or break the diff.
+  const configs: { name: string; key: string; value: string }[] = [
+    { name: 'colour always', key: 'color.ui', value: 'always' },
+    { name: 'an external diff that fails', key: 'diff.external', value: 'false' },
+    { name: 'a textconv driver', key: 'diff.shout.textconv', value: 'sed s/one/ONE/' },
+  ]
+  it.each(configs)('writes the plain diff whatever the repository sets: $name', async (row) => {
+    const { project, home, removals, work } = setup()
+    sh(['checkout', '-q', '-b', 'feat/x'], project.repo)
+    writeFileSync(join(project.repo, 'a.txt'), 'one\n')
+    sh(['add', '-A'], project.repo)
+    sh(['commit', '-q', '-m', 'pr'], project.repo)
+    sh(['push', '-q', 'origin', 'feat/x'], project.repo)
+    sh(['checkout', '-q', 'main'], project.repo)
+    // Read whatever is checked out, so the textconv row's driver applies to the diff.
+    writeFileSync(join(project.repo, '.git', 'info', 'attributes'), '*.txt diff=shout\n')
+    const plain = sh(['diff', '--no-renames', 'origin/main...origin/feat/x'], project.repo)
+    sh(['config', row.key, row.value], project.repo)
+    // The row must change a plain `git diff`, or it proves nothing; a diff that fails changed it.
+    const changed = () => {
+      try {
+        return sh(['diff', '--no-renames', 'origin/main...origin/feat/x'], project.repo) !== plain
+      } catch {
+        return true
+      }
+    }
+    expect(changed()).toBe(true)
+    const made = await prepareHelpCheckout(
+      work({ source: 'pull_request', branch: 'feat/x' }),
+      git,
+      home,
+      removals,
+    )
+    expect(readFileSync(join(made.runDir, 'pr.diff'), 'utf8')).toBe(plain)
+    expect(made.diff?.files.map((f) => f.path)).toEqual(['a.txt'])
+  })
 })
 
 describe('clearing leftovers at start', () => {
