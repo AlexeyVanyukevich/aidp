@@ -810,9 +810,11 @@ characters; all of them are in <path of test-output.txt>]` between them.
 The verifier's prompt tells it to read the rest of the diff from the marker's line (a Grep for
 `^diff --git `, then the sections past the cut, but not lockfiles and generated files) and never
 to pass a criterion whose evidence is in a part it did not read. The guard allows, for a verify
-phase, Read and Grep of `verify.diff` and `test-output.txt` in its run directory, read-only Bash
-commands on them such as `sed -n '12p' <file> | cut -c 2001-4000`, and Read of the session's own
-saved tool results; it still refuses `pr.diff` and any Edit or Write of the two files.
+phase, Read and Grep of `verify.diff` and `test-output.txt` in its run directory, Bash commands on
+them, which the prompt limits to read-only ones such as `sed -n '12p' <file> | cut -c 2001-4000`,
+and Read of the session's own saved tool results. It still refuses `pr.diff` and any Edit or Write
+of the two files, but it lets through any Bash command that breaks none of its command rules, so a
+Bash command could still change them.
 
 The runner also writes `verify-cuts.md` in the run directory: the diff line (the files not wholly
 in the handoff, at most 20, without lockfiles and generated files; `from line <L>.` when the
