@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { diffSections, skipMark, type DiffSection } from '../../src/pr-diff.js'
+import {
+  GENERATED_SUFFIXES,
+  LOCKFILES,
+  diffSections,
+  skipMark,
+  type DiffSection,
+} from '../../src/pr-diff.js'
 
 const section = (path: string, body: string[]) => [`diff --git a/${path} b/${path}`, ...body]
 const text = (...sections: string[][]) => sections.flat().join('\n') + '\n'
@@ -130,5 +136,27 @@ describe('skipMark', () => {
   ]
   it.each(marks)('%s', (path, mark) => {
     expect(skipMark(path)).toBe(mark)
+  })
+})
+
+describe('the skip lists', () => {
+  it('hold the same 12 lockfile names and 3 suffixes', () => {
+    expect([...LOCKFILES].sort()).toEqual(
+      [
+        'package-lock.json',
+        'npm-shrinkwrap.json',
+        'pnpm-lock.yaml',
+        'yarn.lock',
+        'bun.lock',
+        'bun.lockb',
+        'Cargo.lock',
+        'Gemfile.lock',
+        'poetry.lock',
+        'uv.lock',
+        'composer.lock',
+        'go.sum',
+      ].sort(),
+    )
+    expect(GENERATED_SUFFIXES).toEqual(['.min.js', '.min.css', '.map'])
   })
 })

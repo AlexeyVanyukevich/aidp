@@ -13,6 +13,7 @@ import { join } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { realExec } from '../../src/exec.js'
 import { Git, GitError } from '../../src/git.js'
+import { diffSections } from '../../src/pr-diff.js'
 import { pushToMain, targetRepository, useTestGitIdentity } from './target-repo.js'
 
 const FAKE_GH = join(import.meta.dirname, '../fake/fake-gh')
@@ -70,6 +71,44 @@ describe('Git', () => {
     expect(git(['branch', '--format=%(refname:short)'], repo).trim()).toBe('main')
     await subject.removeWorktree(repo, worktree)
     expect(existsSync(worktree)).toBe(false)
+  })
+
+  describe('the Verify diff and its path listing', () => {
+    const BODY = `${Array.from({ length: 20 }, (_, i) => `export const v${i} = ${i}`).join('\n')}\n`
+    const rows: { name: string; renames: string; copy: boolean }[] = [
+      { name: 'a moved file, diff.renames=false', renames: 'false', copy: false },
+      { name: 'a moved file, diff.renames=copies', renames: 'copies', copy: false },
+      { name: 'a copied file, diff.renames=copies', renames: 'copies', copy: true },
+    ]
+    it.each(rows)('$name', async ({ renames, copy }) => {
+      const { repo } = targetRepository()
+      pushToMain(repo, { 'src/old.ts': BODY }, 'add old')
+      const subject = new Git(realExec, FAKE_GH)
+      const worktree = join(mkdtempSync(join(tmpdir(), 'wt-')), 'run')
+      await subject.prepareWorktree(repo, 'main', 'board/PAY-1-r1', worktree)
+      git(['config', 'color.diff', 'always'], repo)
+      git(['config', 'diff.renames', renames], repo)
+      if (copy) writeFileSync(join(worktree, 'src/copy.ts'), BODY)
+      else git(['mv', 'src/old.ts', 'src/moved.ts'], worktree)
+      writeFileSync(join(worktree, copy ? 'src/old.ts' : 'src/retry.ts'), `${BODY}// edit\n`)
+      git(['add', '-A'], worktree)
+      git(['commit', '-q', '-m', 'change'], worktree)
+
+      const diff = await subject.diff(worktree, 'main')
+      const paths = await subject.diffPaths(worktree, 'main')
+
+      expect(diff).not.toContain('\u001b')
+      expect(diffSections(diff, paths)).toHaveLength(paths.length)
+      if (copy) {
+        expect(diff).toContain('diff --git a/src/copy.ts b/src/copy.ts\nnew file mode')
+        expect(diff).not.toMatch(/copy (from|to)/)
+        expect(paths.sort()).toEqual(['src/copy.ts', 'src/old.ts'])
+      } else {
+        expect(diff).toContain('rename from src/old.ts\nrename to src/moved.ts')
+        expect(paths.sort()).toEqual(['src/moved.ts', 'src/retry.ts'])
+        expect(diffSections(diff, paths).map((x) => x.path)).toContain('src/moved.ts')
+      }
+    })
   })
 
   describe('stale registrations and existing branches', () => {
