@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildHandoff } from '../../src/phases/handoff.js'
+import { buildHandoff, linkedProjects } from '../../src/phases/handoff.js'
 
 const BASE = {
   taskKey: 'PAY-42',
@@ -248,6 +248,7 @@ describe('buildHandoff with linked projects', () => {
       '<project key="ZLC" name="Zellige &lt;kit&gt;" github_repo="owner/zellige" base_branch="main" path="/home/worktrees/run-linked/ZLC">the kit, for &lt;Button&gt; &amp; co</project>',
     )
     expect(text.indexOf('<project key="ABC"')).toBeLessThan(text.indexOf('<project key="ZLC"'))
+    expect(text).toContain(linkedProjects(LINKED))
     expect(text).toContain('<linked_projects>')
     expect(text).toContain('may be read and never changed')
   })

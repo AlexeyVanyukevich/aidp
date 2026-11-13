@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { AGENTS } from '../../src/phases/agents.js'
 import { helpPrompt } from '../../src/help.js'
+import { linkedProjects } from '../../src/phases/handoff.js'
 import type { HelpWork } from '../../src/contract.js'
 
 const prompt = AGENTS.helper!.prompt
@@ -132,6 +133,12 @@ describe('the first message with linked checkouts and a diff', () => {
     )
     expect(text).toContain('<linked_projects>')
     expect(text).toContain('The linked checkouts may be read and never changed.')
+  })
+  it('gives the linked checkouts the element a phase handoff gives them', () => {
+    const second = { ...zlr, key: 'ABC', path: '/wt/ABC' }
+    expect(helpPrompt(work, { ...made, linked: [zlr, second] })).toContain(
+      linkedProjects([zlr, second]),
+    )
   })
   it('writes neither with no links, nor for a question help (AC16)', () => {
     const none = helpPrompt(work, made)
