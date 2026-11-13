@@ -15,6 +15,7 @@ import {
   unanswered,
   applySuggestion,
   fillNoteFromReview,
+  type FindingPick,
   preSendProblem,
   NO_WORDS_WITH_PLAN,
   failureText,
@@ -450,5 +451,64 @@ describe('fillNoteFromReview', () => {
     ],
   ])('fills %s', (_name, note, findings, expected) => {
     expect(fillNoteFromReview(note, review(findings))).toBe(expected)
+  })
+})
+
+describe('fillNoteFromReview with picks', () => {
+  type Finding = ReviewResult['findings'][number]
+  const review = (findings: Finding[]): ReviewResult => ({
+    mode: 'review',
+    verdict: 'changes',
+    findings,
+    unsure: 'u',
+  })
+  const ab = (recommended: number): Finding => ({
+    kind: 'missing',
+    where: 'R1',
+    text: 'X',
+    choices: ['A', 'B'],
+    recommended,
+  })
+  const abc: Finding = { ...ab(1), choices: ['A', 'B', 'C'] }
+  const plain: Finding = { kind: 'risk', text: 'Slow' }
+  const head = '- missing (R1): X'
+  it.each<[string, string, Finding[], FindingPick[], string]>([
+    ['the recommended choice picked', '', [ab(0)], [1], `${head}\n  Decision: B`],
+    ['the recommended choice picked, no marker', '', [ab(0)], [0], `${head}\n  Decision: A`],
+    [
+      'as written, recommended first',
+      '',
+      [ab(0)],
+      ['written'],
+      `${head}\n  Open choice, ask me: A (recommended); or B`,
+    ],
+    [
+      'as written, recommended last',
+      '',
+      [ab(1)],
+      ['written'],
+      `${head}\n  Open choice, ask me: A; or B (recommended)`,
+    ],
+    [
+      'as written, three choices',
+      '',
+      [abc],
+      ['written'],
+      `${head}\n  Open choice, ask me: A; B (recommended); or C`,
+    ],
+    ['no picks', '', [ab(0)], [], `${head}\n  Open choice, ask me: A (recommended); or B`],
+    ['a finding without choices as written', '', [plain], ['written'], '- risk: Slow'],
+    [
+      'one left out between two',
+      '',
+      [plain, ab(0), plain],
+      ['written', 'out', 'written'],
+      '- risk: Slow\n- risk: Slow',
+    ],
+    ['every finding left out', 'Keep this.', [plain, ab(0)], ['out', 'out'], 'Keep this.'],
+    ['every finding left out, blank note', '', [plain], ['out'], ''],
+    ['a choice after words', 'Words.', [ab(0)], [1], `Words.\n\n${head}\n  Decision: B`],
+  ])('fills %s', (_name, note, findings, picks, expected) => {
+    expect(fillNoteFromReview(note, review(findings), picks)).toBe(expected)
   })
 })

@@ -127,6 +127,8 @@ export interface ModeHelp {
   failure: string | undefined
   /** The subject of the help that is shown, or else of the latest one: a decision help's version. */
   subject?: HelpSubject | null
+  /** The id of the help whose result is shown: another id is another result. */
+  id?: string
 }
 export interface QuestionHelp {
   suggest: ModeHelp
@@ -216,19 +218,51 @@ export function applySuggestion(kind: ApprovalKind, current: Choice, result: Hel
 
 export type ReviewResult = Extract<HelpResult, { mode: 'review' }>
 
+/** What the owner picked for one finding: its text as written, leaving it out, or a choice. */
+export type FindingPick = 'written' | 'out' | number
+
+/** The choices of a finding as one sentence, the recommended one marked, "or" before the last. */
+function choicesText(choices: string[], recommended: number | undefined): string {
+  const marked = choices.map((choice, index) =>
+    index === recommended ? `${choice} (recommended)` : choice,
+  )
+  return marked.length < 2
+    ? marked.join('')
+    : `${marked.slice(0, -1).join('; ')}; or ${marked[marked.length - 1]}`
+}
+
+/** The choices of a finding for the list on the card, joined with "; ". */
+export function choicesLabel(choices: string[], recommended: number | undefined): string {
+  return choices
+    .map((choice, index) => (index === recommended ? `${choice} (recommended)` : choice))
+    .join('; ')
+}
+
 /**
- * The Redraft note after Use these findings: one line per finding, added after a blank line to
- * words already there. Unsure about and the verdict stay out.
+ * The Redraft note after Use these findings: one line per finding that is not left out, with the
+ * owner's decision or an open-choice marker under it, added after a blank line to words already
+ * there. Unsure about and the verdict stay out. A missing pick is "Use as written". When every
+ * finding is left out the note is returned as it was.
  */
-export function fillNoteFromReview(note: string, result: ReviewResult): string {
-  const lines = result.findings
-    .map(
-      (finding) =>
-        `- ${finding.kind}${finding.where === undefined ? '' : ` (${finding.where})`}: ${finding.text}`,
-    )
-    .join('\n')
+export function fillNoteFromReview(
+  note: string,
+  result: ReviewResult,
+  picks: readonly FindingPick[] = [],
+): string {
+  const lines = result.findings.flatMap((finding, index) => {
+    const pick = picks[index] ?? 'written'
+    if (pick === 'out') return []
+    const line = `- ${finding.kind}${finding.where === undefined ? '' : ` (${finding.where})`}: ${finding.text}`
+    const choices = finding.choices ?? []
+    if (typeof pick === 'number' && choices[pick] !== undefined)
+      return [`${line}\n  Decision: ${choices[pick]}`]
+    if (choices.length > 0)
+      return [`${line}\n  Open choice, ask me: ${choicesText(choices, finding.recommended)}`]
+    return [line]
+  })
+  if (lines.length === 0) return note
   const words = note.trimEnd()
-  return words === '' ? lines : `${words}\n\n${lines}`
+  return words === '' ? lines.join('\n') : `${words}\n\n${lines.join('\n')}`
 }
 
 /** A refusal the form can give before sending: an approval carries no words. */
@@ -267,6 +301,7 @@ export function decisionHelp(
         shown: done?.result ?? undefined,
         failure: latest?.status === 'failed' ? (latest.reason ?? 'the helper failed') : undefined,
         subject: (latest?.status === 'failed' ? latest : (done ?? latest))?.subject ?? null,
+        ...(done === undefined ? {} : { id: done.id }),
       }
       return [mode, state] as const
     }),
