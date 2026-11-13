@@ -14,6 +14,8 @@ export class GitError extends Error {
 /** The only `gh` commands the board runs: it reads and opens pull requests, and posts nowhere. */
 const GH_COMMANDS: readonly string[] = ['pr view', 'pr list', 'pr create']
 
+const VERIFY_DIFF_FLAGS = ['--no-color', '--no-ext-diff', '--no-textconv', '--find-renames']
+
 export class Git {
   /**
    * The last step queued on each repository. The daemon's two lanes share one `Git`, and a
@@ -139,8 +141,26 @@ export class Git {
     )
   }
 
+  /**
+   * The Verify diff: `origin/<base>...HEAD` with fixed flags, rename detection on and copy
+   * detection off, whatever the owner's colour, external diff, textconv or `diff.renames` say.
+   */
   diff(dir: string, base: string): Promise<string> {
-    return this.run('git', ['-C', dir, 'diff', `origin/${base}...HEAD`])
+    return this.run('git', ['-C', dir, 'diff', ...VERIFY_DIFF_FLAGS, `origin/${base}...HEAD`])
+  }
+
+  /** The paths of `diff`, one per `diff --git` section: the new path of a renamed file. */
+  async diffPaths(dir: string, base: string): Promise<string[]> {
+    const names = await this.run('git', [
+      '-C',
+      dir,
+      'diff',
+      '-z',
+      '--name-only',
+      ...VERIFY_DIFF_FLAGS,
+      `origin/${base}...HEAD`,
+    ])
+    return names.split('\0').filter((path) => path !== '')
   }
 
   /**

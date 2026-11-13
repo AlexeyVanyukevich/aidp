@@ -11,7 +11,7 @@ export interface DiffSection {
   skip?: 'lockfile' | 'generated'
 }
 
-const LOCKFILES = new Set([
+export const LOCKFILES = new Set([
   'package-lock.json',
   'npm-shrinkwrap.json',
   'pnpm-lock.yaml',
@@ -25,7 +25,7 @@ const LOCKFILES = new Set([
   'composer.lock',
   'go.sum',
 ])
-const GENERATED_SUFFIXES = ['.min.js', '.min.css', '.map']
+export const GENERATED_SUFFIXES = ['.min.js', '.min.css', '.map']
 
 /** `lockfile` by base name, `generated` by suffix, else none. */
 export function skipMark(path: string): DiffSection['skip'] {
@@ -35,8 +35,9 @@ export function skipMark(path: string): DiffSection['skip'] {
 }
 
 /**
- * The sections of a `git diff --no-renames` text, one per changed path, in the diff's order:
- * the n-th path of `git diff -z --name-only` over the same range names the n-th section. Pure.
+ * The sections of a git diff text, made with or without rename detection, one per changed path,
+ * in the diff's order: the n-th path of `git diff -z --name-only` over the same range, run with
+ * the diff's own flags, names the n-th section. Pure.
  */
 export function diffSections(diff: string, paths: string[]): DiffSection[] {
   const lines = diff === '' ? [] : diff.split('\n')
