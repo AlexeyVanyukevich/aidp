@@ -752,8 +752,9 @@ with linked checkouts under `~/.aidp/worktrees/<help run id>-linked/`, and no se
 A `help_checkout` event records the ref read, the source, whether it fell back and `commit`, the
 full hash of HEAD in the worktree the helper reads (for a reused paused run's worktree, its HEAD,
 without changes not committed there); the helper's first message carries a `<checkout ref source/>`
-element and, when the help has linked checkouts, a `<linked_projects>` element with one `<project>`
-per checkout and the line "The linked checkouts may be read and never changed." The source
+element and, when the help has linked checkouts, the same `<linked_projects>` element a phase
+handoff carries (`linkedProjects` in `runner/src/phases/handoff.ts`) and the line "The linked
+checkouts may be read and never changed." The source
 `pull_request` fetches the run's branch and the base and makes a detached worktree of
 `origin/<branch>`; it never falls back to the base, and fails the help with "the help's checkout
 could not be made: the branch `<branch>` is not on origin" when the branch is gone. Before the

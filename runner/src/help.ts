@@ -16,7 +16,7 @@ import { diffSections, type DiffSection } from './pr-diff.js'
 import { deleteRunDirectory, removeCheckout, type LogContext } from './worktree-log.js'
 import { newEvent, EventSink } from './sink.js'
 import { PHASES } from './phases/agents.js'
-import { attr, escape } from './phases/handoff.js'
+import { attr, escape, linkedProjects } from './phases/handoff.js'
 import { runPaths } from './run-steps.js'
 import { runProcess, type ProcessTiming } from './phases/process.js'
 import { prepareRunDir } from './phases/run-dir.js'
@@ -63,16 +63,7 @@ export function helpPrompt(work: HelpWork, checkout?: CheckoutMade): string {
   }
   const linked = checkout?.linked ?? []
   if (linked.length > 0)
-    lines.push(
-      `<linked_projects>\n${[...linked]
-        .sort((a, b) => a.key.localeCompare(b.key))
-        .map(
-          (p) =>
-            `<project key="${attr(p.key)}" name="${attr(p.name)}" github_repo="${attr(p.github_repo)}" base_branch="${attr(p.base_branch)}" path="${attr(p.path)}">${escape(p.note)}</project>`,
-        )
-        .join('\n')}\n</linked_projects>`,
-      'The linked checkouts may be read and never changed.',
-    )
+    lines.push(linkedProjects(linked), 'The linked checkouts may be read and never changed.')
   return lines.join('\n')
 }
 

@@ -28,19 +28,33 @@ export interface HandoffInput {
   testOutput?: string
   diff?: string
   /** The read-only checkouts of the projects this one links to. */
-  linked?: {
-    key: string
-    name: string
-    github_repo: string
-    base_branch: string
-    path: string
-    note: string
-  }[]
+  linked?: LinkedElement[]
+}
+
+/** What a `<project>` element of `<linked_projects>` says about one linked checkout. */
+interface LinkedElement {
+  key: string
+  name: string
+  github_repo: string
+  base_branch: string
+  path: string
+  note: string
 }
 
 export const escape = (text: string) =>
   text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
 export const attr = (text: string) => escape(text).replaceAll('"', '&quot;')
+
+/** The `<linked_projects>` element of a phase handoff and of a decision help, by key. */
+export function linkedProjects(linked: readonly LinkedElement[]): string {
+  return `<linked_projects>\n${[...linked]
+    .sort((a, b) => a.key.localeCompare(b.key))
+    .map(
+      (p) =>
+        `<project key="${attr(p.key)}" name="${attr(p.name)}" github_repo="${attr(p.github_repo)}" base_branch="${attr(p.base_branch)}" path="${attr(p.path)}">${escape(p.note)}</project>`,
+    )
+    .join('\n')}\n</linked_projects>`
+}
 
 function cut(label: string, text: string, max: number): string {
   return text.length <= max
@@ -128,16 +142,8 @@ export function buildHandoff(input: HandoffInput): string {
     )
   if (input.diff !== undefined)
     parts.push(`<diff>\n${escape(cut('diff', input.diff, 60_000))}\n</diff>`)
-  const linked = [...(input.linked ?? [])].sort((a, b) => a.key.localeCompare(b.key))
-  if (linked.length > 0)
-    parts.push(
-      `<linked_projects>\n${linked
-        .map(
-          (p) =>
-            `<project key="${attr(p.key)}" name="${attr(p.name)}" github_repo="${attr(p.github_repo)}" base_branch="${attr(p.base_branch)}" path="${attr(p.path)}">${escape(p.note)}</project>`,
-        )
-        .join('\n')}\n</linked_projects>`,
-    )
+  const linked = input.linked ?? []
+  if (linked.length > 0) parts.push(linkedProjects(linked))
   parts.push(
     linked.length > 0
       ? '<constraints>Work only inside this worktree. The linked checkouts may be read and never changed. Never push. Stop and say so in your reply if the spec cannot be met as written.</constraints>'
