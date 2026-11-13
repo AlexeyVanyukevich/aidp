@@ -14,13 +14,20 @@ describe('loadRunnerConfig', () => {
       claudeBin: 'claude',
       ghBin: 'gh',
       home: join(homedir(), '.aidp'),
-      testTimeoutMs: 900_000,
+      testTimeoutMs: 1_800_000,
       claimWaitMs: 30_000,
       heartbeatMs: 30_000,
       pauseGraceMs: 60_000,
       stopGraceMs: 10_000,
       markerPollMs: 500,
     })
+  })
+
+  it.each([
+    ['no override', {}, 1_800_000],
+    ['an override', { TEST_TIMEOUT_MS: '60000' }, 60_000],
+  ])('takes the test timeout from %s', (_name, extra, expected) => {
+    expect(loadRunnerConfig({ ...BASE, ...extra }).testTimeoutMs).toBe(expected)
   })
 
   it('drops a trailing slash from the board URL', () => {
