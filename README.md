@@ -35,8 +35,12 @@ before this rule, or from the directory under another name — is yours to end b
 
 Register a repository on the Projects page (give it a setup command, such as `npm ci`, if the
 repository needs its dependencies installed in each run's fresh checkout). In this repository
-`npm test` runs the full check (Types, Lint, Formatting and the suites), so the project's default
-test command, `npm test`, already covers all of them; `./run test` runs the suites alone. A new
+`npm test` runs `./run check:all`, the full check (Types, Lint, Formatting and the suites)
+followed by the browser journeys, so the project's default test command, `npm test`, covers all
+of them; `./run check` is the check without the journeys, and `./run test` runs the suites
+alone. A run of this project needs Docker running and Chromium installed
+(`npx playwright install chromium`). A project with a slower suite sets `TEST_TIMEOUT_MS` in
+`.env`; the default is 30 minutes. A new
 project starts with the test command `npm test`; its test commands
 are added, changed and chosen on its settings page, linked from its board. Then record the price of each model the phases
 use, from Anthropic's price list, in USD per million tokens — the spec-writer runs on Opus
@@ -69,6 +73,7 @@ pauses and blocks have defaults, and can be set in `.env`:
 | `MARKER_POLL_MS` | 500     | How often the runner looks for the paused marker              |
 
     ./run check          # types, formatting, lint, every suite (needs Docker)
+    ./run check:all      # check, then the browser journeys with one retry (needs Chromium too)
     ./run test:ui        # the browser journeys, with a fake claude
     ./run smoke          # one real task against a throwaway repository; spends tokens
     ./run smoke --draft  # the same, its spec drafted: you answer and approve on the board

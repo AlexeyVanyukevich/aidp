@@ -25,4 +25,5 @@ when the change is repository-wide.
 ## Before committing
 
 `./run check` — types, formatting, the web app's lint, and every workspace's suite. It needs
-Docker running. A change to the web app also runs `./run test:ui`, the browser journeys.
+Docker running. A change to the web app also runs `./run test:ui`, the browser journeys; `./run check:all`
+runs both, and is what `npm test` runs.
