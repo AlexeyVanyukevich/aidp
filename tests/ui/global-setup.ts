@@ -172,6 +172,50 @@ const SCRIPT = {
         }),
       ],
     },
+    // Three findings, two with choices; a later Explain simply keeps the result, a second review replaces it.
+    'Choices at Spec review': {
+      helper: [
+        SUGGEST({
+          verdict: 'changes',
+          findings: [
+            {
+              kind: 'contradiction',
+              where: 'R2',
+              text: 'The fixtures list is ambiguous',
+              choices: ['Refuse duplicate paths', 'Key the list by position'],
+              recommended: 1,
+            },
+            { kind: 'missing', where: 'R3', text: 'No retry limit' },
+            {
+              kind: 'risk',
+              where: 'R4',
+              text: 'The fixture search is slow',
+              choices: ['Name the fixture files', 'Drop the fixture search'],
+              recommended: 0,
+            },
+          ],
+          unsure: 'Whether 429 counts.',
+        }),
+        SUGGEST({
+          changes: 'Retries back off.',
+          requirements: 'Delays of 1, 2 and 4 seconds.',
+          left_out: 'A retry limit.',
+        }),
+        SUGGEST({
+          verdict: 'changes',
+          findings: [
+            {
+              kind: 'missing',
+              where: 'R1',
+              text: 'A second look',
+              choices: ['Add it', 'Skip it'],
+              recommended: 0,
+            },
+          ],
+          unsure: 'Nothing else.',
+        }),
+      ],
+    },
     // Not "Help at Spec review that fails": a title takes the first key it contains.
     'A spec review that fails': { helper: [[]] },
     'Help at a stop': {
