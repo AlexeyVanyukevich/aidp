@@ -789,6 +789,37 @@ working directory and inside the linked checkouts of its `linked.json`, and Read
 the file `pr.diff` in its `BOARD_RUN_DIR`; every other path in the run directory stays refused, and
 no other phase may read `pr.diff`.
 
+### What the Verify handoff cuts
+
+Each time the Verify handoff is built, the runner writes the whole diff to `verify.diff` in the
+run directory. It runs `git diff --no-color --no-ext-diff --no-textconv --find-renames
+origin/<base>...HEAD`, so rename detection is on and copy detection is off whatever the owner's
+`diff.renames` says; the path listing (`git diff -z --name-only`, same four flags) gives one path
+per `diff --git` section. A diff of 60,000 characters or fewer goes into `<diff>` as it is. A longer
+one keeps its first 60,000 characters, then the marker `[diff cut: <N> more characters; the rest
+begins at line <L> of <path of verify.diff>]`. L is one more than the number of line breaks in the
+kept text, the line holding the first character left out; a line break goes before the marker only
+when the kept text does not already end with one.
+
+The runner writes the text it builds from the test command, `exit code: …` and the 64 KiB tail
+`runTestCommand` keeps, to `test-output.txt` in the run directory. `<test_output>` keeps the head,
+which is the first line and, when the second line is `[output cut to its end]`, that line too,
+then the last 20,000 characters of the rest, with the marker `[test output cut: <N> earlier
+characters; all of them are in <path of test-output.txt>]` between them.
+
+The verifier's prompt tells it to read the rest of the diff from the marker's line (a Grep for
+`^diff --git `, then the sections past the cut, but not lockfiles and generated files) and never
+to pass a criterion whose evidence is in a part it did not read. The guard allows, for a verify
+phase, Read and Grep of `verify.diff` and `test-output.txt` in its run directory, read-only Bash
+commands on them such as `sed -n '12p' <file> | cut -c 2001-4000`, and Read of the session's own
+saved tool results; it still refuses `pr.diff` and any Edit or Write of the two files.
+
+The runner also writes `verify-cuts.md` in the run directory: the diff line (the files not wholly
+in the handoff, at most 20, without lockfiles and generated files; `from line <L>.` when the
+sections could not be matched to the paths) and the test line (how many characters the cut left
+out). It removes the file when the handoff cut nothing. The `pr` stage puts its contents into the
+pull request body after the `Tested on` lines and before `## Verify report`.
+
 When a decision help ends, whatever the outcome, the runner reads `help.json`: when it made the
 worktree it removes the linked checkouts, the `-linked` directory and the worktree through
 `guardPath` and prunes the registrations; when it did not, it removes no worktree and no
