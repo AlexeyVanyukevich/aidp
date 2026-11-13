@@ -6,8 +6,14 @@ import { moveTask } from '../tasks/task.moves.js'
 
 export type Gh = (args: string[]) => Promise<{ code: number; stdout: string; stderr: string }>
 
-export const realGh: Gh = (args) =>
-  new Promise((resolve) => {
+/** The only `gh` commands the board runs: it reads and opens pull requests, and posts nowhere. */
+const GH_COMMANDS: readonly string[] = ['pr view', 'pr list', 'pr create']
+
+export const realGh: Gh = (args) => {
+  const command = `${args[0] ?? ''} ${args[1] ?? ''}`
+  if (!GH_COMMANDS.includes(command))
+    return Promise.reject(new Error(`the board does not run gh ${command}`))
+  return new Promise((resolve) => {
     execFile('gh', args, { timeout: 30_000 }, (error, stdout, stderr) => {
       resolve({
         code: error === null ? 0 : typeof error.code === 'number' ? error.code : 1,
@@ -16,6 +22,7 @@ export const realGh: Gh = (args) =>
       })
     })
   })
+}
 
 /** Moves cards in Review once their pull request is merged or closed on GitHub. */
 export class PrPoller {
