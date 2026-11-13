@@ -2,6 +2,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { FastifyInstance } from 'fastify'
+import { sql } from 'kysely'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { registerBoardTools } from '../../src/modules/mcp/board-tools.js'
 import type { Block, Checkpoint, TaskState } from '../../src/shared/vocabulary.js'
@@ -37,10 +38,16 @@ async function tools(taskId: string, runId: string, helpId: string) {
 
 interface Seed {
   state: TaskState
-  run?: { status: 'blocked' | 'failed' | 'succeeded'; block?: Block; checkpoint?: Checkpoint }
+  run?: {
+    status: 'blocked' | 'failed' | 'succeeded'
+    block?: Block
+    checkpoint?: Checkpoint
+    pr?: number
+    branch?: string
+  }
 }
 
-type CardDecision = 'spec_review' | 'stopped_run' | 'mark_done'
+type CardDecision = 'spec_review' | 'stopped_run' | 'mark_done' | 'pull_request'
 
 /** A delivery card in `state`, its run as given, and a running help of the decision. */
 async function seed(spec: Seed, decision: CardDecision, mode: string) {
@@ -64,6 +71,13 @@ async function seed(spec: Seed, decision: CardDecision, mode: string) {
         block: spec.run.block === undefined ? null : JSON.stringify(spec.run.block),
         checkpoint: spec.run.checkpoint === undefined ? null : JSON.stringify(spec.run.checkpoint),
         failure_reason: spec.run.status === 'failed' ? 'tests failed' : null,
+        ...(spec.run.pr === undefined
+          ? {}
+          : {
+              pr_number: spec.run.pr,
+              pr_url: `https://github.com/owner/pay/pull/${spec.run.pr}`,
+            }),
+        ...(spec.run.branch === undefined ? {} : { branch: spec.run.branch }),
       })
       .where('id', '=', card.runId)
       .execute()
@@ -306,5 +320,91 @@ describe('save_help_result for a decision help', () => {
     expect(resumed.statusCode).toBe(200)
     expect(await statusOf('helps', s.helpId)).toBe('stopped')
     expect(await statusOf('runs', s.helpRunId)).toBe('cancelled')
+  })
+})
+
+describe('a pull request review', () => {
+  const REVIEWED = {
+    state: 'review',
+    run: { status: 'succeeded', pr: 7, branch: 'feat/x' },
+  } as const
+
+  it('reads the run, the spec, the plan and the report (AC13)', async () => {
+    const s = await seed(REVIEWED, 'pull_request', 'code_review')
+    await db()
+      .insertInto('artifacts')
+      .values([
+        {
+          run_id: s.runId,
+          kind: 'plan',
+          body_md: 'The plan',
+          uri: null,
+          data: JSON.stringify({ confidence: 'high' }),
+        },
+        { run_id: s.runId, kind: 'verify_report', body_md: 'The report', uri: null, data: null },
+      ])
+      .execute()
+    const call = await tools(s.taskId, s.helpRunId, s.helpId)
+    const record = JSON.parse((await call('get_decision')).text)
+    expect(record.run).toEqual({
+      number: 1,
+      branch: 'feat/x',
+      pull_request: { number: 7, url: 'https://github.com/owner/pay/pull/7' },
+    })
+    expect(record.spec).toMatchObject({ version: 1 })
+    expect(record.spec.body_md).toContain('Retries back off')
+    expect(record.plan).toBe('The plan')
+    expect(record.verify_report).toMatchObject({ body_md: 'The report' })
+  })
+
+  it('returns a null plan and report when the run has none', async () => {
+    const s = await seed(REVIEWED, 'pull_request', 'code_review')
+    const call = await tools(s.taskId, s.helpRunId, s.helpId)
+    const record = JSON.parse((await call('get_decision')).text)
+    expect(record).toMatchObject({ plan: null, verify_report: null })
+  })
+
+  it('stores where, matters and the checkout’s commit (AC15)', async () => {
+    const s = await seed(REVIEWED, 'pull_request', 'code_review')
+    await sql`insert into events (id, run_id, ts, type, tool, payload)
+        values (${crypto.randomUUID()}, ${s.helpRunId}, now(), 'tool_call', 'help_checkout',
+          ${JSON.stringify({ source: 'pull_request', fallback: false, commit: 'abc1234def' })}::jsonb)`.execute(
+      db(),
+    )
+    const call = await tools(s.taskId, s.helpRunId, s.helpId)
+    const saved = await call('save_help_result', {
+      verdict: 'changes',
+      findings: [
+        {
+          kind: 'bug',
+          file: 'server/src/a.ts',
+          line: 12,
+          text: 'Off by one',
+          matters: 'Loses a row',
+        },
+        { kind: 'test', file: 'server/src/b.ts', text: 'No test', matters: 'Regresses' },
+      ],
+      unsure: 'Nothing',
+    })
+    expect(saved.isError).toBe(false)
+    const listed = (await app.inject({ url: `/api/tasks/${s.taskId}/helps` })).json()
+    expect(listed[0].result).toEqual({
+      mode: 'code_review',
+      verdict: 'changes',
+      findings: [
+        { kind: 'bug', where: 'server/src/a.ts:12', text: 'Off by one', matters: 'Loses a row' },
+        { kind: 'test', where: 'server/src/b.ts', text: 'No test', matters: 'Regresses' },
+      ],
+      unsure: 'Nothing',
+      commit: 'abc1234def',
+    })
+  })
+
+  it('stores a null commit when no checkout event exists', async () => {
+    const s = await seed(REVIEWED, 'pull_request', 'code_review')
+    const call = await tools(s.taskId, s.helpRunId, s.helpId)
+    await call('save_help_result', { verdict: 'nothing_to_change', unsure: 'u' })
+    const listed = (await app.inject({ url: `/api/tasks/${s.taskId}/helps` })).json()
+    expect(listed[0].result).toMatchObject({ verdict: 'nothing_to_change', commit: null })
   })
 })

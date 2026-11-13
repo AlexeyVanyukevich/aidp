@@ -397,6 +397,35 @@ async function decisionRecord(ctx: ToolContext, helpId: string, head: HelpHead) 
       offered: proposal?.offered ?? [],
     }
   }
+  if (head.decision === 'pull_request' && subject !== null && 'pr_run_id' in subject) {
+    const run = await ctx.db
+      .selectFrom('runs')
+      .select(['id', 'number', 'branch', 'pr_number', 'pr_url', 'spec_version'])
+      .where('id', '=', subject.pr_run_id)
+      .executeTakeFirstOrThrow()
+    const spec =
+      run.spec_version === null
+        ? null
+        : ((await ctx.db
+            .selectFrom('specs')
+            .select(['version', 'body_md'])
+            .where('task_id', '=', ctx.taskId)
+            .where('version', '=', run.spec_version)
+            .executeTakeFirst()) ?? null)
+    const { plans, approvals } = await loadPlanHistory(ctx.db, ctx.taskId)
+    const plan = acceptedPlanOf(plans, approvals, run.id)
+    return {
+      ...common,
+      run: {
+        number: run.number,
+        branch: run.branch ?? `board/${common.task.key}-r${run.number}`,
+        pull_request: { number: run.pr_number, url: run.pr_url },
+      },
+      spec,
+      plan: plan === undefined ? null : plan.bodyMd,
+      verify_report: await latestReport(ctx, run.id),
+    }
+  }
   const read = specRead(facts)
   const spec =
     read.version === null
@@ -536,7 +565,7 @@ function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string):
     'save_help_result',
     {
       description:
-        'Save your result. A suggestion: option_id (one the question offers), text, or both, with reasoning and unsure (what you are unsure of). An explanation: asked (what is being asked), matters (why it matters to the task) and leads_to (what each option, or an answer in words, would lead to), and no option. For a decision help the fields depend on the mode. review: verdict (changes or nothing_to_change), findings (kind, where, text) and unsure. restate: changes, requirements and left_out. recommend: why_stopped, action, reasoning and unsure. check: checked_against, produced, unfinished (where, text) and unsure. advise: variant (one the proposal offers now), reasoning and unsure. Refused with the field to fix when it does not fit; fix it and save again.',
+        'Save your result. A suggestion: option_id (one the question offers), text, or both, with reasoning and unsure (what you are unsure of). An explanation: asked (what is being asked), matters (why it matters to the task) and leads_to (what each option, or an answer in words, would lead to), and no option. For a decision help the fields depend on the mode. review: verdict (changes or nothing_to_change), findings (kind, where, text) and unsure. restate: changes, requirements and left_out. recommend: why_stopped, action, reasoning and unsure. check: checked_against, produced, unfinished (where, text) and unsure. advise: variant (one the proposal offers now), reasoning and unsure. code_review: verdict (changes or nothing_to_change), findings (kind: bug, breaks, duplicate, fit or test; file; line, optional; text; matters) and unsure. Refused with the field to fix when it does not fit; fix it and save again.',
       inputSchema: {
         option_id: z.string().optional(),
         text: z.string().optional(),
@@ -547,7 +576,16 @@ function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string):
         leads_to: z.string().optional(),
         verdict: z.string().optional(),
         findings: z
-          .array(z.object({ kind: z.string(), where: z.string().optional(), text: z.string() }))
+          .array(
+            z.object({
+              kind: z.string(),
+              where: z.string().optional(),
+              text: z.string(),
+              file: z.string().optional(),
+              line: z.number().optional(),
+              matters: z.string().optional(),
+            }),
+          )
           .optional(),
         changes: z.string().optional(),
         requirements: z.string().optional(),

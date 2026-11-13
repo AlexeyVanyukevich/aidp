@@ -37,6 +37,7 @@ import {
   questionOf,
   resultOf,
   type DecisionResultInput,
+  type DecisionResultMode,
   type HelpResultInput,
 } from './help-rules.js'
 
@@ -261,6 +262,20 @@ export async function endHelpRun(
     .where('kind', '=', 'help')
     .where('status', 'in', ['queued', 'running'])
     .execute()
+}
+
+/** The commit the helper read: the payload of the help run's `help_checkout` event, or none. */
+async function checkoutCommit(trx: Transaction<Database>, runId: string): Promise<string | null> {
+  const event = await trx
+    .selectFrom('events')
+    .select('payload')
+    .where('run_id', '=', runId)
+    .where('tool', '=', 'help_checkout')
+    .orderBy('ts', 'desc')
+    .limit(1)
+    .executeTakeFirst()
+  const commit = event?.payload.commit
+  return typeof commit === 'string' ? commit : null
 }
 
 const TOKEN_LIFETIME_MS = 4 * 3600_000
@@ -918,7 +933,7 @@ export class HelpService {
     }
     if (help.status !== 'running')
       return { error: `This help is ${help.status}; nothing was saved. End your turn now.` }
-    const mode = help.mode as 'review' | 'restate' | 'recommend' | 'check' | 'advise'
+    const mode = help.mode as DecisionResultMode
     const subject = help.subject
     const proposal =
       mode === 'advise' && 'proposal_id' in subject
@@ -940,7 +955,13 @@ export class HelpService {
       .updateTable('helps')
       .set({
         status: 'succeeded',
-        result: JSON.stringify(decisionResultOf(mode, input)),
+        result: JSON.stringify(
+          decisionResultOf(
+            mode,
+            input,
+            mode === 'code_review' ? await checkoutCommit(trx, help.run_id) : null,
+          ),
+        ),
         ended_at: now,
       })
       .where('id', '=', help.id)

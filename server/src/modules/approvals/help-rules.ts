@@ -165,7 +165,16 @@ export function lostHelps(
 /** What a decision help's save may carry; every field optional, the mode says which are needed. */
 export interface DecisionResultInput {
   verdict?: string | undefined
-  findings?: { kind: string; where?: string | undefined; text: string }[] | undefined
+  findings?:
+    | {
+        kind: string
+        where?: string | undefined
+        text: string
+        file?: string | undefined
+        line?: number | undefined
+        matters?: string | undefined
+      }[]
+    | undefined
   unsure?: string | undefined
   changes?: string | undefined
   requirements?: string | undefined
@@ -201,6 +210,7 @@ const DECISION_FIELDS = {
   recommend: ['why_stopped', 'action', 'reasoning', 'unsure'],
   check: ['checked_against', 'produced', 'unfinished', 'unsure'],
   advise: ['variant', 'reasoning', 'unsure'],
+  code_review: ['verdict', 'findings', 'unsure'],
 } as const
 
 const ALL_RESULT_FIELDS = [
@@ -226,6 +236,10 @@ const ALL_RESULT_FIELDS = [
 
 const ACTION_IDS = ['resume', 'cancel', 'rerun_again', 'rerun_keep', 'mark_done']
 const FINDING_KINDS = ['missing', 'contradiction', 'uncheckable', 'risk']
+const CODE_FINDING_KINDS = ['bug', 'breaks', 'duplicate', 'fit', 'test']
+const FILE_LIMIT = 300
+export type DecisionResultMode =
+  'review' | 'restate' | 'recommend' | 'check' | 'advise' | 'code_review'
 const LIST_LIMIT = 30
 const WHERE_LIMIT = 100
 
@@ -242,11 +256,12 @@ export interface DecisionFinding {
     | 'unknown_action'
     | 'not_offered'
     | 'wrong_source'
+    | 'invalid_line'
 }
 
 /** What a decision help's saved result must be. Each finding names the field to fix. */
 export function checkDecisionResult(
-  mode: 'review' | 'restate' | 'recommend' | 'check' | 'advise',
+  mode: DecisionResultMode,
   input: DecisionResultInput,
   facts: DecisionCheckFacts,
 ): DecisionFinding[] {
@@ -281,7 +296,41 @@ export function checkDecisionResult(
     }
   }
 
-  if (mode === 'review') {
+  const codeItems = () => {
+    const list = input.findings
+    if (list === undefined) return
+    if (list.length > LIST_LIMIT) findings.push({ field: 'findings', code: 'too_many' })
+    for (const item of list) {
+      if (!CODE_FINDING_KINDS.includes(item.kind))
+        findings.push({ field: 'findings', code: 'unknown_kind' })
+      if (item.where !== undefined) findings.push({ field: 'findings', code: 'not_allowed' })
+      if (blank(item.file)) findings.push({ field: 'findings', code: 'required' })
+      else if ((item.file ?? '').trim().length > FILE_LIMIT)
+        findings.push({ field: 'findings', code: 'too_long' })
+      if (item.line !== undefined && (!Number.isInteger(item.line) || item.line < 1))
+        findings.push({ field: 'findings', code: 'invalid_line' })
+      for (const value of [item.text, item.matters]) {
+        if (blank(value)) findings.push({ field: 'findings', code: 'required' })
+        else if ((value ?? '').trim().length > HELP_LIMITS.text)
+          findings.push({ field: 'findings', code: 'too_long' })
+      }
+    }
+  }
+
+  if (mode === 'code_review') {
+    if (input.verdict !== 'changes' && input.verdict !== 'nothing_to_change')
+      findings.push({
+        field: 'verdict',
+        code: input.verdict === undefined ? 'required' : 'unknown_verdict',
+      })
+    codeItems()
+    const count = input.findings?.length ?? 0
+    if (input.verdict === 'changes' && count === 0)
+      findings.push({ field: 'findings', code: 'required' })
+    if (input.verdict === 'nothing_to_change' && count > 0)
+      findings.push({ field: 'findings', code: 'not_allowed' })
+    text('unsure', true)
+  } else if (mode === 'review') {
     if (input.verdict !== 'changes' && input.verdict !== 'nothing_to_change')
       findings.push({
         field: 'verdict',
@@ -325,10 +374,24 @@ export function checkDecisionResult(
 
 /** The decision result as it is stored: only the fields of its mode, trimmed. */
 export function decisionResultOf(
-  mode: 'review' | 'restate' | 'recommend' | 'check' | 'advise',
+  mode: DecisionResultMode,
   input: DecisionResultInput,
+  commit: string | null = null,
 ): HelpResult {
   const t = (value: string | undefined) => (value ?? '').trim()
+  if (mode === 'code_review')
+    return {
+      mode,
+      verdict: input.verdict === 'changes' ? 'changes' : 'nothing_to_change',
+      findings: (input.findings ?? []).map((item) => ({
+        kind: item.kind as 'bug' | 'breaks' | 'duplicate' | 'fit' | 'test',
+        where: item.line === undefined ? t(item.file) : `${t(item.file)}:${item.line}`,
+        text: t(item.text),
+        matters: t(item.matters),
+      })),
+      unsure: t(input.unsure),
+      commit,
+    }
   const where = (value: string | undefined) =>
     value === undefined || blank(value) ? {} : { where: value.trim() }
   if (mode === 'review')

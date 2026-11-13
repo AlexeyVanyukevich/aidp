@@ -101,6 +101,19 @@ export type HelpResult =
       }[]
       unsure: string
     }
+  | {
+      mode: 'code_review'
+      verdict: 'changes' | 'nothing_to_change'
+      findings: {
+        kind: 'bug' | 'breaks' | 'duplicate' | 'fit' | 'test'
+        where: string
+        text: string
+        matters: string
+      }[]
+      unsure: string
+      /** The commit the helper read: HEAD of the worktree, from its `help_checkout` event. */
+      commit: string | null
+    }
   | { mode: 'restate'; changes: string; requirements: string; left_out: string }
   | {
       mode: 'recommend'
