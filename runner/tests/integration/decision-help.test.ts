@@ -9,6 +9,7 @@ import { realExec } from '../../src/exec.js'
 import { Git } from '../../src/git.js'
 import {
   HELP_FILE,
+  checkoutPayload,
   cleanUpHelp,
   clearEndedHelps,
   helpPrompt,
@@ -258,6 +259,23 @@ describe('a pull request review’s checkout', () => {
     )
     expect(made.ref).toBe(`worktree:${PAUSED_RUN}`)
     expect(made.commit).toBe(sh(['rev-parse', 'HEAD'], paused.worktree).trim())
+  })
+
+  it('records the skipped files in the checkout event’s payload', async () => {
+    const { project, home, removals, work } = setup()
+    pushBranch(project.repo)
+    const made = await prepareHelpCheckout(
+      work({ source: 'pull_request', branch: 'feat/x' }),
+      git,
+      home,
+      removals,
+    )
+    expect(checkoutPayload(made)).toEqual({
+      source: 'pull_request',
+      fallback: false,
+      commit: made.commit,
+      skipped: [{ path: 'package-lock.json', skip: 'lockfile' }],
+    })
   })
 
   // The owner's git config must not reach pr.diff: each row would change or break the diff.

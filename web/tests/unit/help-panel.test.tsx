@@ -59,6 +59,7 @@ const RESULTS: Record<HelpMode, HelpResult> = {
     ],
     unsure: 'u',
     commit: 'abcdef0123456789',
+    skipped: [],
   },
 }
 
@@ -461,11 +462,36 @@ describe('the pull request review result', () => {
       findings: [],
       unsure: 'u',
       commit: null,
+      skipped: [],
     })
     expect(html).toContain('Nothing to change.')
     for (const html2 of [html, markup(RESULTS.code_review)]) {
       expect(html2).not.toMatch(/<(button|a|input|select|textarea)\b/)
     }
+  })
+  const skippedRows: {
+    name: string
+    skipped: { path: string; skip: string }[]
+    shown: string[]
+  }[] = [
+    { name: 'none skipped', skipped: [], shown: [] },
+    {
+      name: 'a lockfile and a generated file',
+      skipped: [
+        { path: 'package-lock.json', skip: 'lockfile' },
+        { path: 'dist/app.min.js', skip: 'generated' },
+      ],
+      shown: [
+        '<strong>Not reviewed:</strong> <code>package-lock.json</code> (lockfile), <code>dist/app.min.js</code> (generated)',
+      ],
+    },
+  ]
+  it.each(skippedRows)('lists the files the board skipped: $name', ({ skipped, shown }) => {
+    const html = markup({ ...RESULTS.code_review, skipped } as HelpResult)
+    if (shown.length === 0) expect(html).not.toContain('Not reviewed')
+    for (const text of shown) expect(html).toContain(text)
+    if (shown.length > 0)
+      expect(html.indexOf('Not reviewed')).toBeLessThan(html.indexOf('Unsure about'))
   })
   it('heads the result with the short commit, or plainly without one', () => {
     expect(resultHeading('code_review', null, RESULTS.code_review)).toBe(

@@ -113,6 +113,8 @@ export type HelpResult =
       unsure: string
       /** The commit the helper read: HEAD of the worktree, from its `help_checkout` event. */
       commit: string | null
+      /** The files the board skipped by name, from the same event; none when it has none. */
+      skipped: { path: string; skip: 'lockfile' | 'generated' }[]
     }
   | { mode: 'restate'; changes: string; requirements: string; left_out: string }
   | {

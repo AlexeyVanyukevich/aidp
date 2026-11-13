@@ -67,6 +67,22 @@ export function helpPrompt(work: HelpWork, checkout?: CheckoutMade): string {
   return lines.join('\n')
 }
 
+/** The payload of a decision help's `help_checkout` event; a review's names the skipped files. */
+export function checkoutPayload(made: CheckoutMade): Record<string, unknown> {
+  return {
+    source: made.source,
+    fallback: made.fallback,
+    commit: made.commit,
+    ...(made.diff === undefined
+      ? {}
+      : {
+          skipped: made.diff.files.flatMap((file) =>
+            file.skip === undefined ? [] : [{ path: file.path, skip: file.skip }],
+          ),
+        }),
+  }
+}
+
 /** A help from before decisions, or one for a waiting request. */
 const isQuestion = (work: HelpWork) => (work.decision ?? 'question') === 'question'
 
@@ -320,7 +336,7 @@ export async function carryHelp(work: HelpWork, deps: HelpDeps): Promise<void> {
             tool: 'help_checkout',
             target: made.ref,
             status: 'ok',
-            payload: { source: made.source, fallback: made.fallback, commit: made.commit },
+            payload: checkoutPayload(made),
           },
         ),
       ])

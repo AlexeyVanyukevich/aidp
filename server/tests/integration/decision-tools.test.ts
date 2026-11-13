@@ -364,13 +364,20 @@ describe('a pull request review', () => {
     expect(record).toMatchObject({ plan: null, verify_report: null })
   })
 
-  it('stores where, matters and the checkout’s commit (AC15)', async () => {
+  it('stores where, matters and the checkout’s commit and skipped files (AC15)', async () => {
     const s = await seed(REVIEWED, 'pull_request', 'code_review')
+    const payload = {
+      source: 'pull_request',
+      fallback: false,
+      commit: 'abc1234def',
+      skipped: [
+        { path: 'package-lock.json', skip: 'lockfile' },
+        { path: 'dist/app.min.js', skip: 'generated' },
+      ],
+    }
     await sql`insert into events (id, run_id, ts, type, tool, payload)
         values (${crypto.randomUUID()}, ${s.helpRunId}, now(), 'tool_call', 'help_checkout',
-          ${JSON.stringify({ source: 'pull_request', fallback: false, commit: 'abc1234def' })}::jsonb)`.execute(
-      db(),
-    )
+          ${JSON.stringify(payload)}::jsonb)`.execute(db())
     const call = await tools(s.taskId, s.helpRunId, s.helpId)
     const saved = await call('save_help_result', {
       verdict: 'changes',
@@ -397,14 +404,19 @@ describe('a pull request review', () => {
       ],
       unsure: 'Nothing',
       commit: 'abc1234def',
+      skipped: payload.skipped,
     })
   })
 
-  it('stores a null commit when no checkout event exists', async () => {
+  it('stores a null commit and no skipped files when no checkout event exists', async () => {
     const s = await seed(REVIEWED, 'pull_request', 'code_review')
     const call = await tools(s.taskId, s.helpRunId, s.helpId)
     await call('save_help_result', { verdict: 'nothing_to_change', unsure: 'u' })
     const listed = (await app.inject({ url: `/api/tasks/${s.taskId}/helps` })).json()
-    expect(listed[0].result).toMatchObject({ verdict: 'nothing_to_change', commit: null })
+    expect(listed[0].result).toMatchObject({
+      verdict: 'nothing_to_change',
+      commit: null,
+      skipped: [],
+    })
   })
 })

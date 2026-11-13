@@ -55,8 +55,9 @@ const RESULT = {
       matters: 'A retry may wait for hours',
     },
   ],
-  unsure: 'Lockfiles were skipped: package-lock.json',
+  unsure: 'Every file not skipped was read whole.',
   commit: COMMIT,
+  skipped: [{ path: 'package-lock.json', skip: 'lockfile' }],
 }
 
 async function inReview(request: APIRequestContext, title: string) {

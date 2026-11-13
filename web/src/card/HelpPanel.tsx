@@ -1,4 +1,4 @@
-import { useId, type ReactNode } from 'react'
+import { Fragment, useId, type ReactNode } from 'react'
 import { Badge, Button } from '@zellige/react'
 import type {
   ApprovalOption,
@@ -285,6 +285,16 @@ export function decisionRenderers(
               </li>
             ))}
           </ul>
+        )}
+        {(result.skipped ?? []).length > 0 && (
+          <Part title="Not reviewed">
+            {(result.skipped ?? []).map((file, index) => (
+              <Fragment key={file.path}>
+                {index > 0 && ', '}
+                <code>{file.path}</code> ({file.skip})
+              </Fragment>
+            ))}
+          </Part>
         )}
         <Part title="Unsure about">{result.unsure}</Part>
       </>
