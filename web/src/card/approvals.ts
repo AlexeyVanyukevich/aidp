@@ -256,7 +256,7 @@ export function decisionHelp(
   decision: Exclude<HelpDecision, 'question'>,
 ): Partial<Record<HelpMode, ModeHelp>> {
   return Object.fromEntries(
-    (['review', 'restate', 'recommend', 'check'] as const).map((mode) => {
+    (['review', 'restate', 'recommend', 'check', 'code_review'] as const).map((mode) => {
       const mine = helps
         .filter((h) => h.decision === decision && h.mode === mode)
         .sort((a, b) => b.created_at.localeCompare(a.created_at))
@@ -277,7 +277,17 @@ export function decisionHelp(
 export const NO_HELP: ModeHelp = { busy: false, shown: undefined, failure: undefined }
 
 /** The words a decision help's result is shown under. */
-export function resultHeading(mode: HelpMode, subject: HelpSubject | null): string {
+export function resultHeading(
+  mode: HelpMode,
+  subject: HelpSubject | null,
+  result?: HelpResult,
+): string {
+  if (mode === 'code_review') {
+    const commit = result?.mode === 'code_review' ? result.commit : null
+    return commit === null || commit === undefined
+      ? 'Pull request review'
+      : `Pull request review of ${commit.slice(0, 7)}`
+  }
   const version = `v${subject?.spec_version ?? '?'}`
   if (mode === 'review') return `Spec review of ${version}`
   if (mode === 'restate') return `${version} in plain words`
@@ -287,6 +297,7 @@ export function resultHeading(mode: HelpMode, subject: HelpSubject | null): stri
 
 /** A failed decision help's sentence, without the final full stop. */
 export function decisionFailure(mode: HelpMode, subject: HelpSubject | null, reason: string) {
+  if (mode === 'code_review') return `No pull request review: ${reason}`
   const version = `v${subject?.spec_version ?? '?'}`
   if (mode === 'review') return `No spec review for ${version}: ${reason}`
   if (mode === 'restate') return `No plain-words spec for ${version}: ${reason}`
@@ -299,6 +310,12 @@ export function decisionAnnouncement(help: HelpView): string | null {
   if (help.status === 'failed')
     return `${decisionFailure(help.mode, help.subject, help.reason ?? 'the helper failed')}.`
   if (help.status !== 'succeeded') return null
+  if (help.mode === 'code_review') {
+    const commit = help.result?.mode === 'code_review' ? help.result.commit : null
+    return commit === null || commit === undefined
+      ? 'Pull request review ready.'
+      : `Pull request review ready for ${commit.slice(0, 7)}.`
+  }
   const version = `v${help.subject?.spec_version ?? '?'}`
   if (help.mode === 'review') return `Spec review ready for ${version}.`
   if (help.mode === 'restate') return `Plain-words spec ready for ${version}.`
@@ -324,5 +341,5 @@ export function goneResults(
         (h.status === 'succeeded' || h.status === 'failed') &&
         !kept.has(h.id),
     )
-    .map((h) => `${resultHeading(h.mode, h.subject)} no longer applies.`)
+    .map((h) => `${resultHeading(h.mode, h.subject, h.result ?? undefined)} no longer applies.`)
 }
