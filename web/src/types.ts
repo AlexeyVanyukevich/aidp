@@ -172,6 +172,8 @@ export type HelpResult =
         kind: 'missing' | 'contradiction' | 'uncheckable' | 'risk'
         where?: string
         text: string
+        choices?: string[]
+        recommended?: number
       }[]
       unsure: string
     }

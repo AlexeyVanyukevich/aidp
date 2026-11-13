@@ -264,6 +264,28 @@ describe('save_help_result for a decision help', () => {
     expect(await statusOf('helps', s.helpId)).toBe('succeeded')
   })
 
+  it('saves a review finding with choices, and refuses one choice', async () => {
+    const s = await seed({ state: 'spec_review' }, 'spec_review', 'review')
+    const call = await tools(s.taskId, s.helpRunId, s.helpId)
+    const one = await call('save_help_result', {
+      verdict: 'changes',
+      findings: [{ kind: 'missing', where: 'R1', text: 'X', choices: ['A'], recommended: 0 }],
+      unsure: 'u',
+    })
+    expect(one.text).toContain('findings: too few')
+    expect(await statusOf('helps', s.helpId)).not.toBe('succeeded')
+    const saved = await call('save_help_result', {
+      verdict: 'changes',
+      findings: [{ kind: 'missing', where: 'R1', text: 'X', choices: ['A', 'B'], recommended: 1 }],
+      unsure: 'u',
+    })
+    expect(saved.isError).toBe(false)
+    const listed = (await app.inject({ url: `/api/tasks/${s.taskId}/helps` })).json()
+    expect(listed[0].result.findings).toEqual([
+      { kind: 'missing', where: 'R1', text: 'X', choices: ['A', 'B'], recommended: 1 },
+    ])
+  })
+
   it('refuses a field of another mode, naming it', async () => {
     const s = await seed({ state: 'spec_review' }, 'spec_review', 'restate')
     const call = await tools(s.taskId, s.helpRunId, s.helpId)
