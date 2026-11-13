@@ -559,6 +559,39 @@ One that exits non-zero or times out blocks the run as `step_failed`, carrying t
 the last 4,096 characters of its output; the checkpoint stays in `prepare`, and Resume recreates
 the worktree and runs the command again.
 
+**`check:all` and the browser journeys.** `./run check:all` is the root `npm test`, the AIDP
+project's default test command. It checks `need_node`, `need_deps` and `need_docker`, then
+that Chromium starts (it launches and closes `chromium` from `@playwright/test`); when it does not,
+the scenario exits non-zero naming `npx playwright install chromium`, before any step, so `Types`
+is never printed. It then runs `./run check` in a subshell and, when that fails, returns check's
+exit code with no journeys and no flaky block: Playwright empties `test-results/` only when it
+starts, so a block printed then would read the previous run's report. When check passes it runs
+`npx playwright test --retries=1` under the step "The browser journeys against the whole
+product", then `runner/scripts/flaky-journeys.ts` as its last command, whatever the journeys'
+exit code was; the scenario exits with the journeys' code. `./run check` and `./run test:ui` run
+no retry, and `playwright.config.ts` keeps `retries: 0`. The config adds a `json` reporter beside
+`list`, writing `test-results/report.json`. The script reads it and prints `Flaky journeys:`,
+then one `- <file>:<line> › <title path>` line per test whose outcome is `flaky`, or `No journey
+was flaky.`, or `No journey report was written.` when the report is missing or not JSON; it
+always exits zero. The journeys' global setup asks the OS for a free port (it listens on port 0
+and closes) and uses it for the server, the runner's `BOARD_URL`, the health check and the
+`baseURL` in `tests/ui/.runtime.json`, so a process holding a fixed port no longer breaks a run.
+The runner's test timeout, `TEST_TIMEOUT_MS`, defaults to 1,800,000 ms; a project with a slower
+suite sets it in `.env`. On 2026-11-13, on the commit "test(runner): tidy the flaky block
+handoff test", `./run check` took 315 s and `./run test:ui` 238 s: 553 s together, below the
+default.
+
+**What the verifier counts as a test having run.** A passing test command is evidence for a test
+inside a suite it runs, once the branch's files show the test exists, whether or not the diff
+changes it; the verifier reads which suites ran from the step lines in the test output
+(`./run check:all` runs the server, runner and web suites and the browser journeys in
+`tests/ui/`). A suite whose step line is in neither `<test_output>` nor `test-output.txt` counts
+as not run, because the runner keeps only the last 64 KiB of the output. The verifier runs a test
+itself only when its suite did not run or the output shows it failing or flaky, and then only
+that test, citing the command and the output lines; a green command is never evidence for a test
+it does not run. A test it must run and cannot gets fail, with evidence starting `not run:`. Its
+summary names every test the output marks flaky.
+
 **The environment of commands and sessions.** The setup command, the test command and the agents'
 `claude` sessions do not receive `RUNNER_KEY`, `DATABASE_URL`, `PORT` or any variable starting
 with `BOARD_`. A session keeps only the nine run variables the runner sets for it: `BOARD_URL`,
