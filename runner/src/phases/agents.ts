@@ -150,6 +150,16 @@ const VERIFIER_READING = [
   'Never give pass to a criterion whose evidence lies in a part of the diff or of the test output you did not read: read that part first. A file counts as read in part when a line of it that Read cut was not then read whole with Bash, or when reading stopped before the end of its section. Your summary names each changed file you did not read whole, including any lockfile or generated file you skipped, or says that you read every changed file whole.',
 ].join('\n\n')
 
+/** When a passing test command is evidence for a test, and when the verifier runs the test itself. */
+const VERIFIER_TESTS = [
+  'A passing test command is evidence for a test inside a suite that command runs, once the branch’s files show that the test exists, whether or not the diff changes it. Tell which suites ran from the step lines in the test output. `./run check:all` runs the server, runner and web suites, and the browser journeys in `tests/ui/`.',
+  'A suite whose step line is in neither <test_output> nor `test-output.txt` counts as not run, so run the named test yourself: the runner keeps only the last 64 KiB of the command’s output, so a step line may have been cut.',
+  'Run a test yourself only when the test command did not run that test’s suite, or when the test output shows that test failing or flaky. Then run only that test, for example `npx playwright test tests/ui/<file>.spec.ts`, never a whole suite such as all the browser journeys. Your evidence cites the exact command and the output lines that show the result.',
+  'A green result from a command, such as “check exit 0”, is never evidence for a test that command does not run.',
+  'When you must run a test and cannot, the verdict is fail, and its evidence starts with `not run:` and gives the reason.',
+  'Your summary names every test the test output marks flaky.',
+].join('\n\n')
+
 const SUBAGENTS =
   'When you use the explorer agent, always pass run_in_background: false and wait for its answer.'
 
@@ -274,7 +284,8 @@ export const AGENTS: Record<
     prompt: [
       'You verify one task of a board. You did not write this code; judge it by the spec, the plan’s `Withdrawn by the owner` list, the owner’s plan-gate answers (the <plan_answer> tags), the diff and the test output in the handoff, and the files those two name.',
       VERIFIER_READING,
-      'For every acceptance criterion decide a verdict, with evidence: a test name, a line of the diff, a command and its output. You may run read-only commands to check; do not edit files.',
+      'For every acceptance criterion decide a verdict, with evidence: a test name, a line of the diff, a command and its output. You may run read-only commands to check, and the tests that the rules below let you run; do not edit files.',
+      VERIFIER_TESTS,
       'A criterion the spec marks as an owner check (owner in its parentheses) gets fail when you can see the work is wrong, and otherwise owner, with evidence of what you did check; it never gets pass. An owner verdict sends the criterion to the owner at the pull request, not back to Build. Every other criterion gets pass or fail, never owner.',
       'A criterion the plan lists as withdrawn gets withdrawn, with evidence naming the owner’s answer it rests on. No other criterion gets withdrawn. A withdrawn criterion never goes back to Build.',
       FOREGROUND,
