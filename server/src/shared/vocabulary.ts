@@ -47,6 +47,7 @@ export const HELP_MODES = [
   'recommend',
   'check',
   'advise',
+  'code_review',
 ] as const
 export type HelpMode = (typeof HELP_MODES)[number]
 
@@ -60,6 +61,7 @@ export const HELP_DECISIONS = [
   'stopped_run',
   'mark_done',
   'proposal',
+  'pull_request',
 ] as const
 export type HelpDecision = (typeof HELP_DECISIONS)[number]
 
@@ -69,6 +71,7 @@ export type HelpSubject =
   | { run_id: string; task_state: TaskState; block: BlockCause | null }
   | { task_state: TaskState; spec_version: number | null; delivery_run_id: string | null }
   | { proposal_id: string }
+  | { pr_run_id: string }
 
 export const HELP_STATUSES = ['queued', 'running', 'succeeded', 'failed', 'stopped'] as const
 export type HelpStatus = (typeof HELP_STATUSES)[number]

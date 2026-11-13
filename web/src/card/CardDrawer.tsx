@@ -53,7 +53,9 @@ export function CardDrawer() {
   })
   const openProposals = (proposals.data ?? []).filter((p) => p.outcome === null).length
   const offeredDecisions =
-    task.data === undefined ? [] : decisionsFor(task.data.state, task.data.block, openProposals)
+    task.data === undefined
+      ? []
+      : decisionsFor(task.data.state, task.data.block, openProposals, task.data.has_pull_request)
   // A proposal that arrives while the card is open is announced once; the first load is not.
   const seenProposals = useRef<Set<string> | undefined>(undefined)
   useEffect(() => {
@@ -264,7 +266,7 @@ export function CardDrawer() {
       <Loaded query={task} failure="This card could not be loaded.">
         {(t) => {
           const offered = actionsFor(t.state, t.block, t.plan_to_keep)
-          const decisions = decisionsFor(t.state, t.block, openProposals)
+          const decisions = decisionsFor(t.state, t.block, openProposals, t.has_pull_request)
           const check = decisionMode(
             'check',
             'Check what is unfinished',

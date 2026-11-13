@@ -159,6 +159,7 @@ interface DecisionRow {
   offered: string[]
   stopped_run_actions: string[]
   open_proposals?: number
+  has_pull_request: boolean
 }
 const decisionRows = JSON.parse(
   readFileSync(new URL('../../../tests/fixtures/decisions.json', import.meta.url), 'utf8'),
@@ -169,9 +170,9 @@ const blockOf = (row: DecisionRow): Block | null =>
 
 describe('the shared decision table', () => {
   it.each(decisionRows)('$name: decisionsFor', (row) => {
-    expect(decisionsFor(row.state, blockOf(row), row.open_proposals ?? 0)).toEqual(
-      row.offered.filter((decision) => decision !== 'question'),
-    )
+    expect(
+      decisionsFor(row.state, blockOf(row), row.open_proposals ?? 0, row.has_pull_request),
+    ).toEqual(row.offered.filter((decision) => decision !== 'question'))
   })
   it.each(decisionRows.filter((row) => ['blocked', 'failed'].includes(row.state)))(
     '$name: actionsFor',

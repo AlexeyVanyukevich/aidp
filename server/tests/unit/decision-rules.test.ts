@@ -21,6 +21,7 @@ interface Row {
   checkpoint: boolean
   approval_current: boolean
   open_proposals?: number
+  has_pull_request: boolean
   offered: Decision[]
   stopped_run_actions: StoppedRunAction[]
   recommendable_actions: StoppedRunAction[]
@@ -36,6 +37,7 @@ const factsOf = (row: Row): DecisionFacts => ({
   checkpoint: row.checkpoint,
   approvalCurrent: row.approval_current,
   openProposals: Array.from({ length: row.open_proposals ?? 0 }, (_, i) => `p${i}`),
+  hasPullRequest: row.has_pull_request,
 })
 
 describe('the decision rules, on the shared table', () => {
@@ -48,8 +50,15 @@ describe('the decision rules, on the shared table', () => {
   it.each(rows)('$name: recommendable actions', (row) => {
     expect(recommendableActions(factsOf(row))).toEqual(row.recommendable_actions)
   })
-  it('lists the five decisions', () => {
-    expect(DECISIONS).toEqual(['question', 'spec_review', 'stopped_run', 'mark_done', 'proposal'])
+  it('lists the six decisions', () => {
+    expect(DECISIONS).toEqual([
+      'question',
+      'spec_review',
+      'stopped_run',
+      'mark_done',
+      'proposal',
+      'pull_request',
+    ])
   })
 })
 
@@ -60,6 +69,7 @@ const base: SubjectFacts = {
   checkpoint: false,
   approvalCurrent: false,
   openProposals: [],
+  hasPullRequest: false,
   latestSpecVersion: 3,
   approvedSpecVersion: null,
   latestRunId: null,
@@ -70,7 +80,7 @@ const base: SubjectFacts = {
 describe('stands', () => {
   const cases: {
     name: string
-    decision: 'spec_review' | 'stopped_run' | 'mark_done'
+    decision: 'spec_review' | 'stopped_run' | 'mark_done' | 'pull_request'
     subject: Parameters<typeof stands>[1]
     facts: SubjectFacts
     expected: boolean
@@ -127,6 +137,34 @@ describe('stands', () => {
       decision: 'mark_done',
       subject: { task_state: 'review', spec_version: 2, delivery_run_id: 'a' },
       facts: { ...base, taskState: 'review', approvedSpecVersion: 2, latestDeliveryRunId: 'b' },
+      expected: false,
+    },
+    {
+      name: 'a review of the same latest delivery run',
+      decision: 'pull_request',
+      subject: { pr_run_id: 'a' },
+      facts: { ...base, taskState: 'review', hasPullRequest: true, latestDeliveryRunId: 'a' },
+      expected: true,
+    },
+    {
+      name: 'a review after another delivery run',
+      decision: 'pull_request',
+      subject: { pr_run_id: 'a' },
+      facts: { ...base, taskState: 'review', hasPullRequest: true, latestDeliveryRunId: 'b' },
+      expected: false,
+    },
+    {
+      name: 'a review once the card is Done',
+      decision: 'pull_request',
+      subject: { pr_run_id: 'a' },
+      facts: { ...base, taskState: 'done', hasPullRequest: true, latestDeliveryRunId: 'a' },
+      expected: false,
+    },
+    {
+      name: 'a review once the card is Failed',
+      decision: 'pull_request',
+      subject: { pr_run_id: 'a' },
+      facts: { ...base, taskState: 'failed', hasPullRequest: true, latestDeliveryRunId: 'a' },
       expected: false,
     },
     {

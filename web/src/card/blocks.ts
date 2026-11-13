@@ -40,13 +40,14 @@ export function actionsFor(
 }
 
 /** The decisions a card offers help for, besides a waiting question's own. */
-export type CardDecision = 'spec_review' | 'stopped_run' | 'mark_done' | 'proposal'
+export type CardDecision = 'spec_review' | 'stopped_run' | 'mark_done' | 'proposal' | 'pull_request'
 
 /** Which decisions offer help on a card in this state (the server's `offered`, less a question). */
 export function decisionsFor(
   state: TaskState,
   block: Block | null,
-  openProposals = 0,
+  openProposals: number,
+  hasPullRequest: boolean,
 ): CardDecision[] {
   const found: CardDecision[] = []
   if (state === 'spec_review') found.push('spec_review')
@@ -54,6 +55,7 @@ export function decisionsFor(
     found.push('stopped_run')
   if (['backlog', 'spec_review', 'review', 'failed'].includes(state)) found.push('mark_done')
   if (openProposals > 0) found.push('proposal')
+  if (state === 'review' && hasPullRequest) found.push('pull_request')
   return found
 }
 
