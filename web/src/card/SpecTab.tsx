@@ -731,7 +731,7 @@ function SpecEditor({
         {problem?.text}
       </Notice>
       {open ? (
-        <div className="actions">
+        <div className="actions" key="editor">
           <Button
             busy={save.isPending}
             disabled={!changed}
@@ -749,7 +749,7 @@ function SpecEditor({
           <Button onClick={() => leaveEditor(false)}>Discard changes</Button>
         </div>
       ) : canEdit ? (
-        <div className="actions">
+        <div className="actions" key="view">
           {buttons.edit && (
             <Button ref={focusOn('edit')} onClick={openEditor}>
               Edit
