@@ -167,15 +167,46 @@ test('the editor saves a changed text as the next version, and Discard drops it'
   await spec.getByRole('button', { name: 'Edit' }).click()
   await expect(editor).toHaveValue(/Nothing\.$/)
 
-  await spec.getByRole('button', { name: 'Discard changes' }).click()
+  // A long fade makes a reused Approve button visibly mid-transition when read.
+  await page.addStyleTag({ content: ':root { --zl-duration: 10s; }' })
+  const approve = spec.getByRole('button', { name: 'Approve' })
+  const expectApproveAtRest = async (): Promise<void> => {
+    await expect(approve).toBeEnabled()
+    const reading = await approve.evaluate((el) => {
+      const probe = document.createElement('div')
+      probe.style.cssText =
+        'background-color: var(--zl-accent); color: var(--zl-on-accent); transition: none'
+      ;(el.closest('[role="dialog"], aside, main') ?? document.body).appendChild(probe)
+      const rest = getComputedStyle(probe)
+      const resting = { background: rest.backgroundColor, color: rest.color }
+      probe.remove()
+      const own = getComputedStyle(el)
+      return {
+        animations: el.getAnimations().length,
+        background: own.backgroundColor,
+        color: own.color,
+        resting,
+      }
+    })
+    expect(reading.animations).toBe(0)
+    expect(reading.background).toBe(reading.resting.background)
+    expect(reading.color).toBe(reading.resting.color)
+  }
+
+  await page.mouse.move(0, 0)
+  await spec.getByRole('button', { name: 'Discard changes' }).press('Enter')
+  await expectApproveAtRest()
   await expect(spec.getByRole('heading', { level: 3, name: 'Spec v1 · draft' })).toBeVisible()
   await expect(spec.getByRole('region', { name: 'Lint' })).toBeVisible()
   await expect(spec.getByRole('button', { name: 'Edit' })).toBeFocused()
+  await expectAccessible(page)
   await spec.getByRole('button', { name: 'Edit' }).click()
   await expect(editor).toHaveValue(SPEC)
 
   await editor.fill(`${SPEC}\n## Out of scope\nNothing.`)
-  await save.click()
+  await page.mouse.move(0, 0)
+  await save.press('Enter')
+  await expectApproveAtRest()
   await expect(card.getByRole('status').filter({ hasText: /^Saved v2/ })).toBeVisible()
   await expect(spec.getByRole('heading', { level: 3, name: 'Spec v2 · draft' })).toBeVisible()
   await expect(spec.getByRole('button', { name: 'Edit' })).toBeFocused()
