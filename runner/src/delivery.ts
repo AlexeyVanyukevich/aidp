@@ -244,6 +244,7 @@ export async function carryOut(
       return buildHandoff({
         ...common,
         plan: plan.body_md,
+        base: { branch: project.base_branch },
         approvedMigrations: readApproved(runDir),
         ...(report === undefined ? {} : { verifyReport: report }),
       })

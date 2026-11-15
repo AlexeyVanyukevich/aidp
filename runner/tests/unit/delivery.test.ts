@@ -77,6 +77,14 @@ describe('a run carried out from the start, as slice 1 did', () => {
     })
   })
 
+  it('hands every build the base branch and the verifier none', async () => {
+    const h = harness({ verdicts: ['fail', 'pass'] })
+    await carryOut(START as Extract<Work, { kind: 'start' }>, h.deps)
+    expect(h.handoffs['build-1']).toContain('<base branch="main"/>')
+    expect(h.handoffs['build-2']).toContain('<base branch="main"/>')
+    expect(h.handoffs['verify-1']).not.toContain('<base ')
+  })
+
   it('opens the pull request when the report holds pass and owner and no fail', async () => {
     const h = harness({ verdicts: ['owner-pass'] })
     expect(await carryOut(START as Extract<Work, { kind: 'start' }>, h.deps)).toBe('review')
