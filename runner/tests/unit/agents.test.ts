@@ -250,7 +250,115 @@ const VERIFIER_TEST_RULES: { rule: string; clause: string }[] = [
     rule: 'the exception gives an example of a criterion about the diff’s own content',
     clause: 'such as a file holding a given text or a line staying unchanged',
   },
+  {
+    rule: 'the verifier looks for the proof in the build summaries',
+    clause:
+      'For each test written for a criterion that the branch’s diff adds or changes, look for its proof in the build summaries in <context>',
+  },
+  {
+    rule: 'the proof is name, command, way of the run and the quoted failing line',
+    clause:
+      'The proof is the test’s name, the command, which way the run was made, and the quoted line where it failed',
+  },
+  {
+    rule: 'a bare seen failing, or no mention, is no proof',
+    clause:
+      'A summary that only says a test was seen failing, without the command and the failing line, is no proof, and neither is a test the summaries never mention',
+  },
+  {
+    rule: 'a test with no proof fails the criterion with never seen failing',
+    clause:
+      'the criterion fails, and its evidence starts with `never seen failing:`, names the test and says what the summaries lack',
+  },
+  {
+    rule: 'an untouched test needs no proof',
+    clause:
+      'A test written for a criterion that the diff leaves untouched needs no proof, and never fails a criterion under this rule',
+  },
+  {
+    rule: 'a guard reason holds only when the base’s code shows the behaviour',
+    clause:
+      'Accept “guards behaviour the base already has” only when the base’s code already shows the behaviour, which you judge from the branch’s files the diff leaves unchanged and the lines the diff removes',
+  },
+  {
+    rule: 'a refactor reason holds only when the assertions are unchanged',
+    clause:
+      'Accept “changed only by a refactor” only when the diff leaves the test’s assertions the same as before',
+  },
+  {
+    rule: 'a reason that does not hold is no proof',
+    clause: 'A reason that does not hold is no proof',
+  },
+  {
+    rule: 'the never seen failing fail covers only tests written for a criterion',
+    clause:
+      'The `never seen failing:` fail covers only tests written for a criterion that the branch’s diff adds or changes',
+  },
+  {
+    rule: 'a test written for no criterion is named in the summary and never fails one',
+    clause:
+      'A test the diff adds or changes that is written for no criterion, and has neither proof nor an accepted reason, is named in your summary and never fails a criterion',
+  },
 ]
+
+const BUILDER_TEST_RULES: { rule: string; clause: string }[] = [
+  {
+    rule: 'each test is written and run before the code, and seen failing',
+    clause:
+      'For each test the build adds or changes, write the test and run it before you write the code it tests, and see it fail',
+  },
+  {
+    rule: 'the against-the-base run happens once the code is committed',
+    clause: 'Run it only once the code is committed',
+  },
+  {
+    rule: 'the base is the merge-base with the base element’s branch',
+    clause:
+      'the base is the commit `git merge-base HEAD origin/<branch>`, where <branch> is the branch of the <base> element',
+  },
+  {
+    rule: 'the base’s version of the plan’s code files is put back, the new tests kept',
+    clause:
+      'Put back the base’s version of the plan’s code files the test exercises, keeping the new tests',
+  },
+  {
+    rule: 'a code file the base does not have is removed',
+    clause: 'A code file the base does not have is removed',
+  },
+  {
+    rule: 'every file is restored before any further edit or commit',
+    clause:
+      'restore every file you put back or removed with `git checkout HEAD -- <file>`, at once, before any further edit or commit',
+  },
+  {
+    rule: 'the closing paragraph gives name, command, way and quoted line',
+    clause:
+      'give the test’s name, the command you ran, which way the run was made, before the code or against the base’s code, and the line of output where the test failed, quoted',
+  },
+  {
+    rule: 'a later attempt proves every test no summary proves',
+    clause:
+      'On a later attempt this covers every such test of the branch, not only the tests that attempt adds or changes, since an earlier attempt’s summary may have left a test out',
+  },
+  {
+    rule: 'a test never seen failing is said so',
+    clause: 'A test you never saw failing, say so in plain words',
+  },
+  {
+    rule: 'the guard reason',
+    clause: 'guards behaviour the base already has',
+  },
+  {
+    rule: 'the refactor reason',
+    clause: 'changed only by a refactor',
+  },
+]
+
+describe('the builder’s rules for seeing a test fail', () => {
+  it.each(BUILDER_TEST_RULES)('says $rule', ({ clause }) => {
+    expect(AGENTS.builder!.prompt).toContain(clause)
+  })
+})
 
 describe('the verifier’s rules for tests', () => {
   it.each(VERIFIER_TEST_RULES)('says $rule', ({ clause }) => {
