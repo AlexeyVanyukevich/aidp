@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto'
-import type { BoardApi } from '../api.js'
-import type { PhaseName, SessionTotals } from '../contract.js'
-import { newEvent, type EventSink } from '../sink.js'
-import { PHASES } from './agents.js'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import type { BoardApi } from '../api.js'
+import type { PhaseName, SessionTotals } from '../contract.js'
 import { runnerCode } from '../fingerprint.js'
+import { newEvent, type EventSink } from '../sink.js'
+import { PHASES } from './agents.js'
 import { CODE_MOVED_MARKER } from './run-dir.js'
 import {
   CODE_CHECK_COMMAND,
