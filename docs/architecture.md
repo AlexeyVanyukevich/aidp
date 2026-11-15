@@ -592,6 +592,24 @@ that test, citing the command and the output lines; a green command is never evi
 it does not run. A test it must run and cannot gets fail, with evidence starting `not run:`. Its
 summary names every test the output marks flaky.
 
+**What the verifier counts as a test proving a criterion.** A test is evidence for a criterion
+only when it would fail if the criterion's Then did not hold in the case the test sets up. A test
+cannot fail when a change to the code that breaks the Then, in the case the test sets up, would
+leave it passing: a test that can never fail at all, or one that can fail but not when the Then
+breaks. A test that covers fewer cases than the Then is not weak for that reason alone. For each
+test it cites, the verifier writes one line on what the test's assertion checks and why that
+assertion would fail if the Then did not hold in the case the test sets up. When a criterion asks
+for a test and that test cannot fail, the verdict is fail, with evidence starting `test proves
+nothing:`, naming the test and the change to the code it would not catch. The fail extends to
+every test written for the criterion, cited or not, whether or not the criterion asks for a test.
+A test is written for a criterion when the plan's check for it names the test, or when a test the
+branch's diff adds or changes carries the criterion's id in its name; a test the diff leaves
+untouched is never written for a criterion by its name alone. A criterion asks for a test when its
+own text names a test, a test suite or a test run to settle it. The one exception: a criterion
+that does not ask for a test and is about the diff's own content, such as a file holding a given
+text or a line staying unchanged, may still pass on a line of the diff, never with that test as
+its evidence.
+
 **The environment of commands and sessions.** The setup command, the test command and the agents'
 `claude` sessions do not receive `RUNNER_KEY`, `DATABASE_URL`, `PORT` or any variable starting
 with `BOARD_`. A session keeps only the nine run variables the runner sets for it: `BOARD_URL`,
