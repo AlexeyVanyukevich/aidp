@@ -17,6 +17,13 @@ which drive the whole product, at the root in `tests/ui/`.
 scenario tests in `runner/tests/integration/` run the runner against the real server, and they
 are what catches the two drifting apart. Change both in the same commit.
 
+## Reviewing at the board's gates
+
+`.claude/skills/gate-review/` says how a session reviews a task waiting at a gate (a spec, a
+plan, open questions, approvals or a pull request) and hands back the note to act on. The
+`UserPromptSubmit` hook in `.claude/settings.json` has the session load it whenever a prompt asks
+for such a review. The hook does nothing in a board run's sessions, where `BOARD_RUN_ID` is set.
+
 ## Commit scopes
 
 `db`, `server`, `mcp`, `runner`, `web`, `ui` for the browser journeys, `deps`. Omit the scope
