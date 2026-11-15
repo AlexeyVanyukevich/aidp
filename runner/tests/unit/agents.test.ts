@@ -575,7 +575,7 @@ describe('the board-reading tools', () => {
     const prompt = AGENTS.planner!.prompt
     expect(prompt).toContain('list_tasks')
     expect(prompt).toContain('<linked_projects>')
-    expect(prompt).toContain('takes in or leaves out')
+    expect(prompt).toContain('takes it in or leaves it out')
   })
   it('tells the helper to check the board', () => {
     const prompt = AGENTS.helper!.prompt
