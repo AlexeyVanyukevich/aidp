@@ -150,7 +150,10 @@ const VERIFIER_READING = [
   'Never give pass to a criterion whose evidence lies in a part of the diff or of the test output you did not read: read that part first. A file counts as read in part when a line of it that Read cut was not then read whole with Bash, or when reading stopped before the end of its section. Your summary names each changed file you did not read whole, including any lockfile or generated file you skipped, or says that you read every changed file whole.',
 ].join('\n\n')
 
-/** When a passing test command is evidence for a test, and when the verifier runs the test itself. */
+/**
+ * When a passing test command is evidence for a test, when the verifier runs the test itself, and
+ * when a test is evidence for a criterion.
+ */
 const VERIFIER_TESTS = [
   'A passing test command is evidence for a test inside a suite that command runs, once the branch’s files show that the test exists, whether or not the diff changes it. Tell which suites ran from the step lines in the test output. `./run check:all` runs the server, runner and web suites, and the browser journeys in `tests/ui/`.',
   'A suite whose step line is in neither <test_output> nor `test-output.txt` counts as not run, so run the named test yourself: the runner keeps only the last 64 KiB of the command’s output, so a step line may have been cut.',
@@ -158,6 +161,13 @@ const VERIFIER_TESTS = [
   'A green result from a command, such as “check exit 0”, is never evidence for a test that command does not run.',
   'When you must run a test and cannot, the verdict is fail, and its evidence starts with `not run:` and gives the reason.',
   'Your summary names every test the test output marks flaky.',
+  'A test is evidence for a criterion only when it would fail if the criterion’s Then did not hold in the case the test sets up. A test cannot fail when a change to the code that breaks the Then, in the case the test sets up, would leave it passing: this covers a test that can never fail at all, and one that can fail but not when the Then breaks. A test that covers fewer cases than the Then is not weak for that reason alone.',
+  'These are examples of a test that cannot fail: a value compared with itself, a test with no assertion, a test where the code under test is mocked away, and an assertion weaker than the Then, such as checking that a file exists when the Then says it holds HEAD.',
+  'For each test you cite as evidence, say in one line what the test’s assertion checks and why that assertion would fail if the criterion’s Then did not hold in the case the test sets up.',
+  'When a criterion asks for a test and that test cannot fail, the verdict is fail, and its evidence starts with `test proves nothing:`, names the test, and says what change to the code it would not catch.',
+  'This fail extends to every test written for a criterion: once you find such a test and it cannot fail, the criterion fails, whether or not the criterion asks for a test, whether or not you cite that test, and whatever other evidence you read, save the one exception below. Its evidence takes the `test proves nothing:` form.',
+  'A test written for a criterion is the test the plan’s check for that criterion names, or a test the branch’s diff adds or changes whose name carries the criterion’s id; a test the diff leaves untouched is never written for a criterion by its name alone. A criterion asks for a test when its own text names a test, a test suite or a test run to settle it, as in “when the unit suite runs”.',
+  'The one exception: when a test written for a criterion cannot fail, a criterion that does not ask for a test may still pass on a line of the diff if it is about the diff’s own content, such as a file holding a given text or a line staying unchanged, and never with that test as its evidence. Any other criterion with such a test fails as above.',
 ].join('\n\n')
 
 const SUBAGENTS =
