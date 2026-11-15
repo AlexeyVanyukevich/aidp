@@ -610,6 +610,29 @@ that does not ask for a test and is about the diff's own content, such as a file
 text or a line staying unchanged, may still pass on a line of the diff, never with that test as
 its evidence.
 
+**What the verifier counts as a test seen failing.** The builder writes and runs each test it adds
+or changes before the code it tests, and sees it fail. It may instead see it fail once the code
+exists: only after the code is committed, it puts back the base's version of the plan's code files
+the test exercises, keeping the new tests (the base is `git merge-base HEAD origin/<branch>`, the
+branch being the Build handoff's `<base>` element; a code file the base lacks is removed), runs the
+tests and sees them fail. It restores every file it put back or removed with `git checkout HEAD --
+<file>` at once, before any further edit or commit. Its closing paragraph then gives, for each test
+the branch adds or changes that no summary in `<context>` already proves, the test's name, the
+command, which way the run was made (before the code, or against the base's code) and the quoted
+line where it failed. A later attempt proves every such test of the branch, not only those it
+touches, since an earlier attempt's summary may have left one out. A test never seen failing is
+said so. A test that cannot fail on the base carries one of two reasons: "guards behaviour the base
+already has" or "changed only by a refactor". For each test written for a criterion that the
+branch's diff adds or changes, the verifier looks for that proof in the build summaries. A summary
+that only says a test was seen failing, or never mentions it, is no proof. With no proof and no
+accepted reason the criterion fails, with evidence starting `never seen failing:`, naming the test
+and what the summaries lack. A guard reason is accepted only when the base's code already shows the
+behaviour, judged from the branch's files the diff leaves unchanged and the lines it removes; a
+refactor reason only when the test's assertions are unchanged; a reason that does not hold is no
+proof. The fail covers only tests written for a criterion that the diff adds or changes: such a
+test the diff leaves untouched needs no proof, and a test written for no criterion without proof is
+only named in the report's summary.
+
 **The environment of commands and sessions.** The setup command, the test command and the agents'
 `claude` sessions do not receive `RUNNER_KEY`, `DATABASE_URL`, `PORT` or any variable starting
 with `BOARD_`. A session keeps only the nine run variables the runner sets for it: `BOARD_URL`,
@@ -1245,7 +1268,7 @@ _Handoff._ Every Build handoff, whatever the attempt and whatever started the se
 a restarted phase), carries one `<approved_migration path="…">` element per approved migration,
 in path order. Its text is not HTML-escaped: it holds the content in a fence one backtick longer
 than the longest run of backticks in it (at least three), never cut, so a closing tag inside the
-content is harmless. Plan and Verify handoffs do not carry it. The runner and the server each
+content is harmless. Plan and Verify handoffs do not carry it. Every Build handoff also carries `<base branch="…"/>`, the project's base branch, whose merge-base Verify's diff is taken against; Plan and Verify handoffs do not. The runner and the server each
 hold a fencing function, tested against the shared table `tests/fixtures/migration-fence.json`.
 
 The files gate holds a migration the owner has not approved to the same rule for
