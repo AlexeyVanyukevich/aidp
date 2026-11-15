@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import { ApiError } from '../../src/api'
 import {
   answerFieldHint,
+  answerRefusal,
   answerFieldLabel,
   answerSummary,
   batchAnswer,
@@ -510,5 +512,35 @@ describe('fillNoteFromReview with picks', () => {
     ['a choice after words', 'Words.', [ab(0)], [1], `Words.\n\n${head}\n  Decision: B`],
   ])('fills %s', (_name, note, findings, picks, expected) => {
     expect(fillNoteFromReview(note, review(findings), picks)).toBe(expected)
+  })
+})
+
+const refused = (details?: Record<string, unknown>) =>
+  new ApiError(400, 'validation_error', 'm', details)
+
+describe('answerRefusal', () => {
+  const LENGTH = 'The answer is longer than 4,000 characters.'
+  const NOT_ALLOWED =
+    'Approving the plan carries no words. Clear them, or press Clear choice to ask for changes.'
+  it.each([
+    [
+      'a service not_allowed',
+      refused({ field: 'text', findings: [{ field: 'text', code: 'not_allowed' }] }),
+      NOT_ALLOWED,
+    ],
+    [
+      'a service too_long',
+      refused({ field: 'text', findings: [{ field: 'text', code: 'too_long' }] }),
+      LENGTH,
+    ],
+    [
+      'a schema maxLength',
+      refused({ issues: [{ instancePath: '/text', keyword: 'maxLength' }] }),
+      LENGTH,
+    ],
+    ['a conflict', new ApiError(409, 'conflict', 'm'), undefined],
+    ['a server error', new ApiError(500, 'internal', 'm'), undefined],
+  ])('maps %s', (_name, error, expected) => {
+    expect(answerRefusal(error)).toBe(expected)
   })
 })

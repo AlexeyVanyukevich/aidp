@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { flushSync } from 'react-dom'
 import { Button, Empty, Field, Markdown, Radio, RadioGroup, Textarea } from '@zellige/react'
 import { api } from '../api'
-import { answerRefusal, isConflict } from '../errors'
+import { isConflict } from '../errors'
 import { Loaded } from '../Loaded'
 import type {
   ApprovalAnswer,
@@ -26,6 +26,7 @@ import {
   optionName,
   questionHelp,
   singleAnswer,
+  answerRefusal,
   applySuggestion,
   preSendProblem,
   type Choice,
