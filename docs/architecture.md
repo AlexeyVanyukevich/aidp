@@ -133,10 +133,10 @@ not have them. The tool lists, besides Read, Grep, Glob and (planner, verifier) 
   whose title or description contains it as a case-insensitive, literal substring are kept (`%`,
   `_` and `\` match only themselves; the match is `lower(...) LIKE lower(...)` with an explicit
   escape character on a bound parameter). An absent or blank filter keeps every task.
-- `read_task` takes `key`, a task key matching `^[A-Z][A-Z0-9]{1,9}-[1-9][0-9]*$` once upper-cased. It
-  returns `key`, `title`, `state`, `description_md` and `spec`: the task's highest spec version as
-  `{ version, status, body_md }`, with the stored status (`draft`, `approved` or `superseded`), or
-  `null` when it has no spec.
+- `read_task` takes `key`, a task key matching `^[A-Z][A-Z0-9]{1,9}-[1-9][0-9]*$` once
+  upper-cased. It returns `key`, `title`, `state`, `description_md` and `spec`: the task's
+  highest spec version as `{ version, status, body_md }`, with the stored status (`draft`,
+  `approved` or `superseded`), or `null` when it has no spec.
 
 The tools fold case: `project` and `key` are upper-cased before they are checked, so `zlr` finds
 ZLR, and every key in a reply is upper case. The HTTP routes do not fold case: `GET
@@ -152,11 +152,14 @@ directory's `settings.json` carries one `permissions.allow` rule for it,
 `Read(//<config dir>/projects/**/tool-results/**)`. The guard narrows the rule in every phase to
 the calling session's own results: the directory comes from the hook input's `transcript_path`
 (its directory, the transcript's name without `.jsonl`, then `tool-results`). A Read inside it is
-allowed, in a help too; a Read elsewhere under `<config dir>/projects/` is refused, as is any
-Read when the hook input has no `transcript_path`. Only Read reaches saved results: a Grep or Glob
-whose path (or a Glob's absolute pattern) lies under `<config dir>/projects/` is refused, since a
-saved result is one line of JSON. Paths are resolved before they are compared. A subagent's saved
-results are not covered.
+allowed, in a help too; a Read elsewhere under `<config dir>/projects/` is refused, as is
+every Read under `<config dir>/projects/` when the hook input has no `transcript_path`. Claude
+Code 2.1.287 saves a result in one of two forms. `toolu_….json` holds the MCP content array as
+JSON, with the result's text as one escaped string on a single line. `mcp-board-<tool>-….txt`
+holds the result's text itself, over several lines. Only Read reaches saved results: a Grep or
+Glob whose path (or a Glob's absolute pattern) lies under `<config dir>/projects/` is refused.
+AIDP-187 is where that refusal is weighed again. Paths are resolved before they are compared. A
+subagent's saved results are not covered.
 
 The spec writer's and planner's instructions tell each to search the board with `list_tasks`
 over the task's own project, every project in `<linked_projects>` and every project key the
@@ -1462,9 +1465,10 @@ keeps the code it started with, so a pull that changes the hooks' contract would
 until a restart. The fingerprint is a SHA-256 digest over the `.ts` files under `runner/src`
 (recursively) and `runner/bin/board-cli`, in sorted relative-path order, each as its path and its
 content. It reads the files as they are on disk, so uncommitted edits in the main checkout count,
-and it makes no `git` call. Nothing else counts: a non-`.ts` file under `runner/src`, `runner/tests`,
-`node_modules`, `.env`, `server/`, `web/`, and any other checkout or task worktree. The daemon
-computes it once at start and gives it to every phase process as `BOARD_RUNNER_CODE`.
+and it makes no `git` call. Nothing else counts: a non-`.ts` file under `runner/src`,
+`runner/tests`, `node_modules`, `.env`, `server/`, `web/`, and any other checkout or task
+worktree. The daemon computes it once at start and gives it to every phase process as
+`BOARD_RUNNER_CODE`.
 
 - **The guard** computes the fingerprint at its own location before it decides a call. When
   `BOARD_RUNNER_CODE` is unset, empty or different, it denies the call: the runner's code changed
@@ -1509,11 +1513,13 @@ computes it once at start and gives it to every phase process as `BOARD_RUNNER_C
 - **The wrapper's loop.** `bin/board-cli daemon` runs the daemon in a loop, as a child it waits on.
   Exit 75 starts it again at once; exit 0 ends the wrapper with 0. Any other exit ends the wrapper
   with that status if the wrapper has not yet restarted the daemon. Once it has restarted it
-  (after a 75), the wrapper logs `board-cli: the runner's code did not start (exit N); retrying in
-10 s` and retries every later failure, not only the first, since a pull caught half done fails
-  until it finishes. SIGINT or SIGTERM sent to the wrapper alone or to its process group reaches the
-  daemon as SIGTERM, so it blocks its run, and ends the loop, during the daemon or during the wait. The script's whole body is one function and its last line calls it and
-  exits, so a pull that rewrites the file while the loop runs leaves the shell nothing to read.
+  (after a 75), the wrapper logs
+  `board-cli: the runner's code did not start (exit N); retrying in 10 s` and retries every later
+  failure, not only the first, since a pull caught half done fails until it finishes.
+  SIGINT or SIGTERM sent to the wrapper alone or to its process group reaches the
+  daemon as SIGTERM, so it blocks its run, and ends the loop, during the daemon or during the
+  wait. The script's whole body is one function and its last line calls it and exits, so a pull
+  that rewrites the file while the loop runs leaves the shell nothing to read.
   `guard` keeps its mapping of any non-zero exit to 2.
 
 Editing a file under `runner/src` or `bin/board-cli` in the main checkout, or switching its
