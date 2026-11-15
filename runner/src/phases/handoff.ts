@@ -18,8 +18,8 @@ export interface HandoffInput {
   plan?: string
   /** A planner starting again: the plans of earlier runs, newest first. Never a `<plan>`. */
   previousPlans?: { run: number; accepted: boolean; text: string }[] | undefined
-  /** Spec phase only: the base branch and the commit the worktree reads. */
-  base?: { branch: string; commit: string }
+  /** Spec phase: the base branch and the commit the worktree reads. Build phase: the branch alone. */
+  base?: { branch: string; commit?: string }
   /** The owner's words at plan gates on this spec version, oldest first; Plan and Verify only. */
   planAnswers?: { run: number; approved: boolean; text: string }[] | undefined
   /** Build only: the migrations the owner approved, each with the text they reviewed. */
@@ -153,8 +153,10 @@ export function buildHandoff(input: HandoffInput): string {
   if (input.specVersion !== undefined && input.specMd !== undefined)
     parts.push(`<spec version="${input.specVersion}">\n${escape(input.specMd)}\n</spec>`)
   if (input.note !== undefined) parts.push(`<note>\n${escape(input.note)}\n</note>`)
-  if (input.phase === 'spec' && input.base !== undefined)
+  if (input.phase === 'spec' && input.base?.commit !== undefined)
     parts.push(`<base branch="${attr(input.base.branch)}" commit="${attr(input.base.commit)}"/>`)
+  if (input.phase === 'build' && input.base !== undefined)
+    parts.push(`<base branch="${attr(input.base.branch)}"/>`)
   const summaries = input.summaries.filter((s) => s.phase !== 'help')
   if (summaries.length > 0) {
     parts.push(

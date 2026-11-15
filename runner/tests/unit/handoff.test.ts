@@ -272,7 +272,7 @@ describe('buildHandoff with linked projects', () => {
 interface BaseRow {
   name: string
   phase: 'spec' | 'plan' | 'build' | 'verify'
-  base?: { branch: string; commit: string }
+  base?: { branch: string; commit?: string }
   expected: string | null
 }
 const BASE_ROWS: BaseRow[] = [
@@ -283,9 +283,17 @@ const BASE_ROWS: BaseRow[] = [
     expected: `<base branch="main" commit="${'a'.repeat(40)}"/>`,
   },
   { name: 'spec without a base', phase: 'spec', expected: null },
+  { name: 'spec with a branch only', phase: 'spec', base: { branch: 'main' }, expected: null },
   { name: 'plan', phase: 'plan', expected: null },
-  { name: 'build', phase: 'build', expected: null },
+  { name: 'plan with a base', phase: 'plan', base: { branch: 'main' }, expected: null },
+  {
+    name: 'build with a base',
+    phase: 'build',
+    base: { branch: 'main' },
+    expected: '<base branch="main"/>',
+  },
   { name: 'verify', phase: 'verify', expected: null },
+  { name: 'verify with a base', phase: 'verify', base: { branch: 'main' }, expected: null },
 ]
 
 describe('buildHandoff base element', () => {
