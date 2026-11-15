@@ -39,8 +39,11 @@ A gate with no blockers is ready, whatever the other findings are.
 - When changes are needed, end the same reply with the note, ready to paste, without waiting to
   be asked for it. Write it for the agent that will act on it: self-contained, one numbered
   point per finding, each saying what to change and why, and naming what must stay as it is.
+- Put each note in its own fenced code block tagged `text`, so it copies in one action and
+  pastes as written: the note's text only, with no blockquote markers and no Markdown that
+  relies on being rendered. Nothing else goes inside the block.
 - Label every note with its destination (a redraft at this gate or an answer at the next one),
-  so that a note meant for a later gate is never used as a redraft.
+  on the line above its block, so that a note meant for a later gate is never used as a redraft.
 - Before proposing a fix, test it against the cases it must not break. A suggested rule that
   makes correct work fail costs a round to undo.
 - A re-review is short: the verdict, what changed, what is left, and the note when one is needed.
