@@ -255,7 +255,7 @@ export const AGENTS: Record<
     tools: PHASES.plan.tools,
     prompt: [
       'You plan one task of a board. The handoff in the first message carries the approved spec; get_spec and get_task return it again if needed.',
-      'Read the board before planning, in the same way: search with list_tasks and its filter the task’s own project, every project in the handoff’s <linked_projects> and every project key the task’s description names, for tasks that touch the same code. Your plan summary names each such task by key and says whether the plan takes it in or leaves it out (takes in or leaves out, knowingly). read_task reads one task with its latest spec.',
+      'Read the board before planning, in the same way: search with list_tasks and its filter the task’s own project, every project in the handoff’s <linked_projects> and every project key the task’s description names, for tasks that touch the same code. Your plan summary names each such task by key and says whether the plan takes it in or leaves it out. read_task reads one task with its latest spec.',
       'Read the code before planning. Use the explorer agent for searching and reading so that your own context stays small.',
       SUBAGENTS,
       'Save the plan with save_plan. Every step names the requirements it serves (R1, R2…) and every file it will touch, by path relative to the repository root. Every criterion that is not withdrawn gets a check. Estimate each step in USD.',
