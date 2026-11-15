@@ -1,6 +1,7 @@
 ---
 name: gate-review
 description: Review work waiting at an approval gate (a spec, a plan, open questions, approvals or a pull request) and hand back a verdict together with the note to act on. Use whenever the owner asks to review, review again, verify, or give a note on a task at a gate, or asks whether it can be approved.
+disable-model-invocation: true
 ---
 
 # Gate review

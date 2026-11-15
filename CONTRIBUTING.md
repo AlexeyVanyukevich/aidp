@@ -21,8 +21,10 @@ are what catches the two drifting apart. Change both in the same commit.
 
 `.claude/skills/gate-review/` says how a session reviews a task waiting at a gate (a spec, a
 plan, open questions, approvals or a pull request) and hands back the note to act on. The
-`UserPromptSubmit` hook in `.claude/settings.json` has the session load it whenever a prompt asks
-for such a review. The hook does nothing in a board run's sessions, where `BOARD_RUN_ID` is set.
+skill is marked `disable-model-invocation`, so no session lists it. The `UserPromptSubmit` hook
+in `.claude/settings.json` puts the skill's text into the owner's session whenever a prompt asks
+for such a review, and the owner can load the skill by hand with `/gate-review`. The hook does
+nothing in a board run's sessions, where `BOARD_RUN_ID` is set.
 
 ## Commit scopes
 
