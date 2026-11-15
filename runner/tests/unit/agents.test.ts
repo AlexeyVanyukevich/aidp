@@ -167,6 +167,89 @@ const VERIFIER_TEST_RULES: { rule: string; clause: string }[] = [
     rule: 'the summary names flaky tests',
     clause: 'Your summary names every test the test output marks flaky',
   },
+  {
+    rule: 'a test is evidence for a criterion only when it would fail if the Then did not hold',
+    clause:
+      'A test is evidence for a criterion only when it would fail if the criterion’s Then did not hold in the case the test sets up',
+  },
+  {
+    rule: 'a test cannot fail when a change that breaks the Then leaves it passing',
+    clause:
+      'A test cannot fail when a change to the code that breaks the Then, in the case the test sets up, would leave it passing',
+  },
+  {
+    rule: 'a test that can fail but not when the Then breaks cannot fail either',
+    clause: 'a test that can never fail at all, and one that can fail but not when the Then breaks',
+  },
+  {
+    rule: 'a test covering fewer cases than the Then is not weak for that alone',
+    clause: 'A test that covers fewer cases than the Then is not weak for that reason alone',
+  },
+  { rule: 'example: a value compared with itself', clause: 'a value compared with itself' },
+  { rule: 'example: no assertion', clause: 'a test with no assertion' },
+  {
+    rule: 'example: the code under test mocked away',
+    clause: 'a test where the code under test is mocked away',
+  },
+  {
+    rule: 'example: an assertion weaker than the Then',
+    clause:
+      'an assertion weaker than the Then, such as checking that a file exists when the Then says it holds HEAD',
+  },
+  {
+    rule: 'each cited test gets a line on what its assertion checks and why it would fail',
+    clause:
+      'say in one line what the test’s assertion checks and why that assertion would fail if the criterion’s Then did not hold in the case the test sets up',
+  },
+  {
+    rule: 'a test that cannot fail fails a criterion that asks for one',
+    clause:
+      'When a criterion asks for a test and that test cannot fail, the verdict is fail, and its evidence starts with `test proves nothing:`, names the test, and says what change to the code it would not catch.',
+  },
+  {
+    rule: 'the fail extends to every test written for a criterion',
+    clause:
+      'This fail extends to every test written for a criterion: once you find such a test and it cannot fail, the criterion fails',
+  },
+  {
+    rule: 'the fail holds whether or not the criterion asks for a test or the test is cited',
+    clause:
+      'whether or not the criterion asks for a test, whether or not you cite that test, and whatever other evidence you read, save the one exception below',
+  },
+  {
+    rule: 'the extended fail takes the test proves nothing form',
+    clause: 'Its evidence takes the `test proves nothing:` form.',
+  },
+  {
+    rule: 'a test written for a criterion is named by the plan’s check',
+    clause: 'the test the plan’s check for that criterion names',
+  },
+  {
+    rule: 'a test written for a criterion is one the diff adds or changes, named by its id',
+    clause: 'a test the branch’s diff adds or changes whose name carries the criterion’s id',
+  },
+  {
+    rule: 'a test the diff leaves untouched is never written for a criterion by name alone',
+    clause: 'a test the diff leaves untouched is never written for a criterion by its name alone',
+  },
+  {
+    rule: 'a criterion asks for a test when its text names a test, suite or run',
+    clause:
+      'A criterion asks for a test when its own text names a test, a test suite or a test run to settle it',
+  },
+  {
+    rule: 'a criterion about the diff’s own content may pass on a line of the diff',
+    clause:
+      'a criterion that does not ask for a test may still pass on a line of the diff if it is about the diff’s own content',
+  },
+  {
+    rule: 'the exception never cites the weak test as evidence',
+    clause: 'and never with that test as its evidence',
+  },
+  {
+    rule: 'the exception gives an example of a criterion about the diff’s own content',
+    clause: 'such as a file holding a given text or a line staying unchanged',
+  },
 ]
 
 describe('the verifier’s rules for tests', () => {
