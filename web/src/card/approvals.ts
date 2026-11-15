@@ -1,3 +1,4 @@
+import { ApiError } from '../api'
 import type {
   ApprovalAnswer,
   ApprovalKind,
@@ -193,6 +194,28 @@ export interface Choice {
 export const NO_WORDS_WITH_PLAN =
   'Approving the plan carries no words. Clear them, or press Clear choice to ask for changes.'
 export const ANSWER_TOO_LONG = 'The answer is longer than 4,000 characters.'
+
+/** The words-field message for an answer the board refused, or undefined for any other failure. */
+export function answerRefusal(error: unknown): string | undefined {
+  if (!(error instanceof ApiError) || error.code !== 'validation_error') return undefined
+  const details = error.details
+  if (details?.field === 'text') {
+    const findings = details.findings
+    const first = Array.isArray(findings)
+      ? (findings[0] as { code?: unknown } | undefined)
+      : undefined
+    if (first?.code === 'not_allowed') return NO_WORDS_WITH_PLAN
+    if (first?.code === 'too_long') return ANSWER_TOO_LONG
+    return undefined
+  }
+  const issues = details?.issues
+  const issue = Array.isArray(issues)
+    ? (issues[0] as { instancePath?: unknown; keyword?: unknown } | undefined)
+    : undefined
+  return issue?.instancePath === '/text' && issue.keyword === 'maxLength'
+    ? ANSWER_TOO_LONG
+    : undefined
+}
 
 /**
  * Use this answer: the suggested option when it has one, and the suggested words, replacing.
