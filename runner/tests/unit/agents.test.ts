@@ -493,7 +493,10 @@ describe('the helper', () => {
   })
 
   it.each([
-    ['answers one question', 'this one question only'],
+    [
+      'answers one question, or in suggest_all mode every question of the batch',
+      'You answer this one question only, except in suggest_all mode, where you answer every question of the batch.',
+    ],
     ['writes nothing', 'You write nothing'],
     [
       'says where it is unsure rather than guessing',

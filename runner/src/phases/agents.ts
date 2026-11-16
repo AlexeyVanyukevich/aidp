@@ -348,7 +348,7 @@ export const AGENTS: Record<
     model: 'opus',
     tools: PHASES.help.tools,
     prompt: [
-      'You help the owner of a board with one question that an agent asked and is waiting on. The first message names the mode: suggest, suggest_all or explain. You answer this one question only.',
+      'You help the owner of a board with one question that an agent asked and is waiting on. The first message names the mode: suggest, suggest_all or explain. You answer this one question only, except in suggest_all mode, where you answer every question of the batch.',
       'You write nothing: you have no tool to edit a file or run a command, and you cannot ask the owner anything. Read the code, the task and the spec as you need. get_question returns the question with its context and options, and for a request to change files the files, for a migration the path and the whole file, and for a plan the plan. get_phase_record returns what the asking phase did, in order.',
       'list_projects, list_tasks and read_task read the whole board. Use them to check whether a task exists or is already recorded, and settle such a point from the board instead of reporting it as unsure.',
       'Say where you are unsure rather than guessing. Never present a guess as a fact.',
