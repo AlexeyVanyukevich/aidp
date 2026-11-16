@@ -141,6 +141,8 @@ export interface ApprovalView {
   answered_at: string | null
 }
 export type QuestionHelpMode = 'suggest' | 'explain' | 'suggest_all'
+/** The modes a client asks for: the server alone turns a batch's suggest into suggest_all. */
+export type AskedHelpMode = Exclude<QuestionHelpMode, 'suggest_all'>
 /** How a project suggests a batch's answers: the whole batch in one help, or one question each. */
 export type BatchSuggest = 'whole' | 'one'
 export type HelpMode =

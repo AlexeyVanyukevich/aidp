@@ -4,7 +4,7 @@ import type {
   ApprovalOption,
   HelpMode,
   HelpResult,
-  QuestionHelpMode,
+  AskedHelpMode,
   StoppedRunAction,
 } from '../types'
 import {
@@ -149,7 +149,7 @@ export function HelpPanel({
   help: QuestionHelp
   options: ApprovalOption[]
   level: 4 | 5
-  onAsk: (mode: QuestionHelpMode) => void
+  onAsk: (mode: AskedHelpMode) => void
   onUse: (result: Suggestion) => void
 }) {
   const label = (result: Suggestion) =>
@@ -173,7 +173,7 @@ export function HelpPanel({
   return (
     <div className="help">
       <div className="help-buttons">
-        <HelpButtons modes={modes} onAsk={(mode) => onAsk(mode as QuestionHelpMode)} />
+        <HelpButtons modes={modes} onAsk={(mode) => onAsk(mode as AskedHelpMode)} />
       </div>
       <HelpResults
         modes={modes}

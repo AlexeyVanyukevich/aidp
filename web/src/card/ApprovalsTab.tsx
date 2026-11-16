@@ -9,7 +9,7 @@ import type {
   ApprovalAnswer,
   ApprovalView,
   BatchAnswer,
-  QuestionHelpMode,
+  AskedHelpMode,
   HelpView,
   ProposalView,
   TaskView,
@@ -72,7 +72,7 @@ function SingleForm({
    * until the next send or edit, which the parent clears through `onSend` and `onEdit`.
    */
   refused: { message: string } | undefined
-  onAsk: (mode: QuestionHelpMode) => void
+  onAsk: (mode: AskedHelpMode) => void
   onSend: (body: ApprovalAnswer) => void
   onEdit: () => void
 }) {
@@ -244,15 +244,8 @@ export function ApprovalsTab({
     answer.mutate({ id: approval.id, body })
   }
   const ask = useMutation({
-    mutationFn: ({
-      id,
-      mode,
-      index,
-    }: {
-      id: string
-      mode: QuestionHelpMode
-      index: number | null
-    }) => api.askHelp(id, mode, index),
+    mutationFn: ({ id, mode, index }: { id: string; mode: AskedHelpMode; index: number | null }) =>
+      api.askHelp(id, mode, index),
     onError: (error) =>
       onProblem(
         isConflict(error)
@@ -261,7 +254,7 @@ export function ApprovalsTab({
       ),
     onSettled: () => client.invalidateQueries({ queryKey: ['helps', task.id] }),
   })
-  const askFor = (approval: ApprovalView) => (mode: QuestionHelpMode, index: number | null) =>
+  const askFor = (approval: ApprovalView) => (mode: AskedHelpMode, index: number | null) =>
     ask.mutate({ id: approval.id, mode, index })
 
   return (

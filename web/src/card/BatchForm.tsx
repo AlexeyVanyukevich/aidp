@@ -2,7 +2,7 @@ import { useId, useRef, useState, type FormEvent } from 'react'
 import { flushSync } from 'react-dom'
 import { Button, Field, Markdown, Radio, RadioGroup, Textarea } from '@zellige/react'
 import { HelpPanel } from './HelpPanel'
-import type { BatchAnswer, BatchQuestion, QuestionHelpMode, HelpView } from '../types'
+import type { BatchAnswer, BatchQuestion, AskedHelpMode, HelpView } from '../types'
 import {
   answerFieldHint,
   answerFieldLabel,
@@ -36,7 +36,7 @@ export function BatchForm({
   questions: BatchQuestion[]
   approvalId: string
   helps: HelpView[]
-  onAsk: (mode: QuestionHelpMode, index: number | null) => void
+  onAsk: (mode: AskedHelpMode, index: number | null) => void
   /** Writes to the card's status region, so a press whose words repeat is still announced. */
   onAnnounce: (text: string) => void
   sending: boolean

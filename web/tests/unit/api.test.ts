@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 import { api, ApiError } from '../../src/api'
 
 afterEach(() => vi.unstubAllGlobals())
@@ -72,5 +72,11 @@ describe('api', () => {
     vi.stubGlobal('fetch', fetchMock)
     expect((await api.events('r')).map((e) => e.id)).toEqual(['a', 'b'])
     expect(String(fetchMock.mock.calls[1]?.[0])).toContain('after=c1')
+  })
+})
+
+describe('asking for a question help', () => {
+  it('takes suggest or explain only: a whole-batch help is never asked for by name', () => {
+    expectTypeOf<Parameters<typeof api.askHelp>[1]>().toEqualTypeOf<'suggest' | 'explain'>()
   })
 })
