@@ -609,12 +609,24 @@ function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string):
     'get_question',
     {
       description:
-        'Read the question you were asked to help with: the question, its context, its options with the recommendation, and for a request to change files the files, for a migration request the path and the whole file, and for a plan the plan.',
+        'Read the question you were asked to help with: the question, its context, its options with the recommendation (for a whole-batch suggestion: kind, batch_lead and every question of the batch in order, each with its id, question, context_md, options and recommendation), and for a request to change files the files, for a migration request the path and the whole file, and for a plan the plan.',
     },
     async () => {
       if ((await helpHead(ctx, helpId)).decision !== 'question')
         return reply('This help is for a decision, not a question: use get_decision.', true)
       const { row, asked } = await helpQuestion(ctx, helpId)
+      if ((await helpHead(ctx, helpId)).mode === 'suggest_all')
+        return json({
+          kind: row.kind,
+          batch_lead: row.question,
+          questions: ((row.questions ?? []) as BatchQuestion[]).map((q) => ({
+            id: q.id,
+            question: q.question,
+            context_md: q.context_md,
+            options: q.options,
+            recommendation: q.recommendation,
+          })),
+        })
       if (asked === null) return reply('This question is gone.', true)
       const files = (row.files ?? null) as string[] | null
       return json({
@@ -693,7 +705,7 @@ function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string):
     'save_help_result',
     {
       description:
-        'Save your result. A suggestion: option_id (one the question offers), text, or both, with reasoning and unsure (what you are unsure of). An explanation: asked (what is being asked), matters (why it matters to the task) and leads_to (what each option, or an answer in words, would lead to), and no option. For a decision help the fields depend on the mode. review: verdict (changes or nothing_to_change), findings (kind, where, text; a finding may carry choices, 2 to 5 short ways to settle it, with recommended the index of the one you would choose) and unsure. restate: changes, requirements and left_out. recommend: why_stopped, action, reasoning and unsure. check: checked_against, produced, unfinished (where, text) and unsure. advise: variant (one the proposal offers now), reasoning and unsure. code_review: verdict (changes or nothing_to_change), findings (kind: bug, breaks, duplicate, fit or test; file; line, optional; text; matters) and unsure. Refused with the field to fix when it does not fit; fix it and save again.',
+        'Save your result. A suggestion: option_id (one the question offers), text, or both, with reasoning and unsure (what you are unsure of). A whole-batch suggestion: answers only, one for every question of the batch, each with question_id, option_id or text, reasoning and unsure, and no other field. An explanation: asked (what is being asked), matters (why it matters to the task) and leads_to (what each option, or an answer in words, would lead to), and no option. For a decision help the fields depend on the mode. review: verdict (changes or nothing_to_change), findings (kind, where, text; a finding may carry choices, 2 to 5 short ways to settle it, with recommended the index of the one you would choose) and unsure. restate: changes, requirements and left_out. recommend: why_stopped, action, reasoning and unsure. check: checked_against, produced, unfinished (where, text) and unsure. advise: variant (one the proposal offers now), reasoning and unsure. code_review: verdict (changes or nothing_to_change), findings (kind: bug, breaks, duplicate, fit or test; file; line, optional; text; matters) and unsure. Refused with the field to fix when it does not fit; fix it and save again.',
       inputSchema: {
         option_id: z.string().optional(),
         text: z.string().optional(),
@@ -702,6 +714,17 @@ function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string):
         asked: z.string().optional(),
         matters: z.string().optional(),
         leads_to: z.string().optional(),
+        answers: z
+          .array(
+            z.object({
+              question_id: z.string(),
+              option_id: z.string().optional(),
+              text: z.string().optional(),
+              reasoning: z.string().optional(),
+              unsure: z.string().optional(),
+            }),
+          )
+          .optional(),
         verdict: z.string().optional(),
         findings: z
           .array(

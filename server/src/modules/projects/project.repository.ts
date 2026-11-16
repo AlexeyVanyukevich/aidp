@@ -1,6 +1,7 @@
 import { sql, type Kysely, type Transaction } from 'kysely'
 import type { Database } from '../../db/schema.js'
 import { publish } from '../../shared/bus.js'
+import type { BatchSuggest } from '../../shared/vocabulary.js'
 
 export interface ProjectView {
   id: string
@@ -10,6 +11,7 @@ export interface ProjectView {
   github_repo: string
   base_branch: string
   setup_command: string | null
+  batch_suggest: BatchSuggest
 }
 
 export interface TestCommandView {
@@ -38,6 +40,7 @@ const COLUMNS = [
   'github_repo',
   'base_branch',
   'setup_command',
+  'batch_suggest',
 ] as const
 
 const TEST_COMMAND_COLUMNS = ['id', 'name', 'command', 'is_default'] as const
@@ -123,7 +126,7 @@ export class ProjectRepository {
   /** Sets only the fields given, in one statement. */
   update(
     key: string,
-    changes: { setup_command?: string | null },
+    changes: { setup_command?: string | null; batch_suggest?: BatchSuggest },
   ): Promise<ProjectView | undefined> {
     return this.db
       .updateTable('projects')
@@ -134,7 +137,7 @@ export class ProjectRepository {
   }
 
   /** The project and its first default command, in one transaction. */
-  insert(input: Omit<ProjectView, 'id'>, command: string): Promise<ProjectView> {
+  insert(input: Omit<ProjectView, 'id' | 'batch_suggest'>, command: string): Promise<ProjectView> {
     return this.db.transaction().execute(async (trx) => {
       const project = await trx
         .insertInto('projects')

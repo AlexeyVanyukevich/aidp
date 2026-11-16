@@ -548,6 +548,11 @@ describe('migration 013', () => {
   const migrator013 = () =>
     new Migrator({ db: getTestDb(), provider: { getMigrations: async () => migrations } })
 
+  // These tests stop at 013; every later test file needs the database at the latest migration.
+  afterEach(async () => {
+    expect((await migrator013().migrateToLatest()).error).toBeUndefined()
+  })
+
   /** The three `helps` checks as text, with the quoted words of each. */
   async function helpChecks(): Promise<Record<string, string[]>> {
     const { rows } = await sql<{ conname: string; def: string }>`
@@ -588,7 +593,7 @@ describe('migration 013', () => {
   it('adds this slice’s values to 012’s lists and nothing else, and down restores them', async () => {
     expect((await migrator013().migrateTo('012_proposals')).error).toBeUndefined()
     const at012 = await helpChecks()
-    expect((await migrator013().migrateToLatest()).error).toBeUndefined()
+    expect((await migrator013().migrateTo('013_pull_request_review')).error).toBeUndefined()
     const at013 = await helpChecks()
     expect(at013.helps_mode_known).toEqual([...lists.before.helps_mode_known, 'code_review'])
     expect(at013.helps_decision_known).toEqual([
@@ -602,18 +607,18 @@ describe('migration 013', () => {
     ])
     expect((await migrator013().migrateTo('012_proposals')).error).toBeUndefined()
     expect(await helpChecks()).toEqual(at012)
-    expect((await migrator013().migrateToLatest()).error).toBeUndefined()
+    expect((await migrator013().migrateTo('013_pull_request_review')).error).toBeUndefined()
   })
 
   it('accepts a code review and refuses another mode for the decision', async () => {
-    expect((await migrator013().migrateToLatest()).error).toBeUndefined()
+    expect((await migrator013().migrateTo('013_pull_request_review')).error).toBeUndefined()
     const run = await runId()
     await insertHelp(run, 'code_review')
     await expect(insertHelp(run, 'review')).rejects.toThrow(/helps_mode_of_decision/)
   })
 
   it('refuses to roll back while a review exists, and changes nothing', async () => {
-    expect((await migrator013().migrateToLatest()).error).toBeUndefined()
+    expect((await migrator013().migrateTo('013_pull_request_review')).error).toBeUndefined()
     await insertHelp(await runId(), 'code_review')
     const before = await helpChecks()
     const result = await migrator013().migrateTo('012_proposals')

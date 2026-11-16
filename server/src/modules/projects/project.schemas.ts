@@ -18,6 +18,7 @@ export const CreateProjectBody = Type.Object(
 export const UpdateProjectBody = Type.Object(
   {
     setup_command: Type.Optional(SetupCommand),
+    batch_suggest: Type.Optional(Type.Union([Type.Literal('whole'), Type.Literal('one')])),
   },
   { additionalProperties: false, minProperties: 1 },
 )

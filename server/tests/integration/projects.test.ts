@@ -594,3 +594,38 @@ describe('links between projects', () => {
     expect((await unlink('PAY', 'OTH')).statusCode).toBe(404)
   })
 })
+
+describe('batch_suggest', () => {
+  const post = () => app.inject({ method: 'POST', url: '/api/projects', payload: VALID })
+  const patch = (payload: unknown) =>
+    app.inject({ method: 'PATCH', url: '/api/projects/PAY', payload: payload as object })
+  const list = async () => (await app.inject({ method: 'GET', url: '/api/projects' })).json()
+
+  it('is whole for a new project, and listed', async () => {
+    expect((await post()).json().batch_suggest).toBe('whole')
+    expect((await list())[0]).toMatchObject({ batch_suggest: 'whole' })
+  })
+
+  it.each([
+    ['one', 200],
+    ['whole', 200],
+    ['all', 400],
+    ['', 400],
+  ])('PATCH %j answers %i', async (value, status) => {
+    await post()
+    const response = await patch({ batch_suggest: value })
+    expect(response.statusCode).toBe(status)
+    if (status === 200) expect((await list())[0]).toMatchObject({ batch_suggest: value })
+    else {
+      expect(response.json().error).toBe('validation_error')
+      expect(JSON.stringify(response.json())).toContain('batch_suggest')
+      expect((await list())[0]).toMatchObject({ batch_suggest: 'whole' })
+    }
+  })
+
+  it('is set beside the setup command in one PATCH', async () => {
+    await post()
+    const response = await patch({ batch_suggest: 'one', setup_command: null })
+    expect(response.json()).toMatchObject({ batch_suggest: 'one', setup_command: null })
+  })
+})

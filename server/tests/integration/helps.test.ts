@@ -407,3 +407,206 @@ describe('a help through its life', () => {
     expect(phase).toEqual({ status: 'failed', interrupted: true })
   })
 })
+
+describe('Suggest an answer on a batch', () => {
+  const BATCH = {
+    kind: 'questions' as const,
+    question: 'lead',
+    options: [],
+    questions: [
+      { question: 'One?', options: [A, B] },
+      { question: 'Two?', options: [{ id: 'x', label: 'X' }] },
+      { question: 'Three?' },
+    ],
+  }
+  const setting = (projectId: string, value: 'whole' | 'one') =>
+    db().updateTable('projects').set({ batch_suggest: value }).where('id', '=', projectId).execute()
+  const helpsOf = (approvalId: string) =>
+    db().selectFrom('helps').selectAll().where('approval_id', '=', approvalId).execute()
+
+  it('records one whole-batch help on whole, and joins it while it is queued', async () => {
+    const { approvalId } = await open(BATCH)
+    const first = await ask(approvalId, { mode: 'suggest', question_index: 1 })
+    expect(first.statusCode).toBe(201)
+    expect(first.json()).toMatchObject({ mode: 'suggest_all', question_index: null })
+    const second = await ask(approvalId, { mode: 'suggest', question_index: 2 })
+    expect(second.json().id).toBe(first.json().id)
+    expect(await helpsOf(approvalId)).toHaveLength(1)
+  })
+
+  it('records a help for the question on one', async () => {
+    const { approvalId, projectId } = await open(BATCH)
+    await setting(projectId, 'one')
+    const res = await ask(approvalId, { mode: 'suggest', question_index: 1 })
+    expect(res.json()).toMatchObject({ mode: 'suggest', question_index: 1 })
+  })
+
+  it.each(['whole', 'one'] as const)(
+    'answers with a running whole-batch help on %s',
+    async (value) => {
+      const { approvalId, projectId } = await open(BATCH)
+      await setting(projectId, 'whole')
+      const whole = (await ask(approvalId, { mode: 'suggest', question_index: 0 })).json()
+      await claim()
+      await setting(projectId, value)
+      const again = await ask(approvalId, { mode: 'suggest', question_index: 2 })
+      expect(again.json().id).toBe(whole.id)
+      expect(await helpsOf(approvalId)).toHaveLength(1)
+    },
+  )
+
+  it('leaves a single request as it was, on whole', async () => {
+    const single = await open()
+    expect((await ask(single.approvalId, { mode: 'suggest' })).json()).toMatchObject({
+      mode: 'suggest',
+      question_index: null,
+    })
+  })
+
+  it('leaves Explain on a batch question as it was, on whole', async () => {
+    const batch = await open(BATCH)
+    expect(
+      (await ask(batch.approvalId, { mode: 'explain', question_index: 1 })).json(),
+    ).toMatchObject({ mode: 'explain', question_index: 1 })
+  })
+
+  it('refuses a client that asks for suggest_all by name', async () => {
+    const { approvalId } = await open(BATCH)
+    const res = await ask(approvalId, { mode: 'suggest_all' })
+    expect(res.statusCode).toBe(400)
+    expect(res.json().error).toBe('validation_error')
+  })
+
+  it('still refuses a question the batch lacks, on whole', async () => {
+    const { approvalId } = await open(BATCH)
+    expect((await ask(approvalId, { mode: 'suggest', question_index: 3 })).statusCode).toBe(400)
+    expect(await helpsOf(approvalId)).toHaveLength(0)
+  })
+})
+
+describe('a whole-batch help through its life', () => {
+  const BATCH = {
+    kind: 'questions' as const,
+    question: 'lead',
+    options: [],
+    questions: [
+      { question: 'One?', options: [A, B], recommendation: 'a' },
+      { question: 'Two?', options: [{ id: 'x', label: 'X' }] },
+      { question: 'Three?' },
+    ],
+  }
+  const ok = (id: string, change: Record<string, unknown> = {}) => ({
+    question_id: id,
+    option_id: id === 'q2' ? 'x' : 'a',
+    reasoning: ' r ',
+    unsure: 'u',
+    ...change,
+  })
+
+  async function running() {
+    const seeded = await open(BATCH)
+    const help = (await ask(seeded.approvalId, { mode: 'suggest', question_index: 0 })).json()
+    await claim()
+    return {
+      ...seeded,
+      helpId: help.id as string,
+      ...(await tools(seeded.runId, seeded.taskId, help.id)),
+    }
+  }
+
+  it('reads every question of the batch in order', async () => {
+    const { call } = await running()
+    const read = JSON.parse((await call('get_question')).content[0]!.text)
+    expect(read.kind).toBe('questions')
+    expect(read.batch_lead).toBe('lead')
+    expect(read.questions.map((q: { id: string }) => q.id)).toEqual(['q1', 'q2', 'q3'])
+    expect(read.questions[0]).toMatchObject({
+      id: 'q1',
+      question: 'One?',
+      options: [A, B],
+      recommendation: 'a',
+    })
+    expect(Object.keys(read.questions[0]).sort()).toEqual(
+      ['context_md', 'id', 'options', 'question', 'recommendation'].sort(),
+    )
+  })
+
+  const refusals: { name: string; save: () => Record<string, unknown>; field: string }[] = [
+    {
+      name: 'a missing q3',
+      save: () => ({ answers: [ok('q1'), ok('q2')] }),
+      field: 'answers: required',
+    },
+    {
+      name: 'an unknown q9',
+      save: () => ({ answers: [ok('q1'), ok('q2'), ok('q3', { question_id: 'q9' })] }),
+      field: 'answers: unknown question',
+    },
+    {
+      name: 'a repeated q1',
+      save: () => ({ answers: [ok('q1'), ok('q1'), ok('q2'), ok('q3')] }),
+      field: 'answers: duplicate',
+    },
+    {
+      name: 'an option q2 does not offer',
+      save: () => ({ answers: [ok('q1'), ok('q2', { option_id: 'a' }), ok('q3')] }),
+      field: 'answers[1].option_id: unknown option',
+    },
+    {
+      name: 'neither option nor words',
+      save: () => ({ answers: [ok('q1'), ok('q2'), ok('q3', { option_id: undefined })] }),
+      field: 'answers[2].option_id: required',
+    },
+    {
+      name: 'a blank reasoning',
+      save: () => ({ answers: [ok('q1', { reasoning: ' ' }), ok('q2'), ok('q3')] }),
+      field: 'answers[0].reasoning: required',
+    },
+    {
+      name: 'an extra asked field',
+      save: () => ({ answers: [ok('q1'), ok('q2'), ok('q3')], asked: 'q' }),
+      field: 'asked: not allowed',
+    },
+  ]
+  it.each(refusals)('refuses $name and stores nothing', async ({ save, field }) => {
+    const { call, helpId } = await running()
+    const res = await call('save_help_result', save())
+    expect(res.isError).toBe(true)
+    expect(res.content[0]!.text).toContain(`- ${field}`)
+    expect(await helpRow(helpId)).toMatchObject({ status: 'running', result: null })
+  })
+
+  it('stores a valid save in the batch order, trimmed', async () => {
+    const { call, helpId } = await running()
+    const res = await call('save_help_result', {
+      answers: [ok('q3', { option_id: undefined, text: ' Teal ' }), ok('q1'), ok('q2')],
+    })
+    expect(res.isError).toBeUndefined()
+    expect(await helpRow(helpId)).toMatchObject({
+      status: 'succeeded',
+      result: {
+        mode: 'suggest_all',
+        answers: [
+          { question_id: 'q1', option_id: 'a', reasoning: 'r', unsure: 'u' },
+          { question_id: 'q2', option_id: 'x', reasoning: 'r', unsure: 'u' },
+          { question_id: 'q3', text: 'Teal', reasoning: 'r', unsure: 'u' },
+        ],
+      },
+    })
+  })
+
+  it('refuses answers from a suggest help', async () => {
+    const seeded = await open()
+    const help = (await ask(seeded.approvalId, { mode: 'suggest' })).json()
+    await claim()
+    const { call } = await tools(seeded.runId, seeded.taskId, help.id)
+    const res = await call('save_help_result', {
+      option_id: 'a',
+      reasoning: 'r',
+      unsure: 'u',
+      answers: [ok('q1')],
+    })
+    expect(res.isError).toBe(true)
+    expect(res.content[0]!.text).toContain('- answers: not allowed')
+  })
+})

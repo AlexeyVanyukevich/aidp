@@ -6,6 +6,7 @@ import {
   type ProjectWithLinks,
   type TestCommandView,
 } from './project.repository.js'
+import type { BatchSuggest } from '../../shared/vocabulary.js'
 import { matchesGithubRepo, type RepoInspector } from './repo-inspector.js'
 
 export class ProjectService {
@@ -53,7 +54,9 @@ export class ProjectService {
    * exist would otherwise surface as a failed run, after tokens were spent finding out.
    */
   async create(
-    body: Omit<ProjectView, 'id' | 'setup_command'> & { setup_command?: string | null },
+    body: Omit<ProjectView, 'id' | 'setup_command' | 'batch_suggest'> & {
+      setup_command?: string | null
+    },
   ): Promise<ProjectView> {
     const input = { ...body, setup_command: blankToNull(body.setup_command) }
     const taken = await this.repository.exists(input.key, input.repo_path)
@@ -78,19 +81,20 @@ export class ProjectService {
     return this.repository.insert(input, 'npm test')
   }
 
-  /** Sets the setup command, cleared by null or a blank value. */
+  /** Sets the setup command (cleared by null or a blank value) and how a batch is suggested. */
   async update(
     key: string,
-    body: { setup_command?: string | null | undefined },
+    body: { setup_command?: string | null | undefined; batch_suggest?: BatchSuggest | undefined },
   ): Promise<ProjectView> {
     const project = await this.repository.byKey(key)
     if (project === undefined) throw new NotFoundError(`No project ${key}`)
-    const changes: { setup_command?: string | null } = {}
+    const changes: { setup_command?: string | null; batch_suggest?: BatchSuggest } = {}
     if (body.setup_command !== undefined) {
       const setupCommand = blankToNull(body.setup_command)
       if (setupCommand !== null) await this.checkSetupCommand(setupCommand, project.repo_path)
       changes.setup_command = setupCommand
     }
+    if (body.batch_suggest !== undefined) changes.batch_suggest = body.batch_suggest
     const updated = await this.repository.update(key, changes)
     if (updated === undefined) throw new NotFoundError(`No project ${key}`)
     return updated

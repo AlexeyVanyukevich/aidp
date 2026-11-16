@@ -48,11 +48,16 @@ export const HELP_MODES = [
   'check',
   'advise',
   'code_review',
+  'suggest_all',
 ] as const
 export type HelpMode = (typeof HELP_MODES)[number]
 
 /** The modes of a question help; the others belong to a decision of the card. */
-export type QuestionHelpMode = 'suggest' | 'explain'
+export type QuestionHelpMode = 'suggest' | 'explain' | 'suggest_all'
+
+/** How a project suggests a batch's answers: every question in one help, or one at a time. */
+export const BATCH_SUGGESTS = ['whole', 'one'] as const
+export type BatchSuggest = (typeof BATCH_SUGGESTS)[number]
 
 /** What a help advises on: a waiting question, or one of the decisions of a card. */
 export const HELP_DECISIONS = [
@@ -84,6 +89,16 @@ export type HelpResult =
       text?: string
       reasoning: string
       unsure: string
+    }
+  | {
+      mode: 'suggest_all'
+      answers: {
+        question_id: string
+        option_id?: string
+        text?: string
+        reasoning: string
+        unsure: string
+      }[]
     }
   | {
       mode: 'explain'
