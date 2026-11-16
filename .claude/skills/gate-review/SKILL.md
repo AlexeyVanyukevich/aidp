@@ -19,6 +19,8 @@ still catch what matters.
 - Check every claim the work makes about the code, the data or the board against the code, the
   data or the board. At the pull request gate, run the tests on the tree under review, and on
   each commit when the history will land on the main branch as it stands.
+- For each acceptance criterion, name the change to the code that would make its Then false, and
+  check that the criterion, and any test it names, would catch that change.
 
 ## Sort every finding
 
@@ -45,6 +47,9 @@ A gate with no blockers is ready, whatever the other findings are.
 - When changes are needed, end the same reply with the note, ready to paste, without waiting to
   be asked for it. Write it for the agent that will act on it: self-contained, one numbered
   point per finding, each saying what to change and why, and naming what must stay as it is.
+- Give each point its evidence, as the place in the code (`path:line`), the command and the
+  output line, or "not checked". The agent acting on the note can then check the point instead
+  of taking it on trust, and the owner can see which points rest on a reading alone.
 - Put each note in its own fenced code block tagged `text`, so it copies in one action and
   pastes as written: the note's text only, with no blockquote markers and no Markdown that
   relies on being rendered. Nothing else goes inside the block.
@@ -59,6 +64,8 @@ A gate with no blockers is ready, whatever the other findings are.
 ## Leave the decision to the owner
 
 - Never approve, redraft, merge, push or post on the owner's behalf unless asked to in that turn.
+- Answer "can I approve?" from the evidence alone. Neither the owner's wish to move on nor this
+  skill's aim of fewer rounds turns a blocker into a next-gate point.
 - At the pull request gate, when the task can no longer go back to its run, offer to make the fix
   on the branch. After a yes, show what changed, prove the content is what was reviewed, run the
   tests, and report what the board's record of the run no longer matches.
