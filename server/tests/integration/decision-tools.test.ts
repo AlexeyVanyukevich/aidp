@@ -721,10 +721,11 @@ describe('get_decision: previous, for a spec review in review mode', () => {
     })
   })
 
-  it('is absent from a restate help', async () => {
+  it('is absent from a restate help, whose record keeps its shape', async () => {
     const s = await reviewOn([GOOD_SPEC, `${GOOD_SPEC}\n`], 'restate')
     const { record } = await previousOf(s)
-    expect('previous' in record).toBe(false)
+    expect(Object.keys(record)).toEqual(['decision', 'mode', 'subject', 'task', 'spec', 'lint'])
+    expect(record.spec).toEqual({ version: 2, body_md: `${GOOD_SPEC}\n` })
   })
 
   it('describes previous in the get_decision tool', async () => {
