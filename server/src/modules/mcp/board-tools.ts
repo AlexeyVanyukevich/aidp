@@ -24,6 +24,7 @@ import type { Bus } from '../../shared/bus.js'
 import { readMigrationSiblings } from '../projects/migration-siblings.js'
 import { openApproval } from '../approvals/approval.service.js'
 import { lintReply, lintText } from '../specs/spec-lint-text.js'
+import { lineDiff } from '../specs/line-diff.js'
 import { parseSpec } from '../specs/spec-parser.js'
 import { SpecRepository } from '../specs/spec.repository.js'
 import { acceptedPlanOf, planAnswers } from '../tasks/plan-history.js'
@@ -293,6 +294,128 @@ async function latestReport(ctx: ToolContext, runId: string) {
   return report === undefined ? null : { body_md: report.body_md, data: report.data }
 }
 
+const ANSWERS_LIMIT = 4000
+
+interface PreviousAnswer {
+  question: string
+  option: { id: string; label: string } | null
+  text: string | null
+}
+
+/** The owner's answers in a spec run, in the order asked, kept whole up to `ANSWERS_LIMIT` characters. */
+async function writingRunAnswers(ctx: ToolContext, runId: string | null) {
+  if (runId === null) return { answers: [] as PreviousAnswer[], answers_left_out: 0 }
+  const rows = await ctx.db
+    .selectFrom('approval_requests')
+    .select(['kind', 'question', 'options', 'questions', 'answer'])
+    .where('run_id', '=', runId)
+    .where('kind', 'in', ['question', 'questions'])
+    .where('status', '=', 'answered')
+    .orderBy('created_at')
+    .orderBy('id')
+    .execute()
+  const entries: PreviousAnswer[] = []
+  const entryOf = (
+    question: string,
+    options: unknown[],
+    answer: { option_id?: string; text?: string },
+  ): PreviousAnswer => {
+    const picked = (options as { id: string; label: string }[]).find(
+      (o) => o.id === answer.option_id,
+    )
+    const text = answer.text?.trim() ?? ''
+    return {
+      question,
+      option: picked === undefined ? null : { id: picked.id, label: picked.label },
+      text: text === '' ? null : text,
+    }
+  }
+  for (const row of rows) {
+    const answer = (row.answer ?? {}) as {
+      option_id?: string
+      text?: string
+      answers?: { question_id: string; option_id?: string; text?: string }[]
+    }
+    if (row.kind === 'questions') {
+      const given = answer.answers ?? []
+      for (const q of (row.questions ?? []) as {
+        id: string
+        question: string
+        options: unknown[]
+      }[]) {
+        const found = given.find((a) => a.question_id === q.id)
+        if (found !== undefined) entries.push(entryOf(q.question, q.options, found))
+      }
+    } else entries.push(entryOf(row.question, row.options, answer))
+  }
+  const kept: PreviousAnswer[] = []
+  let total = 0
+  for (const e of entries) {
+    total += e.question.length + (e.option?.label.length ?? 0) + (e.text?.length ?? 0)
+    if (total > ANSWERS_LIMIT) break
+    kept.push(e)
+  }
+  return { answers: kept, answers_left_out: entries.length - kept.length }
+}
+
+/** What a review of a redrafted spec reads from before it; null for the first version. */
+async function previousFor(ctx: ToolContext, version: number, body: string, runId: string | null) {
+  if (version <= 1) return null
+  const earlier = await ctx.db
+    .selectFrom('specs')
+    .select(['version', 'body_md'])
+    .where('task_id', '=', ctx.taskId)
+    .where('version', '=', version - 1)
+    .executeTakeFirst()
+  if (earlier === undefined) return null
+  const diff = lineDiff(earlier.body_md, body)
+  const useText = diff === null || diff.length > earlier.body_md.length
+  let note: string | null = null
+  if (runId !== null) {
+    const run = await ctx.db
+      .selectFrom('runs')
+      .select('note')
+      .where('id', '=', runId)
+      .executeTakeFirst()
+    const trimmed = run?.note?.trim() ?? ''
+    note = trimmed === '' ? null : trimmed
+  }
+  const reviews = await ctx.db
+    .selectFrom('helps')
+    .innerJoin('runs', 'runs.id', 'helps.run_id')
+    .select(['helps.subject', 'helps.result'])
+    .where('runs.task_id', '=', ctx.taskId)
+    .where('helps.decision', '=', 'spec_review')
+    .where('helps.mode', '=', 'review')
+    .where('helps.status', '=', 'succeeded')
+    .where('helps.result', 'is not', null)
+    .orderBy('helps.created_at', 'desc')
+    .execute()
+  let earlierReview: { version: number; verdict: string; findings: unknown[] } | null = null
+  for (const r of reviews) {
+    const at = r.subject !== null && 'spec_version' in r.subject ? r.subject.spec_version : null
+    if (at === null || at >= version || r.result === null || r.result.mode !== 'review') continue
+    earlierReview = { version: at, verdict: r.result.verdict, findings: r.result.findings }
+    break
+  }
+  return {
+    version: earlier.version,
+    diff: useText ? null : diff,
+    body_md: useText ? earlier.body_md : null,
+    note,
+    ...(note === null
+      ? {
+          note_missing:
+            runId === null
+              ? 'saved by hand in the editor, so it has no redraft note'
+              : 'written by a spec run with no note',
+        }
+      : {}),
+    earlier_review: earlierReview,
+    ...(await writingRunAnswers(ctx, runId)),
+  }
+}
+
 /** What `get_decision` returns (R11). */
 async function decisionRecord(ctx: ToolContext, helpId: string, head: HelpHead) {
   const task = await ctx.db
@@ -316,14 +439,19 @@ async function decisionRecord(ctx: ToolContext, helpId: string, head: HelpHead) 
   if (head.decision === 'spec_review' && subject !== null && 'spec_version' in subject) {
     const spec = await ctx.db
       .selectFrom('specs')
-      .select(['version', 'body_md'])
+      .select(['version', 'body_md', 'run_id'])
       .where('task_id', '=', ctx.taskId)
       .where('version', '=', subject.spec_version)
       .executeTakeFirst()
     const parsed = spec === undefined ? null : parseSpec(spec.body_md)
+    const previous =
+      head.mode === 'review' && spec !== undefined
+        ? await previousFor(ctx, spec.version, spec.body_md, spec.run_id)
+        : undefined
     return {
       ...common,
-      spec: spec ?? null,
+      spec: spec === undefined ? null : { version: spec.version, body_md: spec.body_md },
+      ...(previous === undefined ? {} : { previous }),
       lint:
         parsed === null
           ? null
@@ -551,7 +679,7 @@ function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string):
     'get_decision',
     {
       description:
-        'Read the decision you were asked to help with: the decision, the mode, what it is about, the task, and what the decision reads (the spec and its lint, or the stopped run and its actions, or the spec and the delivery runs).',
+        'Read the decision you were asked to help with: the decision, the mode, what it is about, the task, and what the decision reads (the spec and its lint, or the stopped run and its actions, or the spec and the delivery runs). For a spec review in review mode it also returns previous: the diff from the version before (or that version’s text), the redraft note, the owner’s answers in the writing run, and the newest earlier review.',
     },
     async () => {
       const head = await helpHead(ctx, helpId)

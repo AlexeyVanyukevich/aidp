@@ -783,3 +783,21 @@ describe('the verifier’s reading of the cuts', () => {
     expect(prompt).toContain(`\`${name}\``)
   })
 })
+
+describe('the helper’s review of a redrafted spec', () => {
+  const review = AGENTS.helper!.prompt.split('\n\n').find((p) => p.startsWith('review:'))!
+
+  it.each([
+    'previous',
+    'missing',
+    'quote',
+    'risk',
+    'unless the diff changed',
+    'earlier_review.version equals previous.version',
+    'Decision:',
+    'previous.answers',
+    'context only',
+  ])('says %s', (phrase) => {
+    expect(review).toContain(phrase)
+  })
+})
