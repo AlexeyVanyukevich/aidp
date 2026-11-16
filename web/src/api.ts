@@ -7,7 +7,7 @@ import type {
   ProposalOutcome,
   ProposalView,
   HelpMode,
-  QuestionHelpMode,
+  AskedHelpMode,
   HelpView,
   EventView,
   OpenApproval,
@@ -142,7 +142,7 @@ export const api = {
   answer: (approvalId: string, body: ApprovalAnswer | BatchAnswer) =>
     request<ApprovalView>('POST', `/api/approvals/${approvalId}/answer`, body),
   helps: (taskId: string) => request<HelpView[]>('GET', `/api/tasks/${taskId}/helps`),
-  askHelp: (approvalId: string, mode: QuestionHelpMode, questionIndex: number | null) =>
+  askHelp: (approvalId: string, mode: AskedHelpMode, questionIndex: number | null) =>
     request<HelpView>('POST', `/api/approvals/${approvalId}/helps`, {
       mode,
       ...(questionIndex === null ? {} : { question_index: questionIndex }),
