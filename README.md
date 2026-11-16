@@ -11,9 +11,12 @@ that drives Claude Code in git worktrees of the owner's repositories.
 
 **The MVP's three slices are built:** one task from the board to a pull request; runs that pause
 on a question, wait in Blocked when interrupted, and resume; and specs drafted by a spec-writer
-from the task's description, its questions answered on the board. The MVP's exit gate — §1 of
-the [MVP spec](docs/superpowers/specs/2026-10-10-mvp-design.md) — is being measured. What the
-board does today is in [docs/architecture.md](docs/architecture.md).
+from the task's description, its questions answered on the board. The MVP's exit gate is being
+measured: 10 real tasks across at least two target repositories reach Review with a pull
+request, each showing the cost of every step on the card, with the board's computed cost within
+2% of what Claude Code reported, and at least one of them pausing on an approval request and
+resuming correctly from the answer. What the board does today is in
+[docs/architecture.md](docs/architecture.md).
 
 ## Running it
 

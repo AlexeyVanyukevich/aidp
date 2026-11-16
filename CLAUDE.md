@@ -5,10 +5,11 @@ on their own machine.
 
 ## The documentation
 
-`docs/architecture.md` is authoritative for what the board does today; Slice 1 creates it. The
-decision record is `docs/superpowers/specs/2026-10-10-mvp-design.md` — read it for _why_, never
-for what the code does. What is known to be wrong is on the board, as AIDP tasks; read them
-before planning.
+`docs/architecture.md` is authoritative for what the board does today. A slice's spec and plan
+live on the board, as its task's spec versions and saved plan, not as files under
+`docs/superpowers/`: that part of `core`'s documentation rule does not apply here, and the rest
+of it does. A spec says _why_, never what the code does. What is known to be wrong is on the
+board, as AIDP tasks; read them before planning.
 
 ## Conventions
 
