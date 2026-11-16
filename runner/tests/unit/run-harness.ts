@@ -48,7 +48,8 @@ export type Act =
   | 'moved-paused'
   | 'moved-cancelled'
   | 'moved-shutdown'
-export type Verdict = 'pass' | 'fail' | 'owner-pass' | 'owner-fail' | 'withdrawn-pass' | 'no-report'
+export type Verdict =
+  'pass' | 'fail' | 'fail-twice' | 'owner-pass' | 'owner-fail' | 'withdrawn-pass' | 'no-report'
 export interface Script {
   /** Per phase and attempt, what each of its processes does in turn: `{ 'build-1': ['paused', 'ok'] }`. */
   acts?: Record<string, Act[]>
@@ -216,9 +217,10 @@ export function harness(script: Script) {
     if (what === 'ok' && record.phase === 'verify') {
       headNow = script.verifyHeads?.[verifies] ?? headNow
       const verdict = script.verdicts?.[verifies++] ?? 'pass'
-      if (verdict !== 'no-report')
+      const saves = verdict === 'no-report' ? 0 : verdict === 'fail-twice' ? 2 : 1
+      for (let save = 1; save <= saves; save++)
         artifacts.push({
-          id: `report-${verifies}`,
+          id: save === 1 ? `report-${verifies}` : `report-${verifies}-${save}`,
           kind: 'verify_report',
           phase_id: record.phaseId,
           body_md: `| AC1 | ${verdict} |`,
@@ -241,7 +243,13 @@ export function harness(script: Script) {
                         { id: 'AC1', status: 'fail', evidence: 'e' },
                         { id: 'AC2', status: 'owner', evidence: 'e' },
                       ]
-                    : [{ id: 'AC1', status: verdict, evidence: 'e' }],
+                    : [
+                        {
+                          id: 'AC1',
+                          status: verdict === 'fail-twice' ? 'fail' : verdict,
+                          evidence: 'e',
+                        },
+                      ],
           },
         })
     }

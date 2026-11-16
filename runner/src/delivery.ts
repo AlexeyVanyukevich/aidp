@@ -45,6 +45,7 @@ import {
   type RunDeps,
 } from './run-steps.js'
 import { ApiError } from './api.js'
+import { REMINDER_TEXT, verifyFailedReason } from './failure-reason.js'
 import { linkedForHandoff, removeLinked } from './linked.js'
 import { newEvent } from './sink.js'
 import { removeCheckout, type LogContext } from './worktree-log.js'
@@ -67,6 +68,13 @@ export interface DeliveryDeps extends RunDeps {
 }
 
 const MAX_ATTEMPTS = 3
+/** Only a failed Verify on attempt 3 may start attempt 4, and only after a Build the runner started. */
+const RUNNER_CAUSES: readonly string[] = [
+  'test_command',
+  'files_gate',
+  'base_conflict',
+  'no_commit',
+]
 /** A checkpoint's failing report when the build made no commit: there is no report to name. */
 const NO_COMMIT = 'no_commit'
 const NO_COMMIT_TEXT = 'The build made no commit, so there was nothing to verify. Commit your work.'
@@ -187,7 +195,9 @@ export async function carryOut(
       return false
     }
     const output =
-      verdict === 'failed' ? failedBlockOutput(result, fix()) : notPassedBlockOutput(result, fix())
+      verdict === 'failed'
+        ? failedBlockOutput(result, fix(), state.attempt)
+        : notPassedBlockOutput(result, fix())
     return steps.block('step_failed', { command, output })
   }
 
@@ -241,12 +251,16 @@ export async function carryOut(
         failing === undefined || state.failingId === NO_COMMIT || undone.length === 0
           ? failing
           : `${failing}\n\nThe runner undid these paths the build left uncommitted:\n${undone.join('\n')}\nOnly committed work is tested, shown in the diff and pushed.`
+      const reminded =
+        report !== undefined && state.failingId !== null && RUNNER_CAUSES.includes(state.failingId)
+          ? `${report}\n\n${REMINDER_TEXT}`
+          : report
       return buildHandoff({
         ...common,
         plan: plan.body_md,
         base: { branch: project.base_branch },
         approvedMigrations: readApproved(runDir),
-        ...(report === undefined ? {} : { verifyReport: report }),
+        ...(reminded === undefined ? {} : { verifyReport: reminded }),
       })
     }
     // A Verify started afresh after a resume has no test output yet: the tests run again.
@@ -446,8 +460,8 @@ export async function carryOut(
     return false
   }
 
+  /** Starts the next Build; each cause that may not go past attempt 3 checks that before it calls. */
   const nextAttempt = (failingId: string) => {
-    if (state.attempt >= MAX_ATTEMPTS) throw new End('failed', 'verify failed three times')
     state.attempt += 1
     state.failingId = failingId
     state.stage = 'build'
@@ -669,6 +683,8 @@ export async function carryOut(
             // Nothing to test: no undo, setup, rebase or test command; the builder's edits stay.
             if (!(await gate())) break
             await steps.stopIfShuttingDown()
+            if (state.attempt >= MAX_ATTEMPTS)
+              throw new End('failed', `the build made no commit on attempt ${state.attempt}`)
             nextAttempt(NO_COMMIT)
             break
           }
@@ -734,7 +750,21 @@ export async function carryOut(
           await steps.endPhase(true)
           if ((report.data as ReportData).criteria.every((c) => c.status !== 'fail'))
             state.stage = 'push'
-          else nextAttempt(report.id)
+          else {
+            const judgedByRunner =
+              state.failingId !== null && RUNNER_CAUSES.includes(state.failingId)
+            const another =
+              state.attempt < MAX_ATTEMPTS || (state.attempt === MAX_ATTEMPTS && judgedByRunner)
+            if (!another) {
+              const reports = (await getRun()).artifacts.filter((a) => a.kind === 'verify_report')
+              const runs = new Set(reports.map((a) => a.phase_id)).size
+              throw new End(
+                'failed',
+                verifyFailedReason(state.attempt, runs, (report.data as ReportData).criteria),
+              )
+            }
+            nextAttempt(report.id)
+          }
           break
         }
         case 'push': {

@@ -132,7 +132,7 @@ export function testCommandReportFallback(command: string): string {
 
 /** The instruction that ends every block the test command's result makes. */
 export function fixInstruction(o: { worktree: string; command: string; base: string }): string {
-  return `In ${o.worktree}, make \`${o.command}\` pass and commit the fix, then Resume. A failure in a file outside the plan is fixed on the base branch instead: push the fix to \`origin/${o.base}\`, then Resume, and the tests stage rebases the branch onto it before the command runs. Only committed work is tested: Resume undoes uncommitted changes first, and a path outside the plan committed in the worktree fails the files gate, which ends the run on attempt 3.`
+  return `In ${o.worktree}, make \`${o.command}\` pass and commit the fix, then Resume. A failure in a file outside the plan is fixed on the base branch instead: push the fix to \`origin/${o.base}\`, then Resume, and the tests stage rebases the branch onto it before the command runs. Only committed work is tested: Resume undoes uncommitted changes first, and a path outside the plan committed in the worktree fails the files gate, which ends the run on attempt 3 or later.`
 }
 
 export const OUTSIDE_CAUSE =
@@ -142,9 +142,10 @@ export const OUTSIDE_CAUSE =
 export function failedBlockOutput(
   run: Pick<TestRun, 'exitCode' | 'output'>,
   instruction: string,
+  attempt: number,
 ): string {
   return [
-    'the test command failed on attempt 3',
+    `the test command failed on attempt ${attempt}`,
     `exit code: ${String(run.exitCode)}`,
     run.output.slice(-BLOCK_CHARS),
     instruction,

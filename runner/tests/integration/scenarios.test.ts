@@ -301,7 +301,7 @@ describe('a delivery run end to end', () => {
     const [run] = await runs(taskId)
     expect(run).toMatchObject({
       status: 'failed',
-      failure_reason: 'verify failed three times',
+      failure_reason: 'verify failed on attempt 3, after 3 Verify runs: AC1',
       fix_loops: 2,
     })
   })

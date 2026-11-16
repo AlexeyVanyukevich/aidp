@@ -11,6 +11,7 @@ import {
   type DeliveryDeps,
   type Phases,
 } from '../../src/delivery.js'
+import { REMINDER_TEXT } from '../../src/failure-reason.js'
 import { Git, GitError } from '../../src/git.js'
 import { StartFailure } from '../../src/phases/process.js'
 import { LOG_FILE } from '../../src/worktree-log.js'
@@ -73,7 +74,10 @@ describe('a run carried out from the start, as slice 1 did', () => {
     ])
     expect(h.handoffs['build-2']).toContain('<verify_report>')
     expect(h.runEnd()).toMatchObject({
-      payload: { outcome: 'failed', reason: 'verify failed three times' },
+      payload: {
+        outcome: 'failed',
+        reason: 'verify failed on attempt 3, after 3 Verify runs: AC1',
+      },
     })
   })
 
@@ -113,7 +117,10 @@ describe('a run carried out from the start, as slice 1 did', () => {
     expect(await carryOut(START as Extract<Work, { kind: 'start' }>, h.deps)).toBe('failed')
     expect(h.calls.filter((c) => c.startsWith('start verify'))).toHaveLength(3)
     expect(h.runEnd()).toMatchObject({
-      payload: { outcome: 'failed', reason: 'verify failed three times' },
+      payload: {
+        outcome: 'failed',
+        reason: 'verify failed on attempt 3, after 3 Verify runs: AC1',
+      },
     })
   })
 
@@ -2276,7 +2283,7 @@ describe('the test command’s result', () => {
       )
       .filter((p) => p.blocks === true)
   const instruction = (h: ReturnType<typeof harness>) =>
-    `In ${worktreeOf(h)}, make \`npm test\` pass and commit the fix, then Resume. A failure in a file outside the plan is fixed on the base branch instead: push the fix to \`origin/main\`, then Resume, and the tests stage rebases the branch onto it before the command runs. Only committed work is tested: Resume undoes uncommitted changes first, and a path outside the plan committed in the worktree fails the files gate, which ends the run on attempt 3.`
+    `In ${worktreeOf(h)}, make \`npm test\` pass and commit the fix, then Resume. A failure in a file outside the plan is fixed on the base branch instead: push the fix to \`origin/main\`, then Resume, and the tests stage rebases the branch onto it before the command runs. Only committed work is tested: Resume undoes uncommitted changes first, and a path outside the plan committed in the worktree fails the files gate, which ends the run on attempt 3 or later.`
   const OUTSIDE =
     'If the cause was outside the code, for example the machine slept or the disk was full, Resume runs the command again as it is.'
   const resumed = (cp: Checkpoint, message: string | null = null) =>
@@ -2388,7 +2395,7 @@ describe('the test command’s result', () => {
     expect(await carryOut(START as Extract<Work, { kind: 'start' }>, h.deps)).toBe(row.outcome)
     expect(starts(h)).toEqual(row.starts)
     expect(h.testRuns).toHaveLength(row.testRuns)
-    expect(h.runEnd()?.payload).not.toMatchObject({ reason: 'verify failed three times' })
+    expect(JSON.stringify(h.runEnd()?.payload ?? {})).not.toContain('Verify run')
     if (row.outcome === 'review')
       expect(h.runEnd()).toMatchObject({ payload: { outcome: 'review' } })
     else expect(h.runEnd()).toBeUndefined()
@@ -2558,5 +2565,198 @@ describe('the test command’s result', () => {
       expect(blocks(h)).toMatchObject([{ cause: 'step_failed', stage: 'tests' }])
       expect(h.checkpoints().at(-1)).toMatchObject({ stage: 'tests', attempt: 3, phase_id: null })
     })
+  })
+})
+
+describe('the fourth attempt, and the reasons a run ends with', () => {
+  const go = (script: Script) => {
+    const h = harness(script)
+    return { h, done: carryOut(START as Extract<Work, { kind: 'start' }>, h.deps) }
+  }
+  const startsOf = (h: ReturnType<typeof harness>) =>
+    h.calls.filter((c) => c.startsWith('start ')).map((c) => c.slice('start '.length))
+  const F = { exitCode: 1 }
+  const P = { exitCode: 0 }
+  const HEADS = [undefined, 'head-2', 'head-3', 'head-4', 'head-5']
+  const reason = (h: ReturnType<typeof harness>) =>
+    (h.runEnd()?.payload as { reason?: string } | undefined)?.reason
+
+  it('AC1: a failed Verify on attempt 3 after runner retries starts attempt 4', async () => {
+    const { h, done } = go({
+      testResults: [F, F, P, P],
+      verdicts: ['fail', 'pass'],
+      buildHeads: HEADS,
+    })
+    expect(await done).toBe('review')
+    expect(startsOf(h)).toEqual([
+      'plan-1',
+      'build-1',
+      'build-2',
+      'build-3',
+      'verify-3',
+      'build-4',
+      'verify-4',
+    ])
+    expect(h.handoffs['build-4']).toContain('<verify_report>')
+    expect(h.handoffs['build-4']).toContain('| AC1 | fail |')
+  })
+
+  it('AC2: three failed Verify runs end the run on attempt 3', async () => {
+    const { h, done } = go({ verdicts: ['fail', 'fail', 'fail'] })
+    expect(await done).toBe('failed')
+    expect(startsOf(h)).not.toContain('build-4')
+    expect(reason(h)).toBe('verify failed on attempt 3, after 3 Verify runs: AC1')
+  })
+
+  it('AC3: a failed Verify on attempt 4 ends the run', async () => {
+    const { h, done } = go({
+      testResults: [F, F, P, P],
+      verdicts: ['fail', 'fail'],
+      buildHeads: HEADS,
+    })
+    expect(await done).toBe('failed')
+    expect(startsOf(h).at(-1)).toBe('verify-4')
+    expect(startsOf(h)).not.toContain('build-5')
+    expect(reason(h)).toBe('verify failed on attempt 4, after 2 Verify runs: AC1')
+  })
+
+  it('AC4: a Build the test command started is judged, and a failure starts attempt 4', async () => {
+    const { h, done } = go({
+      testResults: [P, F, P, P],
+      verdicts: ['fail', 'fail', 'pass'],
+      buildHeads: HEADS,
+    })
+    expect(await done).toBe('review')
+    expect(startsOf(h)).toContain('build-4')
+  })
+
+  it('AC9: a Verify that saves two reports counts once', async () => {
+    const { h, done } = go({
+      testResults: [F, F, P, P],
+      verdicts: ['fail-twice', 'fail'],
+      buildHeads: HEADS,
+    })
+    expect(await done).toBe('failed')
+    expect(reason(h)).toBe('verify failed on attempt 4, after 2 Verify runs: AC1')
+  })
+
+  it('AC6: three Builds with no commit end the run with their own reason', async () => {
+    const { h, done } = go({ commits: [0, 0, 0] })
+    expect(await done).toBe('failed')
+    expect(reason(h)).toBe('the build made no commit on attempt 3')
+  })
+
+  interface Row {
+    name: string
+    script: Script
+    reason?: string
+    blocked?: { first: string }
+  }
+  // Attempt 3 is a Build the test command started, whose Verify failed, so attempt 4 follows.
+  const TO_4 = { verdicts: ['fail' as const], buildHeads: HEADS }
+  const ROWS: Row[] = [
+    {
+      name: 'the test command fails on attempt 4',
+      script: { ...TO_4, testResults: [F, F, P, F] },
+      blocked: { first: 'the test command failed on attempt 4' },
+    },
+    {
+      name: 'Build 4 makes no commit',
+      script: { ...TO_4, testResults: [F, F, P], commits: [1, 1, 1, 0] },
+      reason: 'the build made no commit on attempt 4',
+    },
+    {
+      name: 'Build 4 changes a file the run does not allow',
+      script: {
+        ...TO_4,
+        testResults: [F, F, P],
+        trees: [{}, {}, {}, { committed: ['src/extra.ts'] }],
+      },
+      reason: 'the build changed files the run does not allow, on attempt 4: src/extra.ts',
+    },
+    {
+      name: 'the rebase conflicts on attempt 4',
+      script: {
+        ...TO_4,
+        testResults: [F, F, P],
+        fetchTo: [undefined, undefined, undefined, ORIGIN],
+        conflicts: [['src/a.ts']],
+      },
+    },
+  ]
+  it.each(ROWS)('AC5: $name', async (row) => {
+    const { h, done } = go(row.script)
+    const out = await done
+    expect(startsOf(h)).toContain('build-4')
+    expect(startsOf(h)).not.toContain('build-5')
+    if (row.reason !== undefined) {
+      expect(out).toBe('failed')
+      expect(reason(h)).toBe(row.reason)
+    } else {
+      expect(out).toBe('released')
+      expect(h.checkpoints().at(-1)).toMatchObject({ stage: 'tests', attempt: 4 })
+    }
+    if (row.blocked !== undefined) {
+      const block = h
+        .of('error')
+        .map((e) => e.payload as { output?: string })
+        .find((p) => p.output !== undefined)
+      expect(block?.output?.startsWith(row.blocked.first)).toBe(true)
+    }
+  })
+
+  it('AC7: every block of three failing attempts says attempt 3 and "or later"', async () => {
+    const { h, done } = go({ testResults: [F, F, F], buildHeads: HEADS })
+    expect(await done).toBe('released')
+    const out = h.of('error').map((e) => (e.payload as { output?: string }).output ?? '')
+    expect(out.length).toBeGreaterThan(0)
+    for (const o of out) {
+      expect(o.startsWith('the test command failed on attempt 3')).toBe(true)
+      expect(o.endsWith('which ends the run on attempt 3 or later.')).toBe(true)
+    }
+  })
+
+  const REMINDER = REMINDER_TEXT
+  interface HandoffRow {
+    name: string
+    script: Script
+  }
+  const RUNNER_ROWS: HandoffRow[] = [
+    { name: 'test_command', script: { testResults: [F, P], buildHeads: HEADS } },
+    { name: 'files_gate', script: { trees: [{ committed: ['src/extra.ts'] }, {}] } },
+    { name: 'base_conflict', script: { fetchTo: [ORIGIN], conflicts: [['src/a.ts']] } },
+    { name: 'no_commit', script: { commits: [0, 1] } },
+  ]
+  it.each(RUNNER_ROWS)('AC10: a build started by $name ends with the reminder', async (row) => {
+    const { h, done } = go(row.script)
+    await done
+    const handoff = h.handoffs['build-2'] ?? ''
+    const body = handoff.slice(
+      handoff.indexOf('<verify_report>'),
+      handoff.indexOf('</verify_report>'),
+    )
+    expect(body.trimEnd().endsWith(REMINDER)).toBe(true)
+  })
+
+  it('AC10: the reminder follows the undone paths', async () => {
+    const h = withPlan(harness({ acts: { 'build-2': ['paused'] } }))
+    mkdirSync(RUN_DIR(h.home), { recursive: true })
+    writeFileSync(join(RUN_DIR(h.home), 'undone-paths.json'), '["a.ts"]')
+    const work = {
+      ...resume({ ...checkpoint('build', 2), failing_report_id: 'test_command' }, INTERRUPTED),
+      run: RUN,
+    } as Extract<Work, { kind: 'resume' }>
+    await carryOut(work, h.deps)
+    const paragraph =
+      'The runner undid these paths the build left uncommitted:\na.ts\nOnly committed work is tested, shown in the diff and pushed.'
+    expect(h.handoffs['build-2']).toContain(`${paragraph}\n\n${REMINDER}`)
+  })
+
+  it('AC11: a Build after a failed Verify, and the first Build, carry no reminder', async () => {
+    const { h, done } = go({ verdicts: ['fail', 'pass'] })
+    await done
+    expect(h.handoffs['build-2']).toContain('<verify_report>')
+    expect(h.handoffs['build-2']).not.toContain(REMINDER)
+    expect(h.handoffs['build-1']).not.toContain(REMINDER)
   })
 })
