@@ -16,9 +16,7 @@ vi.mock('@zellige/react', () => ({
   Field: ({ children }: { children?: unknown }) => <div>{children as string}</div>,
   Input: () => <input />,
   Notice: ({ children, tone }: { children?: unknown; tone?: string }) => (
-    <div role="status" data-tone={tone}>
-      {children as string}
-    </div>
+    <output data-tone={tone}>{children as string}</output>
   ),
   RadioGroup: ({
     label,
