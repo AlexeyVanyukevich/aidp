@@ -64,7 +64,7 @@ export function CardDrawer() {
     const fresh = arrivals(seenProposals.current, proposals.data)
     seenProposals.current = new Set(proposals.data.map((p) => p.id))
     if (fresh.length > 0) setMessage(fresh.map((p) => `New proposal: ${p.title}.`).join(' '))
-  }, [proposals.data])
+  }, [proposals.data, setMessage])
   const helps = useQuery({
     queryKey: ['helps', taskId],
     queryFn: () => api.helps(taskId),
@@ -110,7 +110,7 @@ export function CardDrawer() {
       .filter((part) => part !== '')
       .join(' ')
     if (text !== '') setMessage(text)
-  }, [helps.data, task.data, client, taskId, proposals.data])
+  }, [helps.data, task.data, client, taskId, proposals.data, setMessage])
 
   // A card waiting on a question opens on it, once, when it first loads.
   const opened = useRef(false)
@@ -150,7 +150,7 @@ export function CardDrawer() {
           () => say(null),
         )
     else say(null)
-  }, [task.data, client, taskId])
+  }, [task.data, client, taskId, setMessage])
   useEffect(() => {
     if (problem) problemBox.current?.focus()
   }, [problem])
