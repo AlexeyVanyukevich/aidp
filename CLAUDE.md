@@ -60,6 +60,10 @@ repository's project — `CHR` for `charter`, `ZLC` for `@zellige/core`, `ZLR` f
 `@zellige/react` — never as an issue on the repository. For any other, `GET /api/projects` lists
 the keys.
 
+**Place every task you add by priority, against the Backlog already there** — never left at the
+bottom where it lands, never put first because it is new. `.claude/skills/board-priority/SKILL.md`
+says how, and what setting a priority means when the owner asks for it; read it before placing.
+
 **Record what is outside the task; do not fix it in passing.** A fix nobody asked for is an
 unreviewed change inside an unrelated commit. If it blocks the task, it is part of the task.
 
