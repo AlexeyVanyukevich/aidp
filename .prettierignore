@@ -9,7 +9,6 @@ test-results
 playwright-report
 
 # Not source, and not ours to format.
-.superpowers
 .run
 
 # Synced from the kit at session start.
