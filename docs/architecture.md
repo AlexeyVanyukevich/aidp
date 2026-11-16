@@ -1,7 +1,7 @@
 # Architecture
 
-What the board does today. This document is authoritative; the specs in
-`docs/superpowers/specs/` are decision records and say why, not what.
+What the board does today. This document is authoritative; a task's spec, on the board, is a
+decision record and says why, not what.
 
 ## The parts
 
