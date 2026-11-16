@@ -291,23 +291,29 @@ const SCRIPT = {
     },
     'Help with a whole batch': {
       ...drafting,
+      // Twice: the fake counts calls per title, so a retry's new task needs its own batch to ask.
+      'spec-writer': [...drafting['spec-writer'], ...drafting['spec-writer']],
+      // The sleep holds the help in flight long enough for the journey to see every button busy.
       helper: [
-        SUGGEST({
-          answers: [
-            {
-              question_id: 'q1',
-              option_id: 'five',
-              reasoning: 'Deliveries are cheap.',
-              unsure: 'The load on the receiver.',
-            },
-            {
-              question_id: 'q2',
-              text: 'Only server errors.',
-              reasoning: 'Client errors will not change on retry.',
-              unsure: 'Whether 429 counts.',
-            },
-          ],
-        }),
+        [
+          { sleep: 3_000 },
+          ...SUGGEST({
+            answers: [
+              {
+                question_id: 'q1',
+                option_id: 'five',
+                reasoning: 'Deliveries are cheap.',
+                unsure: 'The load on the receiver.',
+              },
+              {
+                question_id: 'q2',
+                text: 'Only server errors.',
+                reasoning: 'Client errors will not change on retry.',
+                unsure: 'Whether 429 counts.',
+              },
+            ],
+          }),
+        ],
       ],
     },
     'Answer by keyboard': drafting,
