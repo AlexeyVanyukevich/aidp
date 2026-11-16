@@ -612,10 +612,11 @@ function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string):
         'Read the question you were asked to help with: the question, its context, its options with the recommendation (for a whole-batch suggestion: kind, batch_lead and every question of the batch in order, each with its id, question, context_md, options and recommendation), and for a request to change files the files, for a migration request the path and the whole file, and for a plan the plan.',
     },
     async () => {
-      if ((await helpHead(ctx, helpId)).decision !== 'question')
+      const head = await helpHead(ctx, helpId)
+      if (head.decision !== 'question')
         return reply('This help is for a decision, not a question: use get_decision.', true)
       const { row, asked } = await helpQuestion(ctx, helpId)
-      if ((await helpHead(ctx, helpId)).mode === 'suggest_all')
+      if (head.mode === 'suggest_all')
         return json({
           kind: row.kind,
           batch_lead: row.question,
