@@ -787,6 +787,21 @@ and the board runs exactly three `gh` commands, `pr view`, `pr list` and `pr cre
 `realGh` and the runner's `Git.run` check the first two arguments against that list before they
 spawn anything and refuse any other with "the board does not run gh <first> <second>".
 
+`get_decision` for a `spec_review` help in `review` mode (never `restate`) also returns `previous`,
+null for version 1 or when no version numbered one below exists. Otherwise it holds `version` (the
+subject's minus one), and exactly one of `diff` (a unified line diff with 2 lines of context from
+`specs/line-diff.ts`, from that version's text to the subject's) and `body_md` (that version's whole
+text). The text is sent in place of the diff when the differing middles exceed 1,000,000 line pairs
+(`diff` too large to compute) or when the diff is longer than the text. It also holds `note` (the
+trimmed note of the spec run that wrote the subject, else null with `note_missing` saying it was saved
+by hand or written by a run with no note), `earlier_review` (`{ version, verdict, findings }` of the
+newest succeeded review of a lower version, retired or not, without `unsure`; else null), and
+`answers` (the owner's answers to that run's questions as `{ question, option, text }`, in the order
+asked, kept whole up to 4,000 characters in all) with `answers_left_out`, the count of entries
+dropped after the cap. The helper's `review:` instructions turn these into a re-review: each note
+point is checked, a dropped one is a `missing` finding, an unasked change a `risk` finding, and a
+settled point is not raised again.
+
 A `help` run never has status `running` and is never claimed through `POST /api/runner/claim`
 (which refuses `help` in `kinds`): it is `queued` with a null `queued_at`, and it ends in the
 transaction that ends its help — `succeeded` on a result, `failed` with the help's reason, or
