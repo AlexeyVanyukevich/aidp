@@ -26,6 +26,15 @@ in `.claude/settings.json` puts the skill's text into the owner's session whenev
 for such a review, and the owner can load the skill by hand with `/gate-review`. The hook does
 nothing in a board run's sessions, where `BOARD_RUN_ID` is set.
 
+## Placing tasks by priority
+
+`.claude/skills/board-priority/` says what a task's priority is (its place in Backlog, between two
+neighbours), the order of the groups AIDP's Backlog runs in, and how a session places a task it
+adds. It is marked `disable-model-invocation` like the gate-review skill, so board runs' agents
+do not list it; the Findings rule in `CLAUDE.md` sends every session that adds a task to it, and
+the owner can load it by hand with `/board-priority`. When the owner's order stops matching its
+groups, change the list there.
+
 ## Commit scopes
 
 `db`, `server`, `mcp`, `runner`, `web`, `ui` for the browser journeys, `deps`. Omit the scope
