@@ -1060,6 +1060,11 @@ interface HelpJson {
 const helpsOf = (taskId: string) => api<HelpJson[]>('GET', `/api/tasks/${taskId}/helps`)
 const askHelp = (approvalId: string, body: object) =>
   api<HelpJson>('POST', `/api/approvals/${approvalId}/helps`, body)
+/** Sets every project to suggest a batch one question at a time, as these scenarios expect. */
+async function suggestOneAtATime(): Promise<void> {
+  for (const project of await api<{ key: string }[]>('GET', '/api/projects'))
+    await api('PATCH', `/api/projects/${project.key}`, { batch_suggest: 'one' })
+}
 
 const SUGGESTION = {
   tool: 'save_help_result',
@@ -1152,6 +1157,7 @@ describe('a help beside a paused run', () => {
     })
     const { taskId, approvalId } = await pausedOnQuestion(f, 'Alpha')
     const other = await approvedTask('Beta')
+    await suggestOneAtATime()
     const daemon = f.daemon()
     const build = daemon.runOnce()
     await until(
@@ -1225,6 +1231,7 @@ describe('decision helps on the help lane', () => {
       },
     })
     const { taskId, approvalId } = await pausedOnQuestion(f, 'Alpha')
+    await suggestOneAtATime()
     for (const question_index of [0, 1])
       await askHelp(approvalId, { mode: 'suggest', question_index })
     const decided = [await backlogTask('Gamma'), await backlogTask('Delta')]
@@ -1719,6 +1726,7 @@ describe('helps across a restart on moved code', () => {
       },
     })
     const { taskId: alpha, approvalId: alphaApproval } = await pausedOnQuestion(f, 'Alpha')
+    await suggestOneAtATime()
     const beta = await pausedOnQuestion(f, 'Beta')
 
     let code = 'v1'
