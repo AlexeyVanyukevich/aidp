@@ -797,6 +797,8 @@ describe('the helper’s review of a redrafted spec', () => {
     'Decision:',
     'previous.answers',
     'context only',
+    'previous.note is not null',
+    'When previous.note is null, case (c) does not apply',
   ])('says %s', (phrase) => {
     expect(review).toContain(phrase)
   })
