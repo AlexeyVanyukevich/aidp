@@ -162,23 +162,12 @@ export function checkBatchResult(questions: BatchQuestion[], input: HelpResultIn
     seen.add(answer.question_id)
   }
   if (questions.some((q) => !seen.has(q.id))) findings.push({ field: 'answers', code: 'required' })
-  answers.forEach((answer, i) => {
-    const own = questions.find((q) => q.id === answer.question_id)
+  // Each answer is checked as a suggestion for its own question alone.
+  answers.forEach(({ question_id: id, ...suggestion }, i) => {
+    const own = questions.find((q) => q.id === id)
     if (own === undefined) return
-    const at = (field: string) => `answers[${i}].${field}`
-    const long = (field: string, value: string | undefined, limit: number) => {
-      if (value !== undefined && value.length > limit)
-        findings.push({ field: at(field), code: 'too_long' })
-    }
-    if (answer.option_id === undefined && blank(answer.text))
-      findings.push({ field: at('option_id'), code: 'required' })
-    if (answer.option_id !== undefined && !own.options.some((o) => o.id === answer.option_id))
-      findings.push({ field: at('option_id'), code: 'unknown_option' })
-    if (blank(answer.reasoning)) findings.push({ field: at('reasoning'), code: 'required' })
-    if (blank(answer.unsure)) findings.push({ field: at('unsure'), code: 'required' })
-    long('text', answer.text, HELP_LIMITS.text)
-    long('reasoning', answer.reasoning, HELP_LIMITS.part)
-    long('unsure', answer.unsure, HELP_LIMITS.part)
+    for (const finding of checkHelpResult('suggest', own.options, suggestion))
+      findings.push({ ...finding, field: `answers[${i}].${finding.field}` })
   })
   for (const field of [
     'option_id',
@@ -201,15 +190,12 @@ export function batchResultOf(questions: BatchQuestion[], input: HelpResultInput
     answers: questions.flatMap((question) => {
       const answer = answers.find((a) => a.question_id === question.id)
       if (answer === undefined) return []
-      return [
-        {
-          question_id: question.id,
-          ...(answer.option_id === undefined ? {} : { option_id: answer.option_id }),
-          ...(blank(answer.text) ? {} : { text: (answer.text ?? '').trim() }),
-          reasoning: (answer.reasoning ?? '').trim(),
-          unsure: (answer.unsure ?? '').trim(),
-        },
-      ]
+      // Trimmed as a suggestion for this question alone is.
+      const { mode: _mode, ...suggestion } = resultOf('suggest', answer) as Extract<
+        HelpResult,
+        { mode: 'suggest' }
+      >
+      return [{ question_id: question.id, ...suggestion }]
     }),
   }
 }
