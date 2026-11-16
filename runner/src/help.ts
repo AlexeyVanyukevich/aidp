@@ -38,9 +38,11 @@ export function helpPrompt(work: HelpWork, checkout?: CheckoutMade): string {
       work.question_index === null ? 'the open question' : `question ${work.question_index + 1}`
     lines.push(
       `Mode: ${work.mode}.`,
-      work.mode === 'suggest'
-        ? `Suggest an answer to ${asked} of the run waiting on the owner. Read it with get_question.`
-        : `Explain ${asked} of the run waiting on the owner in plain words. Read it with get_question.`,
+      work.mode === 'suggest_all'
+        ? 'Suggest an answer to every question of the batch the run is waiting on the owner for. Read them with get_question.'
+        : work.mode === 'suggest'
+          ? `Suggest an answer to ${asked} of the run waiting on the owner. Read it with get_question.`
+          : `Explain ${asked} of the run waiting on the owner in plain words. Read it with get_question.`,
     )
     return lines.join('\n')
   }

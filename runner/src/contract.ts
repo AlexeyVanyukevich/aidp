@@ -11,7 +11,15 @@ export type RunKind = 'spec' | 'delivery' | 'title' | 'rephrase'
 export interface HelpWork {
   id: string
   mode:
-    'suggest' | 'explain' | 'review' | 'restate' | 'recommend' | 'check' | 'advise' | 'code_review'
+    | 'suggest'
+    | 'suggest_all'
+    | 'explain'
+    | 'review'
+    | 'restate'
+    | 'recommend'
+    | 'check'
+    | 'advise'
+    | 'code_review'
   /** `question` for a help with a waiting request; the others are decisions of the card. */
   decision?: 'question' | 'spec_review' | 'stopped_run' | 'mark_done' | 'proposal' | 'pull_request'
   subject?: Record<string, unknown> | null

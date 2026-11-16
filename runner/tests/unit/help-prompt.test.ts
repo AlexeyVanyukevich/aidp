@@ -30,6 +30,12 @@ describe('the helper’s instructions for decisions (AC26)', () => {
   it.each(rows)('$name', ({ words }) => {
     expect(prompt).toContain(words)
   })
+  it.each(['suggest_all', 'one answer for every question', 'consistent with', 'answers'])(
+    'describes the whole-batch mode: %s',
+    (words) => {
+      expect(prompt).toContain(words)
+    },
+  )
   it('says why the run stopped before it recommends', () => {
     expect(prompt.indexOf('why the run stopped')).toBeLessThan(
       prompt.indexOf('then recommend one of'),
@@ -83,6 +89,12 @@ describe('the first message', () => {
     )
     expect(text).toContain('Decision: proposal. Mode: advise.')
     expect(text).toContain('source="base"')
+  })
+  it('names the whole-batch mode and asks for every question', () => {
+    const text = helpPrompt({ ...work('question', 'suggest_all') })
+    expect(text).toContain('Mode: suggest_all.')
+    expect(text).toContain('every question of the batch')
+    expect(text).toContain('get_question')
   })
   it('keeps the question words', () => {
     expect(helpPrompt({ ...work('question', 'suggest') })).toContain(
