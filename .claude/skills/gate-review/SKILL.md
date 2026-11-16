@@ -27,7 +27,13 @@ Give each finding exactly one destination, and say which:
 - **Blocker**: left alone, the work would do the wrong thing or fail its own criteria. Worth
   another round at this gate.
 - **Next gate**: wording, small gaps, or anything the next agent can settle without a decision.
-  Hand it on as a note for that gate. Never send it through a redraft at this one.
+  Never send it through a redraft round of its own. A note for a later gate needs a place on the
+  board that takes the owner's words, and most gates have none: today Approve spec and Approve
+  plan take no words, and a plan saved at high confidence skips its gate. Check the board, and
+  when the next gate cannot take the note, hand the point on in the first of these that applies:
+  - this gate already needs a redraft: add the point to that redraft's note, at no extra round;
+  - the owner can edit the work before approving it: give the edit, ready to paste;
+  - otherwise: leave it to the pull request gate, and say that it waits there.
 - **Outside the task**: record it where the repository's rules say findings go, and do not fold
   it into this task.
 
@@ -42,8 +48,9 @@ A gate with no blockers is ready, whatever the other findings are.
 - Put each note in its own fenced code block tagged `text`, so it copies in one action and
   pastes as written: the note's text only, with no blockquote markers and no Markdown that
   relies on being rendered. Nothing else goes inside the block.
-- Label every note with its destination (a redraft at this gate or an answer at the next one),
-  on the line above its block, so that a note meant for a later gate is never used as a redraft.
+- Label every note with its destination (a redraft at this gate, an edit the owner makes before
+  approving, or an answer at a later gate that takes words), on the line above its block, so that
+  a note meant for one destination is never used at another.
 - Before proposing a fix, test it against the cases it must not break. A suggested rule that
   makes correct work fail costs a round to undo.
 - A re-review is short: the verdict, what changed, what is left, and the note when one is needed.
