@@ -8,6 +8,7 @@ import type {
   Checkpoint,
   EventType,
   HelpDecision,
+  BatchSuggest,
   HelpMode,
   HelpResult,
   HelpStatus,
@@ -39,6 +40,7 @@ export interface ProjectsTable {
   github_repo: string
   base_branch: string
   setup_command: string | null
+  batch_suggest: Generated<BatchSuggest>
   next_task_number: Generated<number>
   created_at: Generated<Date>
 }

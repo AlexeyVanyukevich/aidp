@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   checkDecisionResult,
+  batchResultOf,
+  checkBatchResult,
   checkHelpResult,
   decisionResultOf,
   hasInFlight,
@@ -8,6 +10,8 @@ import {
   lostHelps,
   questionOf,
   resultOf,
+  suggestRoute,
+  type BatchAnswerInput,
   type HelpResultInput,
 } from '../../src/modules/approvals/help-rules.js'
 
@@ -224,5 +228,166 @@ describe('decisionResultOf for review choices', () => {
       expect('choices' in first).toBe(false)
       expect('recommended' in first).toBe(false)
     }
+  })
+})
+
+const Q = (id: string, options = OPTIONS) => ({
+  id,
+  question: id,
+  options,
+  recommendation: null,
+  context_md: null,
+})
+const BATCH = [Q('q1'), Q('q2', [{ id: 'x', label: 'X' }]), Q('q3')]
+const OK = (id: string, change: Partial<BatchAnswerInput> = {}): BatchAnswerInput => ({
+  question_id: id,
+  option_id: id === 'q2' ? 'x' : 'a',
+  reasoning: 'r',
+  unsure: 'u',
+  ...change,
+})
+const long = 'x'.repeat(4_001)
+
+interface BatchRow {
+  name: string
+  answers: BatchAnswerInput[] | undefined
+  other?: HelpResultInput
+  /** `field:code` of the findings, empty when the result is saved. */
+  expected: string[]
+}
+const batchRows: BatchRow[] = [
+  { name: 'every question once', answers: [OK('q1'), OK('q2'), OK('q3')], expected: [] },
+  { name: 'in another order', answers: [OK('q3'), OK('q1'), OK('q2')], expected: [] },
+  { name: 'no answers at all', answers: undefined, expected: ['answers:required'] },
+  { name: 'a missing q3', answers: [OK('q1'), OK('q2')], expected: ['answers:required'] },
+  {
+    name: 'an unknown q9',
+    answers: [OK('q1'), OK('q2'), OK('q3'), OK('q9')],
+    expected: ['answers:unknown_question'],
+  },
+  {
+    name: 'a repeated q1',
+    answers: [OK('q1'), OK('q1'), OK('q2'), OK('q3')],
+    expected: ['answers:duplicate'],
+  },
+  {
+    name: 'an option q2 does not offer',
+    answers: [OK('q1'), OK('q2', { option_id: 'a' }), OK('q3')],
+    expected: ['answers[1].option_id:unknown_option'],
+  },
+  {
+    name: 'neither option nor words',
+    answers: [OK('q1'), OK('q2'), OK('q3', { option_id: undefined })],
+    expected: ['answers[2].option_id:required'],
+  },
+  {
+    name: 'words alone',
+    answers: [OK('q1'), OK('q2'), OK('q3', { option_id: undefined, text: 'Teal' })],
+    expected: [],
+  },
+  {
+    name: 'a blank reasoning',
+    answers: [OK('q1', { reasoning: '  ' }), OK('q2'), OK('q3')],
+    expected: ['answers[0].reasoning:required'],
+  },
+  {
+    name: 'no unsure',
+    answers: [OK('q1'), OK('q2'), OK('q3', { unsure: undefined })],
+    expected: ['answers[2].unsure:required'],
+  },
+  {
+    name: 'words over the limit',
+    answers: [OK('q1', { text: long }), OK('q2'), OK('q3')],
+    expected: ['answers[0].text:too_long'],
+  },
+  {
+    name: 'an extra asked field',
+    answers: [OK('q1'), OK('q2'), OK('q3')],
+    other: { asked: 'q' },
+    expected: ['asked:not_allowed'],
+  },
+  {
+    name: 'a top-level reasoning',
+    answers: [OK('q1'), OK('q2'), OK('q3')],
+    other: { reasoning: 'r' },
+    expected: ['reasoning:not_allowed'],
+  },
+]
+
+describe('checkBatchResult', () => {
+  it.each(batchRows)('$name', ({ answers, other, expected }) => {
+    const findings = checkBatchResult(BATCH, { ...other, answers })
+    expect(findings.map((f) => `${f.field}:${f.code}`)).toEqual(expected)
+  })
+})
+
+describe('batchResultOf', () => {
+  it('stores the answers in the batch order, trimmed', () => {
+    const result = batchResultOf(BATCH, {
+      answers: [
+        OK('q3', { option_id: undefined, text: '  Teal ', reasoning: ' r ', unsure: ' u ' }),
+        OK('q1'),
+        OK('q2'),
+      ],
+    })
+    expect(result).toEqual({
+      mode: 'suggest_all',
+      answers: [
+        { question_id: 'q1', option_id: 'a', reasoning: 'r', unsure: 'u' },
+        { question_id: 'q2', option_id: 'x', reasoning: 'r', unsure: 'u' },
+        { question_id: 'q3', text: 'Teal', reasoning: 'r', unsure: 'u' },
+      ],
+    })
+  })
+})
+
+describe('answers on a suggestion or an explanation', () => {
+  it.each(['suggest', 'explain'] as const)('%s refuses answers', (mode) => {
+    const input: HelpResultInput = {
+      ...(mode === 'suggest' ? { option_id: 'a', ...SUGGEST } : EXPLAIN),
+      answers: [OK('q1')],
+    }
+    expect(checkHelpResult(mode, OPTIONS, input)).toEqual([
+      { field: 'answers', code: 'not_allowed' },
+    ])
+  })
+})
+
+describe('hasInFlight for the whole batch', () => {
+  it('sees a running suggest_all help with no question index', () => {
+    const helps = [
+      { question_index: null, mode: 'suggest_all' as const, status: 'running' as const },
+    ]
+    expect(hasInFlight(helps, null, 'suggest_all')).toBe(true)
+    expect(hasInFlight(helps, null, 'suggest')).toBe(false)
+  })
+})
+
+describe('suggestRoute', () => {
+  const flying = (status: 'queued' | 'running' | 'succeeded') => [
+    { question_index: null, mode: 'suggest_all' as const, status },
+  ]
+  it.each<[string, Parameters<typeof suggestRoute>[0], string]>([
+    ['a batch on whole', { kind: 'questions', setting: 'whole', helps: [] }, 'whole'],
+    ['a batch on one', { kind: 'questions', setting: 'one', helps: [] }, 'one'],
+    [
+      'a batch with a queued whole help',
+      { kind: 'questions', setting: 'one', helps: flying('queued') },
+      'in_flight',
+    ],
+    [
+      'a batch with a running whole help',
+      { kind: 'questions', setting: 'whole', helps: flying('running') },
+      'in_flight',
+    ],
+    [
+      'a batch with a finished whole help',
+      { kind: 'questions', setting: 'whole', helps: flying('succeeded') },
+      'whole',
+    ],
+    ['a single question on whole', { kind: 'question', setting: 'whole', helps: [] }, 'one'],
+    ['a plan on whole', { kind: 'plan', setting: 'whole', helps: [] }, 'one'],
+  ])('%s', (_name, input, expected) => {
+    expect(suggestRoute(input)).toBe(expected)
   })
 })

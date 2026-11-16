@@ -17,7 +17,7 @@ export type Decision = (typeof DECISIONS)[number]
 
 /** The modes each decision offers. */
 export const DECISION_MODES = {
-  question: ['suggest', 'explain'],
+  question: ['suggest', 'explain', 'suggest_all'],
   spec_review: ['review', 'restate'],
   stopped_run: ['recommend'],
   mark_done: ['check'],

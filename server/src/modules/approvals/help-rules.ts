@@ -1,5 +1,6 @@
 import type {
   ApprovalKind,
+  BatchSuggest,
   HelpMode,
   HelpResult,
   HelpStatus,
@@ -35,6 +36,16 @@ export interface HelpResultInput {
   asked?: string | undefined
   matters?: string | undefined
   leads_to?: string | undefined
+  answers?: BatchAnswerInput[] | undefined
+}
+
+/** One question's answer in a whole-batch suggestion. */
+export interface BatchAnswerInput {
+  question_id: string
+  option_id?: string | undefined
+  text?: string | undefined
+  reasoning?: string | undefined
+  unsure?: string | undefined
 }
 
 const blank = (text: string | undefined | null) =>
@@ -83,7 +94,7 @@ export function questionOf(
 
 /** What a saved result must be. The first finding names the field to fix. */
 export function checkHelpResult(
-  mode: QuestionHelpMode,
+  mode: Exclude<QuestionHelpMode, 'suggest_all'>,
   options: ApprovalOption[],
   input: HelpResultInput,
 ): Finding[] {
@@ -91,6 +102,7 @@ export function checkHelpResult(
   const long = (field: string, value: string | undefined, limit: number) => {
     if (value !== undefined && value.length > limit) findings.push({ field, code: 'too_long' })
   }
+  if (input.answers !== undefined) findings.push({ field: 'answers', code: 'not_allowed' })
   if (mode === 'suggest') {
     if (input.option_id === undefined && blank(input.text))
       findings.push({ field: 'option_id', code: 'required' })
@@ -115,7 +127,10 @@ export function checkHelpResult(
 }
 
 /** The result as it is stored: only the fields of its mode. */
-export function resultOf(mode: QuestionHelpMode, input: HelpResultInput): HelpResult {
+export function resultOf(
+  mode: Exclude<QuestionHelpMode, 'suggest_all'>,
+  input: HelpResultInput,
+): HelpResult {
   if (mode === 'explain')
     return {
       mode,
@@ -130,6 +145,87 @@ export function resultOf(mode: QuestionHelpMode, input: HelpResultInput): HelpRe
     reasoning: (input.reasoning ?? '').trim(),
     unsure: (input.unsure ?? '').trim(),
   }
+}
+
+/**
+ * What a whole-batch suggestion must be: every question once, each answer as good as a
+ * suggestion for that question alone, and no other result field.
+ */
+export function checkBatchResult(questions: BatchQuestion[], input: HelpResultInput): Finding[] {
+  const findings: Finding[] = []
+  const answers = input.answers ?? []
+  const seen = new Set<string>()
+  for (const answer of answers) {
+    if (!questions.some((q) => q.id === answer.question_id))
+      findings.push({ field: 'answers', code: 'unknown_question' })
+    else if (seen.has(answer.question_id)) findings.push({ field: 'answers', code: 'duplicate' })
+    seen.add(answer.question_id)
+  }
+  if (questions.some((q) => !seen.has(q.id))) findings.push({ field: 'answers', code: 'required' })
+  answers.forEach((answer, i) => {
+    const own = questions.find((q) => q.id === answer.question_id)
+    if (own === undefined) return
+    const at = (field: string) => `answers[${i}].${field}`
+    const long = (field: string, value: string | undefined, limit: number) => {
+      if (value !== undefined && value.length > limit)
+        findings.push({ field: at(field), code: 'too_long' })
+    }
+    if (answer.option_id === undefined && blank(answer.text))
+      findings.push({ field: at('option_id'), code: 'required' })
+    if (answer.option_id !== undefined && !own.options.some((o) => o.id === answer.option_id))
+      findings.push({ field: at('option_id'), code: 'unknown_option' })
+    if (blank(answer.reasoning)) findings.push({ field: at('reasoning'), code: 'required' })
+    if (blank(answer.unsure)) findings.push({ field: at('unsure'), code: 'required' })
+    long('text', answer.text, HELP_LIMITS.text)
+    long('reasoning', answer.reasoning, HELP_LIMITS.part)
+    long('unsure', answer.unsure, HELP_LIMITS.part)
+  })
+  for (const field of [
+    'option_id',
+    'text',
+    'reasoning',
+    'unsure',
+    'asked',
+    'matters',
+    'leads_to',
+  ] as const)
+    if (input[field] !== undefined) findings.push({ field, code: 'not_allowed' })
+  return findings
+}
+
+/** The whole-batch result as it is stored: in the batch's order, each answer trimmed. */
+export function batchResultOf(questions: BatchQuestion[], input: HelpResultInput): HelpResult {
+  const answers = input.answers ?? []
+  return {
+    mode: 'suggest_all',
+    answers: questions.flatMap((question) => {
+      const answer = answers.find((a) => a.question_id === question.id)
+      if (answer === undefined) return []
+      return [
+        {
+          question_id: question.id,
+          ...(answer.option_id === undefined ? {} : { option_id: answer.option_id }),
+          ...(blank(answer.text) ? {} : { text: (answer.text ?? '').trim() }),
+          reasoning: (answer.reasoning ?? '').trim(),
+          unsure: (answer.unsure ?? '').trim(),
+        },
+      ]
+    }),
+  }
+}
+
+/**
+ * What a press of Suggest an answer does: join a whole-batch help already in flight, start one
+ * for the whole batch, or suggest for the one question.
+ */
+export function suggestRoute(input: {
+  kind: ApprovalKind
+  setting: BatchSuggest
+  helps: { question_index: number | null; mode: HelpMode; status: HelpStatus }[]
+}): 'in_flight' | 'whole' | 'one' {
+  if (input.kind !== 'questions') return 'one'
+  if (hasInFlight(input.helps, null, 'suggest_all')) return 'in_flight'
+  return input.setting === 'whole' ? 'whole' : 'one'
 }
 
 /** A help that still counts as in flight: its button is busy. */

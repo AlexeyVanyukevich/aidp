@@ -29,6 +29,8 @@ import {
 } from './decision-rules.js'
 import {
   checkDecisionResult,
+  batchResultOf,
+  checkBatchResult,
   checkHelpResult,
   decisionResultOf,
   HELP_LIMITS,
@@ -36,6 +38,7 @@ import {
   isCurrent,
   questionOf,
   resultOf,
+  suggestRoute,
   type CheckoutRead,
   type DecisionResultInput,
   type DecisionResultMode,
@@ -325,13 +328,14 @@ export class HelpService {
   async create(
     approvalId: string,
     questionIndex: number | null,
-    mode: QuestionHelpMode,
+    pressed: Exclude<QuestionHelpMode, 'suggest_all'>,
   ): Promise<HelpView> {
     return this.db.transaction().execute(async (trx) => {
       const row = await trx
         .selectFrom('approval_requests')
         .innerJoin('runs', 'runs.id', 'approval_requests.run_id')
         .innerJoin('tasks', 'tasks.id', 'runs.task_id')
+        .innerJoin('projects', 'projects.id', 'tasks.project_id')
         .select([
           'approval_requests.id',
           'approval_requests.run_id',
@@ -345,6 +349,7 @@ export class HelpService {
           'runs.task_id',
           'runs.block',
           'tasks.state as task_state',
+          'projects.batch_suggest',
         ])
         .where('approval_requests.id', '=', approvalId)
         .forUpdate()
@@ -384,11 +389,24 @@ export class HelpService {
         .where('approval_id', '=', approvalId)
         .where('status', 'in', ['queued', 'running'])
         .execute()
-      const busy = existing.find(
-        (help) => help.question_index === questionIndex && help.mode === mode,
-      )
+      // A press of Suggest an answer on a batch may become the one whole-batch help.
+      const route =
+        pressed === 'suggest'
+          ? suggestRoute({
+              kind: row.kind as ApprovalKind,
+              setting: row.batch_suggest,
+              helps: existing,
+            })
+          : 'one'
+      const mode: QuestionHelpMode = route === 'whole' ? 'suggest_all' : pressed
+      const index = route === 'whole' ? null : questionIndex
+      const busy =
+        route === 'in_flight'
+          ? existing.find((help) => help.mode === 'suggest_all')
+          : existing.find((help) => help.question_index === index && help.mode === mode)
       // A second press while one is in flight starts nothing more.
-      if (busy !== undefined && hasInFlight(existing, questionIndex, mode)) return busy as HelpView
+      if (busy !== undefined && (route === 'in_flight' || hasInFlight(existing, index, mode)))
+        return busy as HelpView
 
       const created = await trx
         .insertInto('helps')
@@ -397,7 +415,7 @@ export class HelpService {
           approval_id: approvalId,
           decision: 'question',
           subject: null,
-          question_index: questionIndex,
+          question_index: index,
           mode,
           status: 'queued',
           result: null,
@@ -894,7 +912,12 @@ export class HelpService {
         },
         help.question_index,
       )
-      const findings = checkHelpResult(help.mode as QuestionHelpMode, asked?.options ?? [], input)
+      const mode = help.mode as QuestionHelpMode
+      const batch = (help.questions ?? []) as BatchQuestion[]
+      const findings =
+        mode === 'suggest_all'
+          ? checkBatchResult(batch, input)
+          : checkHelpResult(mode, asked?.options ?? [], input)
       if (findings.length > 0)
         return {
           error: [
@@ -906,7 +929,9 @@ export class HelpService {
         .updateTable('helps')
         .set({
           status: 'succeeded',
-          result: JSON.stringify(resultOf(help.mode as QuestionHelpMode, input)),
+          result: JSON.stringify(
+            mode === 'suggest_all' ? batchResultOf(batch, input) : resultOf(mode, input),
+          ),
           ended_at: this.clock(),
         })
         .where('id', '=', helpId)

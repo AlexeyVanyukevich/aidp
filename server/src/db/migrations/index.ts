@@ -12,6 +12,7 @@ import * as rephrase from './010_rephrase.js'
 import * as decisionHelps from './011_decision_helps.js'
 import * as proposals from './012_proposals.js'
 import * as pullRequestReview from './013_pull_request_review.js'
+import * as batchSuggest from './014_batch_suggest.js'
 
 /**
  * Listed rather than discovered from disk: a file provider imports at runtime, which fails
@@ -32,4 +33,5 @@ export const migrations: Record<string, Migration> = {
   '011_decision_helps': decisionHelps,
   '012_proposals': proposals,
   '013_pull_request_review': pullRequestReview,
+  '014_batch_suggest': batchSuggest,
 }

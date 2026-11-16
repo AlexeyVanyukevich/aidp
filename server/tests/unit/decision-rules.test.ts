@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { BlockCause, TaskState } from '../../src/shared/vocabulary.js'
 import {
   DECISIONS,
+  DECISION_MODES,
   offeredDecisions,
   recommendableActions,
   stands,
@@ -193,5 +194,11 @@ describe('stands for a proposal', () => {
     },
   ])('$name', ({ id, facts, expected }) => {
     expect(stands('proposal', { proposal_id: id }, facts)).toBe(expected)
+  })
+})
+
+describe('DECISION_MODES.question', () => {
+  it('offers suggest, explain and the whole-batch suggestion', () => {
+    expect([...DECISION_MODES.question]).toEqual(['suggest', 'explain', 'suggest_all'])
   })
 })
