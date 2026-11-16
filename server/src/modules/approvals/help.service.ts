@@ -400,13 +400,13 @@ export class HelpService {
           : 'one'
       const mode: QuestionHelpMode = route === 'whole' ? 'suggest_all' : pressed
       const index = route === 'whole' ? null : questionIndex
-      const busy =
-        route === 'in_flight'
-          ? existing.find((help) => help.mode === 'suggest_all')
-          : existing.find((help) => help.question_index === index && help.mode === mode)
-      // A second press while one is in flight starts nothing more.
-      if (busy !== undefined && (route === 'in_flight' || hasInFlight(existing, index, mode)))
-        return busy as HelpView
+      // A press while the whole-batch help is in flight joins it.
+      if (route === 'in_flight')
+        return existing.find((help) => help.mode === 'suggest_all') as HelpView
+      // A second press while one is in flight starts nothing more. On the whole route nothing
+      // matches: suggestRoute gives 'whole' only when no whole-batch help is in flight.
+      const busy = existing.find((help) => help.question_index === index && help.mode === mode)
+      if (busy !== undefined && hasInFlight(existing, index, mode)) return busy as HelpView
 
       const created = await trx
         .insertInto('helps')
