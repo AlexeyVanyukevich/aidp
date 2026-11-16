@@ -303,6 +303,11 @@ const VERIFIER_TEST_RULES: { rule: string; clause: string }[] = [
 
 const BUILDER_TEST_RULES: { rule: string; clause: string }[] = [
   {
+    rule: 'every test without proof is run against the base before an attempt ends',
+    clause:
+      'Before you end any attempt, run against the base’s code, as above, each test the branch adds or changes that you have not seen failing and that no summary in <context> proves. Say that a test was never seen failing only when that run cannot be made, in plain words, with the reason it cannot.',
+  },
+  {
     rule: 'each test is written and run before the code, and seen failing',
     clause:
       'For each test the build adds or changes, write the test and run it before you write the code it tests, and see it fail',
@@ -341,10 +346,6 @@ const BUILDER_TEST_RULES: { rule: string; clause: string }[] = [
       'On a later attempt this covers every such test of the branch, not only the tests that attempt adds or changes, since an earlier attempt’s summary may have left a test out',
   },
   {
-    rule: 'a test never seen failing is said so',
-    clause: 'A test you never saw failing, say so in plain words',
-  },
-  {
     rule: 'the guard reason',
     clause: 'guards behaviour the base already has',
   },
@@ -357,6 +358,12 @@ const BUILDER_TEST_RULES: { rule: string; clause: string }[] = [
 describe('the builder’s rules for seeing a test fail', () => {
   it.each(BUILDER_TEST_RULES)('says $rule', ({ clause }) => {
     expect(AGENTS.builder!.prompt).toContain(clause)
+  })
+
+  it('no longer lets a builder admit a missing run without trying', () => {
+    expect(AGENTS.builder!.prompt).not.toContain(
+      'A test you never saw failing, say so in plain words',
+    )
   })
 })
 
