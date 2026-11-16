@@ -1,5 +1,6 @@
 import { Type } from 'typebox'
 import { NonBlankString, Uuid } from '../../shared/schemas.js'
+import { BATCH_SUGGESTS } from '../../shared/vocabulary.js'
 
 const SetupCommand = Type.Union([Type.String({ maxLength: 500 }), Type.Null()])
 
@@ -18,7 +19,7 @@ export const CreateProjectBody = Type.Object(
 export const UpdateProjectBody = Type.Object(
   {
     setup_command: Type.Optional(SetupCommand),
-    batch_suggest: Type.Optional(Type.Union([Type.Literal('whole'), Type.Literal('one')])),
+    batch_suggest: Type.Optional(Type.Union(BATCH_SUGGESTS.map((value) => Type.Literal(value)))),
   },
   { additionalProperties: false, minProperties: 1 },
 )
