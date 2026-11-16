@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Field, Input, Notice } from '@zellige/react'
+import { Button, Field, Input, Notice, Radio, RadioGroup } from '@zellige/react'
 import { api } from '../api'
 import { invalidField } from '../errors'
 import { Loaded } from '../Loaded'
 import { usePage } from '../page'
 import { testCommandsKey } from '../stream'
-import type { TestCommand } from '../types'
+import type { BatchSuggest, TestCommand } from '../types'
 
 const NAME_PROBLEM = 'Use 1 to 40 characters that no other test command of this project uses.'
 const COMMAND_PROBLEM = 'Enter a command of up to 500 characters that runs in that repository.'
@@ -21,6 +21,7 @@ export function Settings() {
     queryKey: testCommandsKey(key),
     queryFn: () => api.testCommands(key),
   })
+  const projects = useQuery({ queryKey: ['projects'], queryFn: api.projects })
   const [status, setStatus] = useState('')
 
   return (
@@ -33,7 +34,85 @@ export function Settings() {
       <Loaded query={commands} failure="This project could not be loaded.">
         {(list) => <TestCommands projectKey={key} list={list} announce={setStatus} />}
       </Loaded>
+      <Loaded query={projects} failure="This project could not be loaded.">
+        {(list) => {
+          const saved = list.find((project) => project.key === key)?.batch_suggest
+          return saved === undefined ? null : (
+            <BatchSuggestions projectKey={key} saved={saved} announce={setStatus} />
+          )
+        }}
+      </Loaded>
     </main>
+  )
+}
+
+export const BATCH_SUGGEST_OPTIONS: readonly { value: BatchSuggest; label: string }[] = [
+  { value: 'whole', label: 'The whole batch in one help' },
+  { value: 'one', label: 'One question at a time' },
+]
+export const BATCH_SUGGEST_FAILED = 'The setting could not be saved. Try again.'
+
+/** The status line after a save: the chosen radio's label. */
+export function batchSuggestSaved(value: BatchSuggest): string {
+  const label = BATCH_SUGGEST_OPTIONS.find((option) => option.value === value)?.label ?? value
+  return `Batch suggestions saved: ${label}.`
+}
+
+/**
+ * How a batch of questions is suggested: the radios save nothing; the button does. A save that
+ * works says so in the page's status region and leaves focus on the button; one that fails says
+ * so in an alert, which takes focus.
+ */
+export function BatchSuggestions({
+  projectKey,
+  saved,
+  announce,
+}: {
+  projectKey: string
+  saved: BatchSuggest
+  announce: (text: string) => void
+}) {
+  const client = useQueryClient()
+  const [value, setValue] = useState<BatchSuggest>(saved)
+  const alert = useRef<HTMLDivElement>(null)
+  const save = useMutation({
+    mutationFn: (chosen: BatchSuggest) => api.setBatchSuggest(projectKey, chosen),
+    onSuccess: async (_project, chosen) => {
+      announce(batchSuggestSaved(chosen))
+      await client.invalidateQueries({ queryKey: ['projects'] })
+    },
+  })
+  useEffect(() => {
+    if (save.isError) alert.current?.focus()
+  }, [save.isError])
+  return (
+    <>
+      <h2>Batch suggestions</h2>
+      <Notice tone="danger" className="announce" ref={alert} tabIndex={-1}>
+        {save.isError ? BATCH_SUGGEST_FAILED : ''}
+      </Notice>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault()
+          save.mutate(value)
+        }}
+      >
+        <RadioGroup
+          label="How a batch of questions is suggested"
+          value={value}
+          onChange={(chosen) => setValue(chosen as BatchSuggest)}
+        >
+          {BATCH_SUGGEST_OPTIONS.map((option) => (
+            <Radio key={option.value} value={option.value}>
+              {option.label}
+            </Radio>
+          ))}
+        </RadioGroup>
+        <Button type="submit" variant="primary" busy={save.isPending}>
+          Save batch suggestions
+        </Button>
+      </form>
+    </>
   )
 }
 

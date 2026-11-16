@@ -13,6 +13,7 @@ import {
   failureText,
   type FindingPick,
   resultHeading,
+  suggestHeading,
   type ModeHelp,
   type QuestionHelp,
   type ReviewResult,
@@ -84,6 +85,9 @@ export function HelpResults({
     switch (result.mode) {
       case 'suggest':
         return renderers.suggest?.(result)
+      case 'suggest_all':
+        // Shown under each question as its own suggestion, never as a result of its own.
+        return null
       case 'explain':
         return renderers.explain?.(result)
       case 'review':
@@ -155,7 +159,7 @@ export function HelpPanel({
       id: 'suggest',
       label: 'Suggest an answer',
       state: help.suggest,
-      heading: 'Suggested answer',
+      heading: suggestHeading(help.suggest.source ?? 'own'),
       failureLine: (reason) => failureText('suggest', reason),
     },
     {

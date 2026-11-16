@@ -289,6 +289,27 @@ const SCRIPT = {
         }),
       ],
     },
+    'Help with a whole batch': {
+      ...drafting,
+      helper: [
+        SUGGEST({
+          answers: [
+            {
+              question_id: 'q1',
+              option_id: 'five',
+              reasoning: 'Deliveries are cheap.',
+              unsure: 'The load on the receiver.',
+            },
+            {
+              question_id: 'q2',
+              text: 'Only server errors.',
+              reasoning: 'Client errors will not change on retry.',
+              unsure: 'Whether 429 counts.',
+            },
+          ],
+        }),
+      ],
+    },
     'Answer by keyboard': drafting,
     'Redraft a spec': { 'spec-writer': [[SAVE]] },
     'Ask about colours': asking('Which colour should the retry banner be?', [

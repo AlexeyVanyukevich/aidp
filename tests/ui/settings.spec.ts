@@ -158,3 +158,48 @@ test('a failed removal is reported in the list’s alert, which takes focus', as
   await expect(alert).toHaveText('The test command could not be removed. Try again.')
   await expect(alert).toBeFocused()
 })
+
+test('batch suggestions are saved only by the button, and a failed save takes focus', async ({
+  page,
+  request,
+}) => {
+  const key = await project(request)
+  await page.goto(appUrl(`/p/${key}/settings`))
+  const group = page.getByRole('radiogroup', { name: 'How a batch of questions is suggested' })
+  await expect(page.getByRole('heading', { level: 2, name: 'Batch suggestions' })).toBeVisible()
+  await expect(group.getByRole('radio', { name: 'The whole batch in one help' })).toBeChecked()
+  const save = page.getByRole('button', { name: 'Save batch suggestions' })
+  const stored = async () =>
+    (
+      (await (await request.get(appUrl('/api/projects'))).json()) as {
+        key: string
+        batch_suggest: string
+      }[]
+    ).find((p) => p.key === key)?.batch_suggest
+
+  // The focus order is the group, then the button; choosing saves nothing.
+  await group.getByRole('radio', { name: 'One question at a time' }).focus()
+  await page.keyboard.press('Space')
+  expect(await stored()).toBe('whole')
+  await page.keyboard.press('Tab')
+  await expect(save).toBeFocused()
+
+  await page.keyboard.press('Enter')
+  const status = page.getByRole('status').filter({ hasText: 'Batch suggestions saved' })
+  await expect(status).toHaveText('Batch suggestions saved: One question at a time.')
+  await expect(save).toBeFocused()
+  expect(await stored()).toBe('one')
+  await expectAccessible(page)
+
+  // A failed save is said in the alert, which takes focus.
+  await page.route(`**/api/projects/${key}`, (route) =>
+    route.request().method() === 'PATCH' ? route.abort() : route.continue(),
+  )
+  await save.click()
+  const alert = page
+    .locator('.zl-notice')
+    .filter({ hasText: 'The setting could not be saved. Try again.' })
+  await expect(alert).toBeVisible()
+  await expect(alert).toBeFocused()
+  expect(await stored()).toBe('one')
+})

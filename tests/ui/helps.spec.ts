@@ -104,6 +104,9 @@ test('a batch is helped question by question, and Use this answer touches only i
   request,
 }) => {
   await registerProject(request, draft())
+  expect(
+    (await request.patch(appUrl('/api/projects/DFT'), { data: { batch_suggest: 'one' } })).ok(),
+  ).toBe(true)
   const created = (await (
     await request.post(appUrl('/api/projects/DFT/tasks'), {
       data: { title: 'Help with a batch', description_md: 'Retry failed deliveries.' },

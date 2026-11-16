@@ -32,6 +32,7 @@ export interface TestCommand {
   is_default: boolean
 }
 export interface ProjectWithLinks extends ProjectView {
+  batch_suggest: BatchSuggest
   links: ProjectLink[]
   /** Every test command, ordered by lower-case name. */
   test_commands: TestCommand[]
@@ -139,7 +140,9 @@ export interface ApprovalView {
   created_at: string
   answered_at: string | null
 }
-export type QuestionHelpMode = 'suggest' | 'explain'
+export type QuestionHelpMode = 'suggest' | 'explain' | 'suggest_all'
+/** How a project suggests a batch's answers: the whole batch in one help, or one question each. */
+export type BatchSuggest = 'whole' | 'one'
 export type HelpMode =
   QuestionHelpMode | 'review' | 'restate' | 'recommend' | 'check' | 'code_review'
 export type HelpDecision =
@@ -149,6 +152,16 @@ export type StoppedRunAction = 'resume' | 'cancel' | 'rerun_again' | 'rerun_keep
 /** What a helper saved: a suggestion, a plain restatement, or advice on a decision of the card. */
 export type HelpResult =
   | { mode: 'suggest'; option_id?: string; text?: string; reasoning: string; unsure: string }
+  | {
+      mode: 'suggest_all'
+      answers: {
+        question_id: string
+        option_id?: string
+        text?: string
+        reasoning: string
+        unsure: string
+      }[]
+    }
   | { mode: 'explain'; asked: string; matters: string; leads_to: string }
   | {
       mode: 'code_review'

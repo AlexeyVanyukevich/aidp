@@ -1,4 +1,5 @@
 import type {
+  BatchSuggest,
   ApprovalAnswer,
   BatchAnswer,
   ApprovalView,
@@ -67,6 +68,8 @@ export const api = {
     request<ProjectView>('POST', '/api/projects', input),
   setSetupCommand: (key: string, setup_command: string | null) =>
     request<ProjectView>('PATCH', `/api/projects/${key}`, { setup_command }),
+  setBatchSuggest: (key: string, batch_suggest: BatchSuggest) =>
+    request<ProjectView>('PATCH', `/api/projects/${key}`, { batch_suggest }),
   testCommands: (key: string) =>
     request<TestCommand[]>('GET', `/api/projects/${key}/test-commands`),
   addTestCommand: (key: string, input: { name: string; command: string }) =>

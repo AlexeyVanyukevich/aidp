@@ -21,6 +21,9 @@ import {
   preSendProblem,
   NO_WORDS_WITH_PLAN,
   failureText,
+  fillEveryAnswer,
+  hasWholeAnswers,
+  suggestHeading,
   helpAnnouncement,
   newlyEnded,
   questionHelp,
@@ -28,7 +31,7 @@ import {
   type ReviewResult,
 } from '../../src/card/approvals'
 import { keysFor } from '../../src/stream'
-import type { ApprovalView, HelpView } from '../../src/types'
+import type { ApprovalView, BatchQuestion, HelpView } from '../../src/types'
 
 const base: ApprovalView = {
   id: 'ap',
@@ -544,3 +547,284 @@ describe('answerRefusal', () => {
     expect(answerRefusal(error)).toBe(expected)
   })
 })
+
+// The whole-batch suggestion (AIDP-172).
+
+const whole = (change: Partial<HelpView>): HelpView =>
+  help({
+    id: 'w1',
+    mode: 'suggest_all',
+    question_index: null,
+    result: {
+      mode: 'suggest_all',
+      answers: [
+        { question_id: 'q1', option_id: 'a', reasoning: 'wr1', unsure: 'wu1' },
+        { question_id: 'q2', text: 'Words of the whole', reasoning: 'wr2', unsure: 'wu2' },
+      ],
+    },
+    ...change,
+  })
+const own = (change: Partial<HelpView>): HelpView =>
+  help({
+    id: 'o1',
+    question_index: 1,
+    result: { mode: 'suggest', text: 'Own words', reasoning: 'or', unsure: 'ou' },
+    ...change,
+  })
+const T = (minute: number) => `2026-10-20T10:0${minute}:00Z`
+
+describe('questionHelp of a batch question', () => {
+  interface Row {
+    name: string
+    helps: HelpView[]
+    busy: boolean
+    source: 'own' | 'whole' | undefined
+    words: string | undefined
+    heading: string | undefined
+    failure: string | undefined
+  }
+  const rows: Row[] = [
+    {
+      name: 'only a batch answer',
+      helps: [whole({})],
+      busy: false,
+      source: 'whole',
+      words: 'Words of the whole',
+      heading: 'Suggested with the whole batch',
+      failure: undefined,
+    },
+    {
+      name: 'only an own answer',
+      helps: [own({})],
+      busy: false,
+      source: 'own',
+      words: 'Own words',
+      heading: 'Suggested answer',
+      failure: undefined,
+    },
+    {
+      name: 'an own answer newer than the batch’s',
+      helps: [whole({ created_at: T(1) }), own({ created_at: T(2) })],
+      busy: false,
+      source: 'own',
+      words: 'Own words',
+      heading: 'Suggested answer',
+      failure: undefined,
+    },
+    {
+      name: 'a batch answer newer than the own one',
+      helps: [own({ created_at: T(1) }), whole({ created_at: T(2) })],
+      busy: false,
+      source: 'whole',
+      words: 'Words of the whole',
+      heading: 'Suggested with the whole batch',
+      failure: undefined,
+    },
+    {
+      name: 'a newer failed whole-batch help keeps the older answer',
+      helps: [
+        own({ created_at: T(1) }),
+        whole({ id: 'w2', status: 'failed', result: null, reason: 'no budget', created_at: T(2) }),
+      ],
+      busy: false,
+      source: 'own',
+      words: 'Own words',
+      heading: 'Suggested answer',
+      failure: 'no budget',
+    },
+    {
+      name: 'a running whole-batch help makes the button busy',
+      helps: [whole({ id: 'w2', status: 'running', result: null, created_at: T(2) })],
+      busy: true,
+      source: undefined,
+      words: undefined,
+      heading: undefined,
+      failure: undefined,
+    },
+    {
+      name: 'a running own help makes the button busy',
+      helps: [own({ id: 'o2', status: 'queued', result: null, created_at: T(2) })],
+      busy: true,
+      source: undefined,
+      words: undefined,
+      heading: undefined,
+      failure: undefined,
+    },
+    {
+      name: 'another request’s whole-batch help is not this one’s',
+      helps: [whole({ approval_id: 'other' })],
+      busy: false,
+      source: undefined,
+      words: undefined,
+      heading: undefined,
+      failure: undefined,
+    },
+  ]
+  it.each(rows)('$name', (row) => {
+    const state = questionHelp(row.helps, 'a1', 1, 'q2').suggest
+    const shown = state.shown?.mode === 'suggest' ? state.shown : undefined
+    expect({
+      busy: state.busy,
+      source: state.source,
+      words: shown?.text,
+      heading: state.source === undefined ? undefined : suggestHeading(state.source),
+      failure: state.failure,
+    }).toEqual({
+      busy: row.busy,
+      source: row.source,
+      words: row.words,
+      heading: row.heading,
+      failure: row.failure,
+    })
+  })
+
+  it('shows a suggestion made of the question’s own answer, with its option', () => {
+    const state = questionHelp([whole({})], 'a1', 0, 'q1').suggest
+    expect(state.shown).toEqual({
+      mode: 'suggest',
+      option_id: 'a',
+      reasoning: 'wr1',
+      unsure: 'wu1',
+    })
+  })
+
+  it('shows nothing from the batch for a question its result lacks', () => {
+    expect(questionHelp([whole({})], 'a1', 2, 'q3').suggest.shown).toBeUndefined()
+  })
+
+  it('leaves Explain on its own question only', () => {
+    expect(
+      questionHelp([whole({ status: 'running', result: null })], 'a1', 1, 'q2').explain.busy,
+    ).toBe(false)
+  })
+
+  it('leaves a single request out of the batch', () => {
+    const state = questionHelp([whole({ status: 'running', result: null })], 'a1', null).suggest
+    expect(state.busy).toBe(false)
+  })
+})
+
+describe('hasWholeAnswers', () => {
+  it.each<[string, HelpView[], boolean]>([
+    ['no help', [], false],
+    ['a succeeded whole-batch help', [whole({})], true],
+    ['a failed one', [whole({ status: 'failed', result: null })], false],
+    ['an own suggestion', [own({})], false],
+    ['another request’s', [whole({ approval_id: 'x' })], false],
+  ])('%s', (_name, helps, expected) => {
+    expect(hasWholeAnswers(helps, 'a1')).toBe(expected)
+  })
+})
+
+describe('fillEveryAnswer', () => {
+  const questions: BatchQuestion[] = ['q1', 'q2', 'q3', 'q4'].map((id) => ({
+    id,
+    question: id,
+    options: [{ id: 'a', label: 'A' }],
+    recommendation: null,
+    context_md: null,
+  }))
+  const suggestion = (id: string, change: Record<string, unknown> = {}) => ({
+    mode: 'suggest' as const,
+    option_id: 'a',
+    text: `Words ${id}`,
+    reasoning: 'r',
+    unsure: 'u',
+    ...change,
+  })
+  const shown = Object.fromEntries(questions.map((q) => [q.id, suggestion(q.id)]))
+
+  interface Row {
+    name: string
+    choices: Record<string, { option?: string; text: string }>
+    shown?: typeof shown
+    filled: string[]
+    message: string
+    kept: Record<string, { option?: string; text: string }>
+  }
+  const rows: Row[] = [
+    {
+      name: 'two answered by hand, one cleared, one untouched',
+      choices: {
+        q1: { text: 'typed' },
+        q2: { option: 'a', text: '' },
+        q3: { text: '   ' },
+      },
+      filled: ['q3', 'q4'],
+      message: 'Filled 2 answers; skipped 2 already answered.',
+      kept: { q1: { text: 'typed' }, q2: { option: 'a', text: '' } },
+    },
+    {
+      name: 'one left',
+      choices: { q1: { text: 'x' }, q2: { text: 'y' }, q3: { text: 'z' } },
+      filled: ['q4'],
+      message: 'Filled 1 answer; skipped 3 already answered.',
+      kept: { q1: { text: 'x' }, q2: { text: 'y' }, q3: { text: 'z' } },
+    },
+    {
+      name: 'every question answered',
+      choices: {
+        q1: { text: 'x' },
+        q2: { text: 'y' },
+        q3: { text: 'z' },
+        q4: { option: 'a', text: '' },
+      },
+      filled: [],
+      message: 'Every question is already answered; nothing was filled.',
+      kept: {
+        q1: { text: 'x' },
+        q2: { text: 'y' },
+        q3: { text: 'z' },
+        q4: { option: 'a', text: '' },
+      },
+    },
+    {
+      name: 'nothing answered, a newer own answer for q2',
+      choices: {},
+      shown: { ...shown, q2: suggestion('q2', { option_id: undefined, text: 'Own newer' }) },
+      filled: ['q1', 'q2', 'q3', 'q4'],
+      message: 'Filled 4 answers; skipped 0 already answered.',
+      kept: {},
+    },
+  ]
+  it.each(rows)('$name', (row) => {
+    const result = fillEveryAnswer(questions, row.choices, (q) => (row.shown ?? shown)[q.id])
+    expect(result.filled).toEqual(row.filled)
+    expect(result.message).toBe(row.message)
+    for (const [id, kept] of Object.entries(row.kept)) expect(result.choices[id]).toEqual(kept)
+    for (const id of row.filled)
+      expect(result.choices[id]?.text).toBe((row.shown ?? shown)[id]?.text ?? '')
+  })
+
+  it('fills a newer own answer for a question asked again on its own', () => {
+    const result = fillEveryAnswer(questions, {}, (q) =>
+      q.id === 'q2'
+        ? suggestion('q2', { option_id: undefined, text: 'Own newer' })
+        : suggestion(q.id),
+    )
+    expect(result.choices.q2).toEqual({ text: 'Own newer' })
+    expect(result.choices.q1).toEqual({ option: 'a', text: 'Words q1' })
+  })
+})
+
+describe('whole-batch announcements', () => {
+  const batch = { ...base, kind: 'questions' as const, question_count: 3, questions: [] }
+  it.each<[string, HelpView, string]>([
+    ['success', whole({}), 'Suggested answers ready for all 3 questions'],
+    [
+      'failure',
+      whole({ status: 'failed', result: null, reason: 'the helper ended with an error' }),
+      'No suggestions for the batch: the helper ended with an error',
+    ],
+  ])('says %s once for the batch', (_name, h, text) => {
+    expect(helpAnnouncement(h, batch)).toBe(text)
+    expect(newlyEnded(new Map([[h.id, 'running']]), [h]).map(helpAnnouncement2(batch))).toEqual([
+      text,
+    ])
+  })
+  it('words a whole-batch failure on the question itself like a suggestion’s', () => {
+    expect(failureText('suggest_all', 'x')).toBe('No suggestion: x')
+  })
+})
+
+const helpAnnouncement2 = (approval: ApprovalView) => (h: HelpView) => helpAnnouncement(h, approval)

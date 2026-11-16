@@ -53,6 +53,7 @@ vi.mock('@zellige/react', () => ({
 
 const RESULTS: Record<HelpMode, HelpResult> = {
   suggest: { mode: 'suggest', reasoning: 'r', unsure: 'u', text: 't' },
+  suggest_all: { mode: 'suggest_all', answers: [] },
   explain: { mode: 'explain', asked: 'a', matters: 'm', leads_to: 'l' },
   review: { mode: 'review', verdict: 'nothing_to_change', findings: [], unsure: 'u' },
   restate: { mode: 'restate', changes: 'c', requirements: 'r', left_out: 'l' },
