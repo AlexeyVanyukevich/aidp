@@ -77,4 +77,8 @@ test('a whole batch is suggested in one help and filled with Use every answer', 
     status.filter({ hasText: 'Every question is already answered; nothing was filled.' }),
   ).toBeVisible()
   await expectAccessible(page)
+
+  // Answered, the batch leaves no question open for a later journey's count of questions waiting.
+  await panel.getByRole('button', { name: 'Send answers' }).click()
+  await expect(card.getByText(`${created.key} · Spec review`)).toBeVisible(RUN)
 })
