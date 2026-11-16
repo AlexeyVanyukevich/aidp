@@ -491,8 +491,9 @@ The runner creates a worktree under `~/.aidp/worktrees/<run>` on `board/<KEY>-r<
 `origin/<base>`, and a run directory under `~/.aidp/runs/<run>` holding the agents, the
 hooks, the MCP configuration, the event buffer and the files Build may change. A run goes through
 stages — `prepare`, `plan`, `build`, `tests`, `verify`, `push`, `pr` — with up to three Build →
-tests → Verify rounds. A report with no `fail` pushes the branch and opens the pull request, or
-takes one already open for the branch. The worktree is removed when the run ends.
+tests → Verify rounds, or four when a failed Verify on attempt 3 judged a Build the runner
+started. A report with no `fail` pushes the branch and opens the pull request, or takes one
+already open for the branch. The worktree is removed when the run ends.
 
 **How the lint reads Requirements and Acceptance criteria.** Items only: a list marker at column
 0 followed by text. A line that starts with whitespace continues the item above it, joined with a
