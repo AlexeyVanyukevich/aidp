@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Dialog, Field, Notice, Select, Tabs } from '@zellige/react'
 import { api } from '../api'
+import { useAnnouncer } from '../announce'
 import { columns, LABELS, stepPatch } from '../board/columns'
 import { isConflict } from '../errors'
 import { Loaded } from '../Loaded'
@@ -38,7 +39,7 @@ export function CardDrawer() {
   const task = useQuery({ queryKey: ['task', taskId], queryFn: () => api.task(taskId) })
   const board = useQuery({ queryKey: ['board', key], queryFn: () => api.board(key) })
   const [tab, setTab] = useState('spec')
-  const [message, setMessage] = useState('')
+  const { message, setMessage, announce: announceAgain } = useAnnouncer()
   const [problem, setProblem] = useState<{ text: string } | undefined>()
   const stateLine = useRef<HTMLParagraphElement>(null)
   const problemBox = useRef<HTMLDivElement>(null)
@@ -235,6 +236,7 @@ export function CardDrawer() {
             announce(text)
           }}
           onProblem={(text) => setProblem({ text })}
+          onAnnounce={announceAgain}
         />
       ),
     },

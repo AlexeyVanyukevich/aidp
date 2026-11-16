@@ -8,6 +8,8 @@ import {
   answerFieldLabel,
   batchAnswer,
   optionName,
+  fillEveryAnswer,
+  hasWholeAnswers,
   questionHelp,
   unanswered,
   applySuggestion,
@@ -27,6 +29,7 @@ export function BatchForm({
   approvalId,
   helps,
   onAsk,
+  onAnnounce,
   sending,
   onSend,
 }: {
@@ -34,6 +37,8 @@ export function BatchForm({
   approvalId: string
   helps: HelpView[]
   onAsk: (mode: QuestionHelpMode, index: number | null) => void
+  /** Writes to the card's status region, so a press whose words repeat is still announced. */
+  onAnnounce: (text: string) => void
   sending: boolean
   onSend: (body: BatchAnswer) => void
 }) {
@@ -58,6 +63,17 @@ export function BatchForm({
     })
     const index = questions.findIndex((question) => question.id === questionId)
     if (missing.includes(index)) setMissing((now) => now.filter((gap) => gap !== index))
+  }
+
+  const useEvery = () => {
+    const filling = fillEveryAnswer(questions, choices, (question, index) => {
+      const shown = questionHelp(helps, approvalId, index, question.id).suggest.shown
+      return shown?.mode === 'suggest' ? shown : undefined
+    })
+    setChoices(filling.choices)
+    const filledIndexes = filling.filled.map((id) => questions.findIndex((q) => q.id === id))
+    setMissing((now) => now.filter((gap) => !filledIndexes.includes(gap)))
+    onAnnounce(filling.message)
   }
 
   const submit = (event: FormEvent) => {
@@ -94,7 +110,7 @@ export function BatchForm({
               </div>
             )}
             <HelpPanel
-              help={questionHelp(helps, approvalId, index)}
+              help={questionHelp(helps, approvalId, index, question.id)}
               options={question.options}
               level={5}
               onAsk={(mode) => onAsk(mode, index)}
@@ -145,6 +161,11 @@ export function BatchForm({
           </section>
         )
       })}
+      {hasWholeAnswers(helps, approvalId) && (
+        <Button type="button" onClick={useEvery}>
+          Use every answer
+        </Button>
+      )}
       <Button type="submit" variant="primary" busy={sending}>
         Send answers
       </Button>

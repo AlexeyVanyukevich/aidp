@@ -130,34 +130,144 @@ export interface ModeHelp {
   subject?: HelpSubject | null
   /** The id of the help whose result is shown: another id is another result. */
   id?: string
+  /** Where a shown suggestion came from: the question's own help, or the whole batch's. */
+  source?: 'own' | 'whole'
 }
 export interface QuestionHelp {
   suggest: ModeHelp
   explain: ModeHelp
 }
 
+type Suggestion = Extract<HelpResult, { mode: 'suggest' }>
+
+const inFlight = (help: HelpView | undefined) =>
+  help?.status === 'queued' || help?.status === 'running'
+
+const newest = (a: HelpView, b: HelpView) => b.created_at.localeCompare(a.created_at)
+
+/** The heading a suggestion sits under, by where it came from. */
+export const suggestHeading = (source: 'own' | 'whole') =>
+  source === 'whole' ? 'Suggested with the whole batch' : 'Suggested answer'
+
 /** The helps of one question: a single request's `index` is null. */
 export function questionHelp(
   helps: HelpView[],
   approvalId: string,
   index: number | null,
+  questionId?: string,
 ): QuestionHelp {
+  const mineOf = (mode: QuestionHelpMode, at: number | null) =>
+    helps
+      .filter((h) => h.approval_id === approvalId && h.question_index === at && h.mode === mode)
+      .sort(newest)
   const of = (mode: QuestionHelpMode): ModeHelp => {
-    const mine = helps
-      .filter((h) => h.approval_id === approvalId && h.question_index === index && h.mode === mode)
-      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    const mine = mineOf(mode, index)
     const latest = mine[0]
     return {
-      busy: latest?.status === 'queued' || latest?.status === 'running',
+      busy: inFlight(latest),
       shown: mine.find((h) => h.status === 'succeeded')?.result ?? undefined,
       failure: latest?.status === 'failed' ? (latest.reason ?? 'the helper failed') : undefined,
     }
   }
-  return { suggest: of('suggest'), explain: of('explain') }
+  const explain = of('explain')
+  const ownHelps = mineOf('suggest', index)
+  if (index === null || questionId === undefined) return { suggest: of('suggest'), explain }
+
+  // A batch question: its own suggestion, and its answer in the whole batch's, the newer shown.
+  const wholeHelps = mineOf('suggest_all', null)
+  const ownDone = ownHelps.find((h) => h.status === 'succeeded')
+  const wholeDone = wholeHelps.find(
+    (h) =>
+      h.status === 'succeeded' &&
+      h.result?.mode === 'suggest_all' &&
+      h.result.answers.some((a) => a.question_id === questionId),
+  )
+  const wholeAnswer =
+    wholeDone?.result?.mode === 'suggest_all'
+      ? wholeDone.result.answers.find((a) => a.question_id === questionId)
+      : undefined
+  const useWhole =
+    wholeDone !== undefined &&
+    wholeAnswer !== undefined &&
+    (ownDone === undefined || wholeDone.created_at.localeCompare(ownDone.created_at) > 0)
+  const shown: Suggestion | undefined =
+    useWhole && wholeAnswer !== undefined
+      ? {
+          mode: 'suggest',
+          ...(wholeAnswer.option_id === undefined ? {} : { option_id: wholeAnswer.option_id }),
+          ...(wholeAnswer.text === undefined ? {} : { text: wholeAnswer.text }),
+          reasoning: wholeAnswer.reasoning,
+          unsure: wholeAnswer.unsure,
+        }
+      : ((ownDone?.result as Suggestion | null | undefined) ?? undefined)
+  const shownId = useWhole ? wholeDone?.id : ownDone?.id
+  const latest = [...ownHelps.slice(0, 1), ...wholeHelps.slice(0, 1)].sort(newest)[0]
+  return {
+    suggest: {
+      busy: inFlight(ownHelps[0]) || inFlight(wholeHelps[0]),
+      shown,
+      failure: latest?.status === 'failed' ? (latest.reason ?? 'the helper failed') : undefined,
+      ...(shown === undefined
+        ? {}
+        : {
+            source: useWhole ? ('whole' as const) : ('own' as const),
+            ...(shownId === undefined ? {} : { id: shownId }),
+          }),
+    },
+    explain,
+  }
+}
+
+/** Whether the request has a whole-batch suggestion to use: Use every answer is shown then. */
+export function hasWholeAnswers(helps: HelpView[], approvalId: string): boolean {
+  return helps.some(
+    (h) =>
+      h.approval_id === approvalId &&
+      h.mode === 'suggest_all' &&
+      h.status === 'succeeded' &&
+      h.result?.mode === 'suggest_all',
+  )
+}
+
+/** The words of a Use every answer press. */
+export function fillMessage(filled: number, skipped: number): string {
+  return filled === 0
+    ? 'Every question is already answered; nothing was filled.'
+    : `Filled ${filled} ${filled === 1 ? 'answer' : 'answers'}; skipped ${skipped} already answered.`
+}
+
+/**
+ * Use every answer: each question with neither an option nor words takes the suggestion shown
+ * under it, as its own Use this answer would; every other question stays as it is.
+ */
+export function fillEveryAnswer(
+  questions: BatchQuestion[],
+  choices: Choices,
+  shownFor: (question: BatchQuestion, index: number) => Suggestion | undefined,
+): { choices: Choices; filled: string[]; message: string } {
+  const open = unanswered(questions, choices)
+  const next: Choices = { ...choices }
+  const filled: string[] = []
+  for (const index of open) {
+    const question = questions[index]
+    const suggestion = question === undefined ? undefined : shownFor(question, index)
+    if (question === undefined || suggestion === undefined) continue
+    next[question.id] = applySuggestion(
+      'question',
+      choices[question.id] ?? { text: '' },
+      suggestion,
+    )
+    filled.push(question.id)
+  }
+  return {
+    choices: next,
+    filled,
+    message: fillMessage(filled.length, questions.length - open.length),
+  }
 }
 
 export const failureText = (mode: QuestionHelpMode, reason: string) =>
-  `${mode === 'suggest' ? 'No suggestion' : 'No explanation'}: ${reason}`
+  `${mode === 'explain' ? 'No explanation' : 'No suggestion'}: ${reason}`
 
 /** What the card's status region says of a help that ended. */
 export function helpAnnouncement(help: HelpView, approval: ApprovalView | undefined): string {
@@ -165,6 +275,10 @@ export function helpAnnouncement(help: HelpView, approval: ApprovalView | undefi
     approval?.kind === 'questions' && help.question_index !== null
       ? `question ${help.question_index + 1} of ${approval.question_count}`
       : 'the open question'
+  if (help.mode === 'suggest_all')
+    return help.status === 'failed'
+      ? `No suggestions for the batch: ${help.reason ?? 'the helper failed'}`
+      : `Suggested answers ready for all ${approval?.question_count ?? (help.result?.mode === 'suggest_all' ? help.result.answers.length : 0)} questions`
   if (help.status === 'failed')
     return `${help.mode === 'suggest' ? 'No suggestion' : 'No explanation'} for ${label}: ${help.reason ?? 'the helper failed'}`
   return help.mode === 'suggest'

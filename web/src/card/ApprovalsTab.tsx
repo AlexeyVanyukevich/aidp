@@ -189,10 +189,13 @@ export function ApprovalsTab({
   task,
   onAnswered,
   onProblem,
+  onAnnounce,
 }: {
   task: TaskView
   onAnswered: (message: string) => void
   onProblem: (text: string) => void
+  /** Writes to the card's status region, announcing a message equal to the last one again. */
+  onAnnounce: (message: string) => void
 }) {
   const client = useQueryClient()
   const approvals = useQuery({
@@ -295,6 +298,7 @@ export function ApprovalsTab({
                   approvalId={current.id}
                   helps={helps.data ?? []}
                   onAsk={askFor(current)}
+                  onAnnounce={onAnnounce}
                   sending={sending === 'batch'}
                   onSend={(body) => send(current, body, 'batch')}
                 />
