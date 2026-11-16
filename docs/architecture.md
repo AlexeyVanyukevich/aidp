@@ -545,8 +545,9 @@ text `withdrawn` and the same words as a paragraph and a list above the table. A
 
 **The setup command.** A project may carry a `setup_command` (at most 500 characters), set when
 it is registered or later with `PATCH /api/projects/:key`, whose body is `setup_command` (string
-or null) alone: any other field, or an empty body, is refused with 400,
-and an unknown key answers 404. A null or blank `setup_command` clears it. A command whose first
+or null), `batch_suggest` (`whole` or `one`), or both: any other field or value, or an empty body,
+is refused with 400 (a bad `batch_suggest` is a `validation_error` naming it), and an unknown key
+answers 404. A null or blank `setup_command` clears it. A command whose first
 word does not resolve in `repo_path` is refused with `validation_error` on its field. The
 Projects page shows each project's setup command with an `Edit setup command of <KEY>` button,
 which opens a form (`Setup command of <KEY>`, `Save`, `Cancel`). A refusal stays on the field,
@@ -671,6 +672,11 @@ Every add, edit, default change and removal publishes `project.updated` (with th
 in its transaction, which the stream forwards; a removal also publishes `task.updated` for each
 task it reset.
 
+**Batch suggestions.** `projects.batch_suggest` (`whole` or `one`, not null, `whole` for every
+project, existing and new) says how Suggest an answer works on a batch of questions; `GET
+/api/projects` returns it. It governs only that button: Explain simply stays per question, and a
+single request, the Spec review and the pull request review do not read it.
+
 A task refers to its command by `tasks.test_command_id` (null means the project's default; the
 foreign key sets it null when the command is removed, in any state), so renaming or editing a
 command keeps the choice. `PATCH /api/tasks/:id` accepts it as a uuid or null: an id of another
@@ -764,6 +770,24 @@ it is refused. Nothing a help produced reaches the asking agent except through t
 owner sends. Each help is a phase named `help` on the asking run: its usage is priced into the
 task's cost, and it is never the run's current phase, a checkpoint's phase, or in a handoff's
 summaries. Approving a plan with words is refused, naming `text`.
+
+**The whole-batch suggestion.** The `question` decision has a third mode, `suggest_all`
+(`helps_mode_known` and `helps_mode_of_decision` allow it; migration 014, whose `down` refuses
+while such a help exists). A client cannot ask for it: `POST /api/approvals/:id/helps` keeps the
+body `{ mode: 'suggest' | 'explain', question_index? }`. A press with mode `suggest` on a request
+of kind `questions`, with a valid `question_index`, first looks for a `suggest_all` help of the
+request that is queued or running, and answers with it, recording nothing, whatever the setting.
+Otherwise, with the project's `batch_suggest` `whole`, it records one `suggest_all` help with a
+null `question_index`; with `one` it records a `suggest` help for that question. Any other kind
+of request, and every `explain` press, behave as before. For a `suggest_all` help `get_question`
+returns `kind`, `batch_lead` and `questions`, the batch's questions in order, each with `id`,
+`question`, `context_md`, `options` and `recommendation`. `save_help_result` takes `answers`, a
+list of `{ question_id, option_id?, text?, reasoning, unsure }`, and refuses, naming the field:
+`answers: required` (a question missing), `answers: unknown question`, `answers: duplicate`, an
+answer that fails a suggestion's check as `answers[<i>].<field>` (for example
+`answers[2].option_id: unknown option`), and any other result field as `not allowed`; a
+`suggest` or `explain` save carrying `answers` is refused with `answers: not allowed`. The stored
+result is `{ mode: 'suggest_all', answers }`, in the batch's order, each answer trimmed.
 
 **Decision helps.** The card's own decisions offer help beside a question's. The registry is
 `server/src/modules/approvals/decision-rules.ts`, pure and free of the database; it lists each
@@ -1591,6 +1615,24 @@ sends nothing) and "In plain words". A result that arrives, or a help that fails
 written into the card's status region as "Suggested answer ready for question 2 of 3", "Explanation
 ready for the open question" or the failure, whichever tab is showing.
 
+With the project's `batch_suggest` on `whole`, a batch has no separate button: any question's
+Suggest an answer starts the one whole-batch help, and every question's Suggest an answer is busy
+(and still focusable) until it ends. Each question shows the newer, by `created_at`, of its own
+latest suggestion and its answer in the latest whole-batch result, under an `h5` "Suggested
+answer" when it is its own and "Suggested with the whole batch" when it is the batch's, with its
+own Use this answer, which fills only that question; the failure line "No suggestion: <reason>"
+shows when the newest of the two helps failed. While the request has a succeeded whole-batch
+help, whatever the setting is now, one button "Use every answer" sits after the last question's
+section and before Send answers. It fills each question with neither an option nor words (the
+test Send answers uses; a question cleared back to empty counts) from the suggestion shown under
+it, so a question asked again on its own takes that newer answer; it leaves the others, sends
+nothing, clears the missing mark of each question it fills, and keeps focus on the button. It
+writes "Filled <f> answers; skipped <s> already answered." ("1 answer" when <f> is 1), or "Every
+question is already answered; nothing was filled." when <f> is 0, into the card's status region,
+through the same announcer as the other writes, so a message equal to the last is announced again.
+When a whole-batch help ends, the region says, once, "Suggested answers ready for all <n>
+questions" or "No suggestions for the batch: <reason>", whichever tab is showing.
+
 Decision helps add buttons. In Spec review the Spec tab's action row reads Edit, Approve, Review
 spec, Explain simply, then the Redraft note field and Redraft; Approve and Redraft are enabled and
 disabled as without help. The results sit in a section under an `h3` "Help with v<n>", after the
@@ -1642,6 +1684,14 @@ kit's `RadioGroup` named by the question when it has options, and a field "Your 
 question <i>"; then one Send answers. Choosing sends nothing. A send with questions unanswered
 marks each — the radio group when it has options, so the radio that takes focus is described by
 the error, else the field — and focuses the first: its first radio, or its field.
+
+The settings page's section "Batch suggestions" follows the test commands, under an `h2`: the
+kit's `RadioGroup` named "How a batch of questions is suggested", with the radios "The whole batch
+in one help" (`whole`) and "One question at a time" (`one`), the saved one checked on load, then
+the button "Save batch suggestions". Choosing a radio saves nothing. A save that succeeds writes
+"Batch suggestions saved: <the chosen radio's label>." into the page's status region and leaves
+focus on the button; one that fails writes "The setting could not be saved. Try again." into a
+danger notice, which takes focus. The focus order is the group, then the button.
 
 The Spec tab opens on the task's Description, with Save description, in Backlog and Spec review,
 then the Version select and the spec formatted: Markdown rendered by the kit's `Markdown`
