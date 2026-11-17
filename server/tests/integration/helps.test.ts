@@ -2,7 +2,10 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { FastifyInstance } from 'fastify'
+import { sql } from 'kysely'
+import { Migrator } from 'kysely/migration'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { migrations } from '../../src/db/migrations/index.js'
 import { openApproval, type OpenRequest } from '../../src/modules/approvals/approval.service.js'
 import { registerBoardTools } from '../../src/modules/mcp/board-tools.js'
 import { Sweeper } from '../../src/modules/runs/sweeper.js'
@@ -608,5 +611,49 @@ describe('a whole-batch help through its life', () => {
     })
     expect(res.isError).toBe(true)
     expect(res.content[0]!.text).toContain('- answers: not allowed')
+  })
+})
+
+describe('migration 015', () => {
+  const migrator = () =>
+    new Migrator({ db: getTestDb(), provider: { getMigrations: async () => migrations } })
+
+  let runId = ''
+  async function seedHelp(decision: string, mode: string, status: string): Promise<string> {
+    const { rows } = await sql<{ id: string }>`
+      insert into helps (run_id, decision, mode, status)
+      values (${runId}, ${decision}, ${mode}, ${status}) returning id`.execute(db())
+    return rows[0]!.id
+  }
+
+  it('retires succeeded reviews, accepts review_plan, and refuses down while one exists', async () => {
+    expect((await migrator().migrateTo('014_batch_suggest')).error).toBeUndefined()
+    runId = (await seedRunningRun(db())).runId
+    const review = await seedHelp('spec_review', 'review', 'succeeded')
+    const code = await seedHelp('pull_request', 'code_review', 'succeeded')
+    const restate = await seedHelp('spec_review', 'restate', 'succeeded')
+    expect((await migrator().migrateToLatest()).error).toBeUndefined()
+    const { rows } = await sql<{ id: string; retired: boolean }>`
+      select id, retired_at is not null as retired from helps`.execute(db())
+    const retired = new Map(rows.map((row) => [row.id, row.retired]))
+    expect([retired.get(review), retired.get(code), retired.get(restate)]).toEqual([
+      true,
+      true,
+      false,
+    ])
+    const approval = await sql<{ id: string }>`
+      insert into approval_requests (run_id, kind, question, status)
+      values (${runId}, 'plan', 'Plan?', 'open') returning id`.execute(db())
+    const planHelp = await sql<{ id: string }>`
+      insert into helps (run_id, approval_id, decision, mode, status)
+      values (${runId}, ${approval.rows[0]!.id}, 'question', 'review_plan', 'queued')
+      returning id`.execute(db())
+    const plan = planHelp.rows[0]!.id
+    await expect(seedHelp('spec_review', 'review_plan', 'queued')).rejects.toThrow()
+    const down = await migrator().migrateTo('014_batch_suggest')
+    expect(String(down.error)).toContain('plan reviews exist')
+    await sql`delete from helps where id = ${plan}`.execute(db())
+    expect((await migrator().migrateTo('014_batch_suggest')).error).toBeUndefined()
+    expect((await migrator().migrateToLatest()).error).toBeUndefined()
   })
 })

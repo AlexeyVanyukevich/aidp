@@ -13,6 +13,7 @@ import * as decisionHelps from './011_decision_helps.js'
 import * as proposals from './012_proposals.js'
 import * as pullRequestReview from './013_pull_request_review.js'
 import * as batchSuggest from './014_batch_suggest.js'
+import * as reviewShape from './015_review_shape.js'
 
 /**
  * Listed rather than discovered from disk: a file provider imports at runtime, which fails
@@ -34,4 +35,5 @@ export const migrations: Record<string, Migration> = {
   '012_proposals': proposals,
   '013_pull_request_review': pullRequestReview,
   '014_batch_suggest': batchSuggest,
+  '015_review_shape': reviewShape,
 }
