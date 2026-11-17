@@ -198,7 +198,7 @@ describe('stands for a proposal', () => {
 })
 
 describe('DECISION_MODES.question', () => {
-  it('offers suggest, explain and the whole-batch suggestion', () => {
-    expect([...DECISION_MODES.question]).toEqual(['suggest', 'explain', 'suggest_all'])
+  it('offers suggest, explain, the whole-batch suggestion and review plan', () => {
+    expect([...DECISION_MODES.question]).toEqual(['suggest', 'explain', 'suggest_all', 'review_plan'])
   })
 })
