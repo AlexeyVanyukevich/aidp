@@ -418,7 +418,7 @@ function ReviewView({
       {picking && (
         <Button
           type="button"
-          onClick={() => onUseFindings(result as ReviewResult | PlanReviewResult, picks)}
+          onClick={() => onUseFindings(result, picks)}
         >
           Use these findings
         </Button>
