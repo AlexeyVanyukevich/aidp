@@ -1,8 +1,19 @@
 import { useEffect, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { useNavigate, useParams } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Dialog, Field, Notice, Select, Tabs } from '@zellige/react'
-import { api } from '../api'
+import {
+  Button,
+  Dialog,
+  Field,
+  Notice,
+  Radio,
+  RadioGroup,
+  Select,
+  Tabs,
+  Textarea,
+} from '@zellige/react'
+import { api, ApiError } from '../api'
 import { useAnnouncer } from '../announce'
 import { columns, LABELS, stepPatch } from '../board/columns'
 import { isConflict } from '../errors'
@@ -14,10 +25,14 @@ import { ApprovalsTab } from './ApprovalsTab'
 import {
   decisionAnnouncement,
   decisionHelp,
+  defaultRerunPicks,
+  fillRerunNote,
   goneResults,
   helpAnnouncement,
   NO_HELP,
   newlyEnded,
+  type PrReviewResult,
+  type RerunPick,
 } from './approvals'
 import { actionsFor, blockText, decisionsFor, initialTab, stateAnnouncement } from './blocks'
 import { decisionMode, decisionRenderers, HelpButtons, HelpResults } from './HelpPanel'
@@ -175,11 +190,30 @@ export function CardDrawer() {
     onError: fail,
     onSettled: refresh,
   })
+  // Re-run's note: the owner's word on the failed run, sent with either Re-run button.
+  const [rerunNote, setRerunNote] = useState('')
+  const [noteError, setNoteError] = useState<string | undefined>()
+  const [picks, setPicks] = useState<RerunPick[] | undefined>()
+  const noteField = useRef<HTMLTextAreaElement>(null)
   const rerun = useMutation({
-    mutationFn: (plan: 'keep' | 'again') => api.rerun(taskId, plan),
-    onMutate: () => setProblem(undefined),
+    mutationFn: (plan: 'keep' | 'again') => api.rerun(taskId, plan, rerunNote),
+    onMutate: () => {
+      setProblem(undefined)
+      setNoteError(undefined)
+    },
     onSuccess: leave,
-    onError: fail,
+    onError: (error) => {
+      if (
+        error instanceof ApiError &&
+        error.code === 'validation_error' &&
+        JSON.stringify(error.details ?? {}).includes('note')
+      ) {
+        const text = 'The note is longer than 4,000 characters.'
+        setNoteError(text)
+        announceAgain(`Re-run was refused: ${text}`)
+        noteField.current?.focus()
+      } else fail(error)
+    },
     onSettled: refresh,
   })
   const act = useMutation({
@@ -364,6 +398,26 @@ export function CardDrawer() {
                   <HelpButtons modes={[recommend]} onAsk={ask('stopped_run')} />
                 )}
               </div>
+              {offered.rerun && (
+                <RerunNote
+                  value={rerunNote}
+                  error={noteError}
+                  field={noteField}
+                  review={rerunReview(helps.data ?? [])}
+                  picks={picks}
+                  setPicks={setPicks}
+                  onChange={(value) => {
+                    setRerunNote(value)
+                    setNoteError(undefined)
+                  }}
+                  onFilled={(value) => {
+                    setRerunNote(value)
+                    setNoteError(undefined)
+                    setPicks(undefined)
+                    announceAgain('Pull request review put in the note for the next run.')
+                  }}
+                />
+              )}
               <Notice className="announce">{message}</Notice>
               <Notice tone="danger" className="announce" ref={problemBox} tabIndex={-1}>
                 {problem?.text}
@@ -395,6 +449,101 @@ export function CardDrawer() {
         }}
       </Loaded>
     </Dialog>
+  )
+}
+
+/** The newest succeeded pull request review of the new shape the helps listing returned, if any. */
+function rerunReview(helps: HelpView[]): { result: PrReviewResult; createdAt: string } | undefined {
+  const found = helps
+    .filter(
+      (help) =>
+        help.decision === 'pull_request' &&
+        help.status === 'succeeded' &&
+        help.result?.mode === 'code_review' &&
+        typeof help.result.blockers === 'number',
+    )
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))[0]
+  return found?.result?.mode === 'code_review'
+    ? { result: found.result, createdAt: found.created_at }
+    : undefined
+}
+
+/**
+ * The note field beside the Re-run buttons, and Use the pull request review: each finding of the
+ * review is put in the note or left out, and Fill note writes the chosen ones after the words
+ * already there. Nothing is sent. Focus goes to the field, the caret at its end.
+ */
+function RerunNote({
+  value,
+  error,
+  field,
+  review,
+  picks,
+  setPicks,
+  onChange,
+  onFilled,
+}: {
+  value: string
+  error: string | undefined
+  field: React.RefObject<HTMLTextAreaElement | null>
+  review: { result: PrReviewResult; createdAt: string } | undefined
+  picks: RerunPick[] | undefined
+  setPicks: (picks: RerunPick[] | undefined) => void
+  onChange: (value: string) => void
+  onFilled: (value: string) => void
+}) {
+  return (
+    <div className="rerun-note">
+      <Field
+        label="Note for the next run"
+        hint="Optional. Sent with either Re-run button."
+        error={error}
+      >
+        <Textarea
+          ref={field}
+          rows={3}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      </Field>
+      {review !== undefined && picks === undefined && (
+        <Button onClick={() => setPicks(defaultRerunPicks(review.result))}>
+          Use the pull request review
+        </Button>
+      )}
+      {review !== undefined && picks !== undefined && (
+        <>
+          <ul>
+            {review.result.findings.map((finding, index) => (
+              <li key={index}>
+                <strong>{finding.kind}</strong> ({finding.where}): {finding.text}{' '}
+                <strong>Evidence:</strong> {finding.evidence}
+                <RadioGroup
+                  label={`What to do with finding ${index + 1}`}
+                  value={picks[index] ?? 'out'}
+                  onChange={(pick) =>
+                    setPicks(picks.map((now, i) => (i === index ? (pick as RerunPick) : now)))
+                  }
+                >
+                  <Radio value="in">Put in the note</Radio>
+                  <Radio value="out">Leave out</Radio>
+                </RadioGroup>
+              </li>
+            ))}
+          </ul>
+          <Button
+            onClick={() => {
+              const next = fillRerunNote(value, review.result, review.createdAt, picks)
+              flushSync(() => onFilled(next))
+              field.current?.focus()
+              field.current?.setSelectionRange(next.length, next.length)
+            }}
+          >
+            Fill note
+          </Button>
+        </>
+      )}
+    </div>
   )
 }
 
