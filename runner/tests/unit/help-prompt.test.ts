@@ -101,6 +101,21 @@ describe('the shared review shape in the helper’s instructions', () => {
   })
 })
 
+describe('the approval note and edits in the helper’s instructions', () => {
+  it('review_plan raises a dropped note point as a blocker and not a kept one', () => {
+    const text = paragraph('review_plan')
+    expect(text).toContain('approval_note')
+    expect(text).toContain('Check each point of a non-null approval_note against the current plan')
+    expect(text).toContain('blocker whose text quotes the point')
+    expect(text).toContain('A point the plan keeps is not raised')
+  })
+  it('review no longer asks for an edit, and sends next-gate points to the note', () => {
+    const text = paragraph('review')
+    expect(text).not.toMatch(/\bedit\b/)
+    expect(text).toContain('goes into the owner’s note for the planner')
+  })
+})
+
 describe('the Re-run note in the phase prompts', () => {
   it.each(['planner', 'builder', 'verifier'])(
     'tells the %s the note is the owner’s word and no criterion',

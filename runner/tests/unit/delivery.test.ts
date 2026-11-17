@@ -240,6 +240,47 @@ describe('a run with a Re-run note', () => {
   })
 })
 
+describe('a run whose spec has an approval note', () => {
+  const NOTE = 'avoid the fake clock'
+  const WITH: RunWork = { ...RUN, spec: { ...RUN.spec!, approval_note: NOTE } }
+  const counts = (h: ReturnType<typeof harness>) =>
+    Object.fromEntries(
+      Object.entries(h.handoffs).map(([name, text]) => [
+        name,
+        (text.match(/<approval_note>/g) ?? []).length,
+      ]),
+    )
+
+  it('hands it to the planner only', async () => {
+    const h = harness({})
+    await carryOut({ kind: 'start', run: WITH } as Extract<Work, { kind: 'start' }>, h.deps)
+    expect(h.handoffs['plan-1']).toContain(`<approval_note>\n${NOTE}\n</approval_note>`)
+    expect(counts(h)).toMatchObject({ 'plan-1': 1, 'build-1': 0, 'verify-1': 0 })
+  })
+
+  it('hands it to no phase when the plan is kept', async () => {
+    const h = harness({})
+    withPlan(h)
+    const run: RunWork = { ...WITH, kept_plan: { artifact_id: 'plan-1', from_run: 1 } }
+    await carryOut({ kind: 'start', run } as Extract<Work, { kind: 'start' }>, h.deps)
+    expect(counts(h)).toEqual({ 'build-1': 0, 'verify-1': 0 })
+  })
+
+  it('hands it with the Re-run note when planning again', async () => {
+    const h = harness({})
+    const run: RunWork = { ...WITH, note: 'keep tests in tests/unit' }
+    await carryOut({ kind: 'start', run } as Extract<Work, { kind: 'start' }>, h.deps)
+    expect(counts(h)['plan-1']).toBe(1)
+    expect((h.handoffs['plan-1'] ?? '').match(/<rerun_note>/g)).toHaveLength(1)
+  })
+
+  it('hands nothing for a spec without a note', async () => {
+    const h = harness({})
+    await carryOut({ kind: 'start', run: RUN } as Extract<Work, { kind: 'start' }>, h.deps)
+    expect(Object.values(counts(h)).every((n) => n === 0)).toBe(true)
+  })
+})
+
 describe('a re-planning run', () => {
   it('AC9: hands the planner the previous plans, and a medium plan still meets the gate', async () => {
     const h = harness({ confidence: ['medium'] })

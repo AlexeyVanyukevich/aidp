@@ -15,6 +15,8 @@ export interface HandoffInput {
   note?: string
   /** The owner's note on the earlier run, from a Re-run; apart from `note` (the redraft's, the verifier's). */
   rerunNote?: string | undefined
+  /** Plan phase only: the owner's note for the planner, given when the spec was approved. */
+  approvalNote?: string | undefined
   budgetUsd: number | null
   summaries: { phase: string; attempt: number; text: string }[]
   plan?: string
@@ -154,6 +156,8 @@ export function buildHandoff(input: HandoffInput): string {
     parts.push(`<description>\n${escape(input.description)}\n</description>`)
   if (input.specVersion !== undefined && input.specMd !== undefined)
     parts.push(`<spec version="${input.specVersion}">\n${escape(input.specMd)}\n</spec>`)
+  if (input.phase === 'plan' && input.approvalNote !== undefined)
+    parts.push(`<approval_note>\n${escape(input.approvalNote)}\n</approval_note>`)
   if (input.note !== undefined) parts.push(`<note>\n${escape(input.note)}\n</note>`)
   if (input.rerunNote !== undefined)
     parts.push(`<rerun_note>\n${escape(input.rerunNote)}\n</rerun_note>`)

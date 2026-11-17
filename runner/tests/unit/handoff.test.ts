@@ -40,6 +40,26 @@ describe('buildHandoff', () => {
     expect(buildHandoff(BASE)).not.toContain('<rerun_note>')
   })
 
+  it('carries a spec’s approval note in one escaped element, in the Plan handoff only', () => {
+    const text = buildHandoff({ ...BASE, phase: 'plan', approvalNote: 'avoid <fake> & clocks' })
+    expect(text.match(/<approval_note>/g)).toHaveLength(1)
+    expect(text).toContain('<approval_note>\navoid &lt;fake&gt; &amp; clocks\n</approval_note>')
+    for (const phase of ['build', 'verify'] as const)
+      expect(buildHandoff({ ...BASE, phase, approvalNote: 'x' })).not.toContain('<approval_note>')
+    expect(buildHandoff({ ...BASE, phase: 'plan' })).not.toContain('<approval_note>')
+  })
+
+  it('carries the approval note and the Re-run note together when planning again', () => {
+    const text = buildHandoff({
+      ...BASE,
+      phase: 'plan',
+      approvalNote: 'a',
+      rerunNote: 'b',
+    })
+    expect(text.match(/<approval_note>/g)).toHaveLength(1)
+    expect(text.match(/<rerun_note>/g)).toHaveLength(1)
+  })
+
   it('cuts a long previous plan with the shared cut', () => {
     const text = buildHandoff({
       ...BASE,

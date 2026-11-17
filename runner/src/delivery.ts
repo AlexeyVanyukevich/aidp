@@ -216,6 +216,7 @@ export async function carryOut(
         : (kept === null) === (name === 'plan')
           ? run.note
           : undefined
+    const approvalNote = specOf().approval_note
     const common = {
       ...(rerunNote === undefined ? {} : { rerunNote }),
       taskKey: task.key,
@@ -231,6 +232,7 @@ export async function carryOut(
     if (name === 'plan')
       return buildHandoff({
         ...common,
+        ...(approvalNote === null || approvalNote === undefined ? {} : { approvalNote }),
         previousPlans: (run.previous_plans ?? []).map((p) => ({
           run: p.run,
           accepted: p.accepted,
