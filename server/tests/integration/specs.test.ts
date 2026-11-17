@@ -21,8 +21,20 @@ afterAll(async () => {
 
 const save = (body_md: string) =>
   app.inject({ method: 'POST', url: `/api/tasks/${taskId}/specs`, payload: { body_md } })
-const approve = (specId: string) =>
-  app.inject({ method: 'POST', url: `/api/specs/${specId}/approve` })
+const approve = (specId: string, payload?: unknown) =>
+  app.inject({
+    method: 'POST',
+    url: `/api/specs/${specId}/approve`,
+    ...(payload === undefined ? {} : { payload: payload as object }),
+  })
+const storedNote = async (specId: string) =>
+  (
+    await getTestDb()
+      .selectFrom('specs')
+      .select('approval_note')
+      .where('id', '=', specId)
+      .executeTakeFirstOrThrow()
+  ).approval_note
 const taskState = async () =>
   (
     await getTestDb()
@@ -172,5 +184,54 @@ describe('approving a spec', () => {
     await approve(spec.id)
     const response = await save(GOOD_SPEC)
     expect(response.statusCode).toBe(409)
+  })
+})
+
+describe('approving a spec with a note for the planner', () => {
+  it('stores the trimmed note and returns it', async () => {
+    const spec = (await save(GOOD_SPEC)).json()
+    const response = await approve(spec.id, { note: '  avoid the fake clock in tests/unit  ' })
+    expect(response.statusCode).toBe(200)
+    expect(response.json().spec.approval_note).toBe('avoid the fake clock in tests/unit')
+    expect(await storedNote(spec.id)).toBe('avoid the fake clock in tests/unit')
+  })
+
+  it.each([
+    { name: 'a blank note', payload: { note: '   ' } },
+    { name: 'an empty body object', payload: {} },
+    { name: 'no body', payload: undefined },
+  ])('stores null for $name', async ({ payload }) => {
+    const spec = (await save(GOOD_SPEC)).json()
+    const response = await approve(spec.id, payload)
+    expect(response.statusCode).toBe(200)
+    expect(response.json().spec.approval_note).toBeNull()
+    expect(await storedNote(spec.id)).toBeNull()
+  })
+
+  it.each([
+    { name: 'an unknown field', payload: { note: 'x', extra: 1 }, field: 'extra' },
+    { name: 'a note of 4001 characters', payload: { note: 'x'.repeat(4_001) }, field: 'note' },
+  ])('refuses $name, naming the field, and leaves the spec a draft', async ({ payload, field }) => {
+    const spec = (await save(GOOD_SPEC)).json()
+    const response = await approve(spec.id, payload)
+    expect(response.statusCode).toBe(400)
+    expect(response.json().error).toBe('validation_error')
+    expect(JSON.stringify(response.json())).toContain(field)
+    expect(await taskState()).toBe('spec_review')
+    const row = await getTestDb()
+      .selectFrom('specs')
+      .select('status')
+      .where('id', '=', spec.id)
+      .executeTakeFirstOrThrow()
+    expect(row.status).toBe('draft')
+  })
+
+  it('lists approval_note on every version, and only the approved one has it', async () => {
+    const first = (await save(GOOD_SPEC)).json()
+    await approve(first.id, { note: 'keep it small' })
+    const list = await app.inject({ method: 'GET', url: `/api/tasks/${taskId}/specs` })
+    expect(list.json().map((s: { approval_note: string | null }) => s.approval_note)).toEqual([
+      'keep it small',
+    ])
   })
 })

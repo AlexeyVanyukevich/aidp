@@ -10,10 +10,19 @@ export interface SpecRow {
   body_md: string
   status: 'draft' | 'approved' | 'superseded'
   approved_at: Date | null
+  approval_note: string | null
 }
 
 type Db = Kysely<Database> | Transaction<Database>
-const COLUMNS = ['id', 'task_id', 'version', 'body_md', 'status', 'approved_at'] as const
+const COLUMNS = [
+  'id',
+  'task_id',
+  'version',
+  'body_md',
+  'status',
+  'approved_at',
+  'approval_note',
+] as const
 
 export class SpecRepository {
   constructor(private readonly db: Kysely<Database>) {}
@@ -89,10 +98,21 @@ export class SpecRepository {
     return row
   }
 
-  async approve(db: Db, id: string, criteria: SpecCriterion[], at: Date): Promise<void> {
+  async approve(
+    db: Db,
+    id: string,
+    criteria: SpecCriterion[],
+    at: Date,
+    note: string | null,
+  ): Promise<void> {
     await db
       .updateTable('specs')
-      .set({ status: 'approved', criteria: JSON.stringify(criteria), approved_at: at })
+      .set({
+        status: 'approved',
+        criteria: JSON.stringify(criteria),
+        approved_at: at,
+        approval_note: note,
+      })
       .where('id', '=', id)
       .execute()
   }

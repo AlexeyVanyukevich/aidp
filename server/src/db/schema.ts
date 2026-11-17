@@ -79,6 +79,8 @@ export interface SpecsTable {
   approved_at: NullableTimestamp
   /** The spec run that wrote this version; null for one saved by hand. */
   run_id: ColumnType<string | null, string | null | undefined, string | null>
+  /** The owner's note for the planner, given when this version was approved. */
+  approval_note: ColumnType<string | null, string | null | undefined, string | null>
   created_at: Generated<Date>
 }
 
