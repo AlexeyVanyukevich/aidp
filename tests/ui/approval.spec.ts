@@ -430,6 +430,8 @@ test('the keyboard reaches Clear choice after the radio group, and Enter on it c
   await page.keyboard.press('Tab')
   await expect(panel.getByRole('button', { name: 'Explain simply' })).toBeFocused()
   await page.keyboard.press('Tab')
+  await expect(panel.getByRole('button', { name: 'Review plan' })).toBeFocused()
+  await page.keyboard.press('Tab')
   await expect(approve).toBeFocused()
   await page.keyboard.press('Tab')
   await expect(panel.getByRole('button', { name: 'Clear choice' })).toBeFocused()

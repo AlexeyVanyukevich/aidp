@@ -161,8 +161,15 @@ const SCRIPT = {
     'Help at Spec review': {
       helper: [
         SUGGEST({
-          verdict: 'changes',
-          findings: [{ kind: 'missing', where: 'R1', text: 'No retry limit' }],
+          findings: [
+            {
+              kind: 'missing',
+              where: 'R1',
+              text: 'No retry limit',
+              destination: 'blocker',
+              evidence: 'R1',
+            },
+          ],
           unsure: 'Whether 429 counts.',
         }),
         SUGGEST({
@@ -176,20 +183,29 @@ const SCRIPT = {
     'Choices at Spec review': {
       helper: [
         SUGGEST({
-          verdict: 'changes',
           findings: [
             {
               kind: 'contradiction',
               where: 'R2',
               text: 'The fixtures list is ambiguous',
+              destination: 'blocker',
+              evidence: 'R2',
               choices: ['Refuse duplicate paths', 'Key the list by position'],
               recommended: 1,
             },
-            { kind: 'missing', where: 'R3', text: 'No retry limit' },
+            {
+              kind: 'missing',
+              where: 'R3',
+              text: 'No retry limit',
+              destination: 'blocker',
+              evidence: 'R3',
+            },
             {
               kind: 'risk',
               where: 'R4',
               text: 'The fixture search is slow',
+              destination: 'blocker',
+              evidence: 'R4',
               choices: ['Name the fixture files', 'Drop the fixture search'],
               recommended: 0,
             },
@@ -202,12 +218,13 @@ const SCRIPT = {
           left_out: 'A retry limit.',
         }),
         SUGGEST({
-          verdict: 'changes',
           findings: [
             {
               kind: 'missing',
               where: 'R1',
               text: 'A second look',
+              destination: 'blocker',
+              evidence: 'R1',
               choices: ['Add it', 'Skip it'],
               recommended: 0,
             },
@@ -242,7 +259,7 @@ const SCRIPT = {
     },
     // A help that succeeds at each decision, whose buttons are read before and after.
     'Buttons at Spec review': {
-      helper: [SUGGEST({ verdict: 'nothing_to_change', findings: [], unsure: 'Nothing.' })],
+      helper: [SUGGEST({ findings: [], unsure: 'Nothing.' })],
     },
     'Buttons at a stop': {
       planner: [[{ tool: 'save_plan', args: PLAN }]],

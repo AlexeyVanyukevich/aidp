@@ -47,17 +47,22 @@ const review = (change: Partial<StubbedHelp>): StubbedHelp => ({
 const RESULT = {
   mode: 'code_review',
   verdict: 'changes',
+  blockers: 1,
   findings: [
     {
       kind: 'bug',
       where: 'src/retry.ts:3',
       text: 'The delay is not capped',
       matters: 'A retry may wait for hours',
+      destination: 'blocker',
+      evidence: 'src/retry.ts:3',
     },
   ],
   unsure: 'Every file not skipped was read whole.',
   commit: COMMIT,
   skipped: [{ path: 'package-lock.json', skip: 'lockfile' }],
+  next_step: 'fix_by_hand',
+  reasoning: 'One line caps the delay.',
 }
 
 async function inReview(request: APIRequestContext, title: string) {
