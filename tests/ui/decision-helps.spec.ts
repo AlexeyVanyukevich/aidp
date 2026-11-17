@@ -118,7 +118,7 @@ test('Review spec and Explain simply give results under their headings, announce
         subtree: true,
       })
     })
-  const line = '- missing (R1): No retry limit'
+  const line = '- blocker, missing (R1): No retry limit'
   await tabTo(page, use)
   await page.keyboard.press('Enter')
   await expect(note).toHaveValue(line)
@@ -192,9 +192,9 @@ test('Use these findings puts the picked choices, open choices and left-out find
   await page.keyboard.press('Enter')
   await expect(note).toHaveValue(
     [
-      '- contradiction (R2): The fixtures list is ambiguous',
+      '- blocker, contradiction (R2): The fixtures list is ambiguous',
       '  Decision: Refuse duplicate paths',
-      '- risk (R4): The fixture search is slow',
+      '- blocker, risk (R4): The fixture search is slow',
       '  Open choice, ask me: Name the fixture files (recommended); or Drop the fixture search',
     ].join('\n'),
   )
@@ -228,15 +228,12 @@ test('a failed review shows its reason in the Help section', async ({ page, requ
   await expect(spec.getByText(/^No spec review for v1: /)).toBeVisible(RUN)
 })
 
-test('a review with nothing to change offers no button in its result', async ({
-  page,
-  request,
-}) => {
+test('a ready review offers no button in its result', async ({ page, request }) => {
   const task = await specTask(request, 'Buttons at Spec review')
   const { spec } = await openSpec(page, task.key, 'Buttons at Spec review')
   await spec.getByRole('button', { name: 'Review spec' }).click()
   const result = spec.getByRole('region', { name: 'Spec review of v1' })
-  await expect(result).toContainText('Nothing to change', RUN)
+  await expect(result).toContainText('Ready', RUN)
   await expect(result.getByRole('button')).toHaveCount(0)
 })
 
