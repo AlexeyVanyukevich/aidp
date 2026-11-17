@@ -145,7 +145,13 @@ export interface RunWork {
     budget_usd: number | null
   }
   /** The spec at `spec_version`: null for a first draft. */
-  spec: { version: number; body_md: string; criteria: SpecCriterion[] } | null
+  spec: {
+    version: number
+    body_md: string
+    criteria: SpecCriterion[]
+    /** The owner's note for the planner, given at the spec gate; null or absent when none. */
+    approval_note?: string | null
+  } | null
   project: {
     key: string
     repo_path: string

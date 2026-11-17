@@ -32,6 +32,15 @@ describe('the agents', () => {
     expect(prompt).toContain('never approved by the owner')
   })
 
+  it('tells the planner what the approval note is', () => {
+    const prompt = AGENTS.planner!.prompt
+    expect(prompt).toContain('<approval_note>')
+    expect(prompt).toContain('given at the spec gate')
+    expect(prompt).toContain('not a criterion')
+    expect(prompt).toContain('never overrides the spec')
+    expect(prompt).toContain('the answer wins')
+  })
+
   it('tells the planner to keep the owner’s plan gate answers', () => {
     const prompt = AGENTS.planner!.prompt
     expect(prompt).toContain('<plan_answer>')
