@@ -120,6 +120,28 @@ describe('asking for a help', () => {
     expect(task.state).toBe('needs_approval')
   })
 
+  it('queues one review_plan help on a plan request', async () => {
+    const plan = await open({ kind: 'plan', options: [], recommendation: null, context_md: '# Plan' })
+    const first = await ask(plan.approvalId, { mode: 'review_plan' })
+    expect(first.statusCode).toBe(201)
+    expect(first.json()).toMatchObject({ mode: 'review_plan', status: 'queued' })
+    const second = await ask(plan.approvalId, { mode: 'review_plan' })
+    expect(second.json().id).toBe(first.json().id)
+    const rows = await db()
+      .selectFrom('helps')
+      .select('id')
+      .where('approval_id', '=', plan.approvalId)
+      .execute()
+    expect(rows).toHaveLength(1)
+  })
+
+  it('refuses review_plan on a request that is not a plan', async () => {
+    const other = await open({ kind: 'out_of_plan', files: ['a.ts'], options: [], recommendation: null })
+    const refused = await ask(other.approvalId, { mode: 'review_plan' })
+    expect(refused.statusCode).toBe(409)
+    expect(refused.json().details).toMatchObject({ reason: 'not_offered' })
+  })
+
   it('starts nothing more while one of the same mode is in flight', async () => {
     const { approvalId } = await open()
     const first = (await ask(approvalId, { mode: 'suggest' })).json()

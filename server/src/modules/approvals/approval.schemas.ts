@@ -37,7 +37,11 @@ export const AnswerBody = Type.Union([SingleAnswer, BatchAnswers])
 export const HelpBody = Type.Object(
   {
     question_index: Type.Optional(Type.Integer({ minimum: 0, maximum: LIMITS.questions })),
-    mode: Type.Union([Type.Literal('suggest'), Type.Literal('explain')]),
+    mode: Type.Union([
+      Type.Literal('suggest'),
+      Type.Literal('explain'),
+      Type.Literal('review_plan'),
+    ]),
   },
   { additionalProperties: false },
 )
