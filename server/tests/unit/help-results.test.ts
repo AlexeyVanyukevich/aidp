@@ -29,7 +29,6 @@ const next = {
   text: 'Vague',
   destination: 'next_gate',
   evidence: 'Context',
-  edit: 'Say which.',
 }
 const outside = {
   kind: 'risk',
@@ -108,14 +107,14 @@ const rows: Row[] = [
   {
     name: 'a next-gate finding with an edit',
     mode: 'review',
-    input: { findings: [next], unsure: 'u' },
-    expected: [],
+    input: { findings: [{ ...next, edit: 'Say which.' }], unsure: 'u' },
+    expected: ['findings:not_allowed'],
   },
   {
-    name: 'a next-gate finding without an edit',
+    name: 'a next-gate finding with where and no edit',
     mode: 'review',
-    input: { findings: [{ ...next, edit: undefined }], unsure: 'u' },
-    expected: ['findings:required'],
+    input: { findings: [next], unsure: 'u' },
+    expected: [],
   },
   {
     name: 'a next-gate finding without where',
@@ -127,7 +126,7 @@ const rows: Row[] = [
     name: 'an edit of 4001 characters',
     mode: 'review',
     input: { findings: [{ ...next, edit: long }], unsure: 'u' },
-    expected: ['findings:too_long'],
+    expected: ['findings:not_allowed'],
   },
   {
     name: 'a blocker with an edit',
@@ -184,7 +183,7 @@ const rows: Row[] = [
   {
     name: 'a plan review next-gate finding with an edit',
     mode: 'review_plan',
-    input: { findings: [next], unsure: 'u' },
+    input: { findings: [{ ...next, edit: 'x' }], unsure: 'u' },
     expected: ['findings:not_allowed'],
   },
   {
@@ -326,6 +325,12 @@ const step = (next_step: string, extra: Partial<DecisionResultInput> = {}) => ({
   ...extra,
 })
 const codeRows: Row[] = [
+  {
+    name: 'a code review finding with an edit',
+    mode: 'code_review',
+    input: { findings: [{ ...bug, edit: 'x' }], ...step('fix_by_hand') },
+    expected: ['findings:not_allowed'],
+  },
   {
     name: 'a code review with a blocker and fix_by_hand',
     mode: 'code_review',
