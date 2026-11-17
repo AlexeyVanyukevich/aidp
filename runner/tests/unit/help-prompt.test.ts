@@ -9,7 +9,6 @@ const prompt = AGENTS.helper!.prompt
 describe('the helper’s instructions for decisions (AC26)', () => {
   const rows: { name: string; words: string }[] = [
     { name: 'a review reports missing requirements', words: 'review: report what is missing' },
-    { name: 'a review may find nothing to change', words: 'nothing_to_change' },
     { name: 'a restatement judges nothing', words: 'judge nothing' },
     {
       name: 'a recommendation first says why the run stopped',
@@ -40,6 +39,81 @@ describe('the helper’s instructions for decisions (AC26)', () => {
     expect(prompt.indexOf('why the run stopped')).toBeLessThan(
       prompt.indexOf('then recommend one of'),
     )
+  })
+})
+
+/** One paragraph of the helper's prompt, from its mode name to the next paragraph. */
+const paragraph = (mode: string) => {
+  const parts = prompt.split('\n\n')
+  const from = parts.findIndex((part) => part.startsWith(`${mode}: `))
+  const next = parts.findIndex(
+    (part, i) =>
+      i > from &&
+      /^(review|review_plan|restate|recommend|check|advise|code_review|When the result): ?/.test(
+        part,
+      ),
+  )
+  return parts.slice(from, next === -1 ? undefined : next).join('\n\n')
+}
+
+describe('the shared review shape in the helper’s instructions', () => {
+  const modes = ['review', 'review_plan', 'code_review']
+  const shared: { name: string; words: string }[] = [
+    { name: 'a blocker', words: 'makes the work do the wrong thing or fail its own criteria' },
+    { name: 'a next-gate point', words: 'the next agent can settle without a decision' },
+    { name: 'an outside point', words: 'belongs to another task' },
+    { name: 'no lighter destination', words: 'never move a finding to a lighter destination' },
+    { name: 'evidence', words: '"not checked"' },
+    { name: 'a tested fix', words: 'the cases it must not break' },
+  ]
+  const rows = modes.flatMap((mode) => shared.map((row) => ({ mode, ...row })))
+  it.each(rows)('$mode defines $name', ({ mode, words }) => {
+    expect(paragraph(mode)).toContain(words)
+  })
+
+  const own: { mode: string; name: string; words: string }[] = [
+    {
+      mode: 'review_plan',
+      name: 'a dropped point is a blocker that quotes it',
+      words: 'blocker whose text quotes',
+    },
+    {
+      mode: 'review_plan',
+      name: 'a settled point is not raised again',
+      words: 'Never raise a settled point again',
+    },
+    { mode: 'review_plan', name: 'it reads previous', words: 'previous.answer' },
+    { mode: 'code_review', name: 'it picks a next step', words: 'next_step' },
+    { mode: 'code_review', name: 'it reads plan_review_points', words: 'plan_review_points' },
+    {
+      mode: 'code_review',
+      name: 'an unsettled point becomes a blocker or an outside finding',
+      words: 'blocker or an outside finding',
+    },
+    {
+      mode: 'code_review',
+      name: 'a settled point is not raised',
+      words: 'A settled point is not raised',
+    },
+  ]
+  it.each(own)('$mode: $name', ({ mode, words }) => {
+    expect(paragraph(mode)).toContain(words)
+  })
+})
+
+describe('the Re-run note in the phase prompts', () => {
+  it.each(['planner', 'builder', 'verifier'])(
+    'tells the %s the note is the owner’s word and no criterion',
+    (name) => {
+      const text = AGENTS[name]!.prompt
+      expect(text).toContain('<rerun_note>')
+      expect(text).toContain('never overrides the spec')
+      expect(text).toContain('withdrawn')
+    },
+  )
+  it('tells the verifier to read it as context only', () => {
+    expect(AGENTS.verifier!.prompt).toContain('context only')
+    expect(AGENTS.verifier!.prompt).toContain('judges the spec’s criteria alone')
   })
 })
 

@@ -726,8 +726,9 @@ describe('the helper’s instructions for a pull request review', () => {
       words: 'matters that says why it matters',
     },
     {
-      name: 'it may find nothing to change',
-      words: 'Save nothing_to_change when nothing should change',
+      name: 'it picks its next_step by the rules of R14',
+      words:
+        'merge only when there is no finding; merge_and_file when there is no blocker and at least one outside finding; fix_by_hand, rerun_keep or rerun_again only when there is a blocker, and rerun_keep only when get_decision gives a plan_to_keep',
     },
     {
       name: 'it leaves the skipped files to the board',
