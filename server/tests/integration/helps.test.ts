@@ -679,3 +679,128 @@ describe('migration 015', () => {
     expect((await migrator().migrateToLatest()).error).toBeUndefined()
   })
 })
+
+describe('get_question for a plan review: previous', () => {
+  const plan = (n: number) => Array.from({ length: n }, (_, i) => `step ${i + 1}`).join('\n')
+
+  async function seedPlanReview(first: { text: string | null; context: string }, second: string) {
+    const run = await seedRunningRun(db())
+    const insert = (context: string, status: 'answered' | 'open', answer: unknown, at: string) =>
+      db()
+        .insertInto('approval_requests')
+        .values({
+          run_id: run.runId,
+          kind: 'plan',
+          question: 'Approve?',
+          options: '[]',
+          recommendation: null,
+          phase_id: null,
+          checkpoint: null,
+          context_md: context,
+          status,
+          answer: answer === null ? null : JSON.stringify(answer),
+          answered_at: status === 'answered' ? new Date(at) : null,
+        })
+        .returning('id')
+        .executeTakeFirstOrThrow()
+    const earlier = await insert(
+      first.context,
+      'answered',
+      first.text === null ? { option_id: 'approve' } : { text: first.text },
+      '2026-10-20T09:00:00Z',
+    )
+    const current = await insert(second, 'open', null, '2026-10-20T09:30:00Z')
+    const help = await db()
+      .insertInto('helps')
+      .values({
+        run_id: run.runId,
+        approval_id: current.id,
+        decision: 'question',
+        mode: 'review_plan',
+        status: 'running',
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow()
+    return { ...run, earlierId: earlier.id, helpId: help.id }
+  }
+
+  const previous = async (s: { runId: string; taskId: string; helpId: string }) => {
+    const { call } = await tools(s.runId, s.taskId, s.helpId)
+    return JSON.parse((await call('get_question')).content[0]!.text).previous
+  }
+
+  it('is null on the first plan request', async () => {
+    const run = await seedRunningRun(db())
+    const approval = await db()
+      .insertInto('approval_requests')
+      .values({
+        run_id: run.runId,
+        kind: 'plan',
+        question: 'Approve?',
+        options: '[]',
+        recommendation: null,
+        phase_id: null,
+        checkpoint: null,
+        context_md: plan(3),
+        status: 'open',
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow()
+    const help = await db()
+      .insertInto('helps')
+      .values({
+        run_id: run.runId,
+        approval_id: approval.id,
+        decision: 'question',
+        mode: 'review_plan',
+        status: 'running',
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow()
+    expect(await previous({ ...run, helpId: help.id })).toBeNull()
+  })
+
+  it('is null when the earlier request was approved without words', async () => {
+    const s = await seedPlanReview({ text: null, context: plan(3) }, plan(4))
+    expect(await previous(s)).toBeNull()
+  })
+
+  it('holds the diff, the owner’s words and no earlier review', async () => {
+    const s = await seedPlanReview({ text: 'Add a retry step', context: plan(30) }, plan(31))
+    const got = await previous(s)
+    expect(got.answer).toBe('Add a retry step')
+    expect(got.diff).toContain('+step 31')
+    expect(got.earlier_review).toBeNull()
+  })
+
+  it('returns the earlier review without unsure', async () => {
+    const s = await seedPlanReview({ text: 'Add a retry step', context: plan(3) }, plan(4))
+    await db()
+      .insertInto('helps')
+      .values({
+        run_id: s.runId,
+        approval_id: s.earlierId,
+        decision: 'question',
+        mode: 'review_plan',
+        status: 'succeeded',
+        result: JSON.stringify({
+          mode: 'review_plan',
+          verdict: 'changes',
+          blockers: 1,
+          findings: [{ kind: 'risk', text: 'T', destination: 'blocker', evidence: 'e' }],
+          unsure: 'secret',
+        }),
+      })
+      .execute()
+    const got = await previous(s)
+    expect(got.earlier_review).toMatchObject({ verdict: 'changes' })
+    expect(JSON.stringify(got.earlier_review)).not.toContain('unsure')
+  })
+
+  it('gives the whole earlier plan when the differing middles are too large', async () => {
+    const before = Array.from({ length: 3_000 }, (_, i) => `old ${i}`).join('\n')
+    const after = Array.from({ length: 3_000 }, (_, i) => `new ${i}`).join('\n')
+    const s = await seedPlanReview({ text: 'Redo it', context: before }, after)
+    expect((await previous(s)).diff).toBe(before)
+  })
+})

@@ -252,14 +252,19 @@ describe('get_phase_record for a stopped run', () => {
   })
 })
 
+const BLOCKER = {
+  kind: 'missing',
+  where: 'R1',
+  text: 'X',
+  destination: 'blocker',
+  evidence: 'R1',
+}
+
 describe('save_help_result for a decision help', () => {
   it('saves a result and ends the run (AC9)', async () => {
     const s = await seed({ state: 'spec_review' }, 'spec_review', 'review')
     const call = await tools(s.taskId, s.helpRunId, s.helpId)
-    const saved = await call('save_help_result', {
-      verdict: 'nothing_to_change',
-      unsure: 'nothing',
-    })
+    const saved = await call('save_help_result', { unsure: 'nothing' })
     expect(saved.isError).toBe(false)
     expect(await statusOf('runs', s.helpRunId)).toBe('succeeded')
     expect(await statusOf('helps', s.helpId)).toBe('succeeded')
@@ -269,21 +274,19 @@ describe('save_help_result for a decision help', () => {
     const s = await seed({ state: 'spec_review' }, 'spec_review', 'review')
     const call = await tools(s.taskId, s.helpRunId, s.helpId)
     const one = await call('save_help_result', {
-      verdict: 'changes',
-      findings: [{ kind: 'missing', where: 'R1', text: 'X', choices: ['A'], recommended: 0 }],
+      findings: [{ ...BLOCKER, choices: ['A'], recommended: 0 }],
       unsure: 'u',
     })
     expect(one.text).toContain('findings: too few')
     expect(await statusOf('helps', s.helpId)).not.toBe('succeeded')
     const saved = await call('save_help_result', {
-      verdict: 'changes',
-      findings: [{ kind: 'missing', where: 'R1', text: 'X', choices: ['A', 'B'], recommended: 1 }],
+      findings: [{ ...BLOCKER, choices: ['A', 'B'], recommended: 1 }],
       unsure: 'u',
     })
     expect(saved.isError).toBe(false)
     const listed = (await app.inject({ url: `/api/tasks/${s.taskId}/helps` })).json()
     expect(listed[0].result.findings).toEqual([
-      { kind: 'missing', where: 'R1', text: 'X', choices: ['A', 'B'], recommended: 1 },
+      { ...BLOCKER, choices: ['A', 'B'], recommended: 1 },
     ])
   })
 
@@ -380,6 +383,77 @@ describe('a pull request review', () => {
     expect(record.verify_report).toMatchObject({ body_md: 'The report' })
   })
 
+  it('returns plan_to_keep when an accepted plan exists, and null when none (AC14)', async () => {
+    const s = await seed(REVIEWED, 'pull_request', 'code_review')
+    const call = await tools(s.taskId, s.helpRunId, s.helpId)
+    expect(JSON.parse((await call('get_decision')).text).plan_to_keep).toBeNull()
+    await db()
+      .insertInto('artifacts')
+      .values({
+        run_id: s.runId,
+        kind: 'plan',
+        body_md: 'The plan',
+        uri: null,
+        data: JSON.stringify({ confidence: 'high' }),
+      })
+      .execute()
+    expect(JSON.parse((await call('get_decision')).text).plan_to_keep).toEqual({
+      run_number: 1,
+      body_md: 'The plan',
+    })
+  })
+
+  it('returns the next-gate points of the approved plan’s review, and none without one (AC23)', async () => {
+    const s = await seed(REVIEWED, 'pull_request', 'code_review')
+    const call = await tools(s.taskId, s.helpRunId, s.helpId)
+    expect(JSON.parse((await call('get_decision')).text).plan_review_points).toEqual([])
+    const approval = await db()
+      .insertInto('approval_requests')
+      .values({
+        run_id: s.runId,
+        kind: 'plan',
+        question: 'Approve?',
+        options: '[]',
+        recommendation: null,
+        phase_id: null,
+        checkpoint: null,
+        status: 'answered',
+        context_md: 'The plan',
+        answer: JSON.stringify({ option_id: 'approve' }),
+        answered_at: new Date(),
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow()
+    const finding = (destination: string, text: string) => ({
+      kind: 'risk',
+      where: 'Step 2',
+      text,
+      destination,
+      evidence: 'plan:2',
+    })
+    await db()
+      .insertInto('helps')
+      .values({
+        run_id: s.runId,
+        approval_id: approval.id,
+        decision: 'question',
+        mode: 'review_plan',
+        status: 'succeeded',
+        retired_at: new Date(),
+        result: JSON.stringify({
+          mode: 'review_plan',
+          verdict: 'changes',
+          blockers: 1,
+          findings: [finding('next_gate', 'Name the file'), finding('blocker', 'A gap')],
+          unsure: 'u',
+        }),
+      })
+      .execute()
+    expect(JSON.parse((await call('get_decision')).text).plan_review_points).toEqual([
+      { kind: 'risk', where: 'Step 2', text: 'Name the file', evidence: 'plan:2' },
+    ])
+  })
+
   it('returns a null plan and report when the run has none', async () => {
     const s = await seed(REVIEWED, 'pull_request', 'code_review')
     const call = await tools(s.taskId, s.helpRunId, s.helpId)
@@ -403,7 +477,6 @@ describe('a pull request review', () => {
           ${JSON.stringify(payload)}::jsonb)`.execute(db())
     const call = await tools(s.taskId, s.helpRunId, s.helpId)
     const saved = await call('save_help_result', {
-      verdict: 'changes',
       findings: [
         {
           kind: 'bug',
@@ -411,9 +484,20 @@ describe('a pull request review', () => {
           line: 12,
           text: 'Off by one',
           matters: 'Loses a row',
+          destination: 'blocker',
+          evidence: 'server/src/a.ts:12',
         },
-        { kind: 'test', file: 'server/src/b.ts', text: 'No test', matters: 'Regresses' },
+        {
+          kind: 'test',
+          file: 'server/src/b.ts',
+          text: 'No test',
+          matters: 'Regresses',
+          destination: 'blocker',
+          evidence: 'not checked',
+        },
       ],
+      next_step: 'fix_by_hand',
+      reasoning: 'Two blockers',
       unsure: 'Nothing',
     })
     expect(saved.isError).toBe(false)
@@ -421,10 +505,27 @@ describe('a pull request review', () => {
     expect(listed[0].result).toEqual({
       mode: 'code_review',
       verdict: 'changes',
+      blockers: 2,
       findings: [
-        { kind: 'bug', where: 'server/src/a.ts:12', text: 'Off by one', matters: 'Loses a row' },
-        { kind: 'test', where: 'server/src/b.ts', text: 'No test', matters: 'Regresses' },
+        {
+          kind: 'bug',
+          where: 'server/src/a.ts:12',
+          text: 'Off by one',
+          matters: 'Loses a row',
+          destination: 'blocker',
+          evidence: 'server/src/a.ts:12',
+        },
+        {
+          kind: 'test',
+          where: 'server/src/b.ts',
+          text: 'No test',
+          matters: 'Regresses',
+          destination: 'blocker',
+          evidence: 'not checked',
+        },
       ],
+      next_step: 'fix_by_hand',
+      reasoning: 'Two blockers',
       unsure: 'Nothing',
       commit: 'abc1234def',
       skipped: payload.skipped,
@@ -434,10 +535,10 @@ describe('a pull request review', () => {
   it('stores a null commit and no skipped files when no checkout event exists', async () => {
     const s = await seed(REVIEWED, 'pull_request', 'code_review')
     const call = await tools(s.taskId, s.helpRunId, s.helpId)
-    await call('save_help_result', { verdict: 'nothing_to_change', unsure: 'u' })
+    await call('save_help_result', { next_step: 'merge', reasoning: 'r', unsure: 'u' })
     const listed = (await app.inject({ url: `/api/tasks/${s.taskId}/helps` })).json()
     expect(listed[0].result).toMatchObject({
-      verdict: 'nothing_to_change',
+      verdict: 'ready',
       commit: null,
       skipped: [],
     })

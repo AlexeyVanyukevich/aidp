@@ -416,6 +416,44 @@ async function previousFor(ctx: ToolContext, version: number, body: string, runI
   }
 }
 
+/**
+ * The next-gate findings of the newest succeeded plan review, retired or not, on the run's newest
+ * `plan` request the owner answered with Approve plan. Empty when there is none.
+ */
+async function planReviewPoints(ctx: ToolContext, runId: string) {
+  const requests = await ctx.db
+    .selectFrom('approval_requests')
+    .select(['id', 'answer'])
+    .where('run_id', '=', runId)
+    .where('kind', '=', 'plan')
+    .where('status', '=', 'answered')
+    .orderBy('answered_at', 'desc')
+    .execute()
+  const approved = requests.find(
+    (row) => (row.answer as { option_id?: string } | null)?.option_id === 'approve',
+  )
+  if (approved === undefined) return []
+  const review = await ctx.db
+    .selectFrom('helps')
+    .select('result')
+    .where('approval_id', '=', approved.id)
+    .where('mode', '=', 'review_plan')
+    .where('status', '=', 'succeeded')
+    .where('result', 'is not', null)
+    .orderBy('created_at', 'desc')
+    .executeTakeFirst()
+  const result = review?.result
+  if (result === undefined || result === null || result.mode !== 'review_plan') return []
+  return result.findings
+    .filter((finding) => finding.destination === 'next_gate')
+    .map((finding) => ({
+      kind: finding.kind,
+      where: finding.where ?? null,
+      text: finding.text,
+      evidence: finding.evidence,
+    }))
+}
+
 /** What `get_decision` returns (R11). */
 async function decisionRecord(ctx: ToolContext, helpId: string, head: HelpHead) {
   const task = await ctx.db
@@ -542,8 +580,22 @@ async function decisionRecord(ctx: ToolContext, helpId: string, head: HelpHead) 
             .executeTakeFirst()) ?? null)
     const { plans, approvals } = await loadPlanHistory(ctx.db, ctx.taskId)
     const plan = acceptedPlanOf(plans, approvals, run.id)
+    const kept = await planToKeepFor(ctx.db, ctx.taskId)
+    const keptBody =
+      kept === undefined
+        ? null
+        : await ctx.db
+            .selectFrom('artifacts')
+            .select('body_md')
+            .where('id', '=', kept.id)
+            .executeTakeFirstOrThrow()
     return {
       ...common,
+      plan_to_keep:
+        kept === undefined || keptBody === null
+          ? null
+          : { run_number: kept.runNumber, body_md: keptBody.body_md },
+      plan_review_points: await planReviewPoints(ctx, run.id),
       run: {
         number: run.number,
         branch: run.branch ?? `board/${common.task.key}-r${run.number}`,
@@ -602,6 +654,53 @@ async function decisionRecord(ctx: ToolContext, helpId: string, head: HelpHead) 
   }
 }
 
+/**
+ * What a review of a re-presented plan reads from before it: the newest earlier `plan` request of
+ * the asking run that the owner answered with words, and what changed since. Null on the first.
+ */
+async function previousPlanFor(ctx: ToolContext, helpId: string) {
+  const current = await ctx.db
+    .selectFrom('helps')
+    .innerJoin('approval_requests', 'approval_requests.id', 'helps.approval_id')
+    .select(['approval_requests.id', 'approval_requests.run_id', 'approval_requests.context_md'])
+    .where('helps.id', '=', helpId)
+    .executeTakeFirstOrThrow()
+  const earlierRequests = await ctx.db
+    .selectFrom('approval_requests')
+    .select(['id', 'context_md', 'answer'])
+    .where('run_id', '=', current.run_id)
+    .where('kind', '=', 'plan')
+    .where('status', '=', 'answered')
+    .where('id', '!=', current.id)
+    .orderBy('answered_at', 'desc')
+    .execute()
+  const earlier = earlierRequests.find(
+    (row) => ((row.answer as { text?: string } | null)?.text ?? '').trim() !== '',
+  )
+  if (earlier === undefined) return null
+  const before = earlier.context_md ?? ''
+  const diff = lineDiff(before, current.context_md ?? '')
+  const useText = diff === null || diff.length > before.length
+  const review = await ctx.db
+    .selectFrom('helps')
+    .select('result')
+    .where('approval_id', '=', earlier.id)
+    .where('mode', '=', 'review_plan')
+    .where('status', '=', 'succeeded')
+    .where('result', 'is not', null)
+    .orderBy('created_at', 'desc')
+    .executeTakeFirst()
+  const result = review?.result
+  return {
+    diff: useText ? before : diff,
+    answer: ((earlier.answer as { text?: string }).text ?? '').trim(),
+    earlier_review:
+      result === undefined || result === null || result.mode !== 'review_plan'
+        ? null
+        : { verdict: result.verdict, findings: result.findings },
+  }
+}
+
 /** The tools of a helper: it reads the task, its question and the asking phase, and saves. */
 function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string): void {
   const service = new HelpService(ctx.db, undefined as unknown as Bus, ctx.clock)
@@ -638,6 +737,7 @@ function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string):
         recommendation: asked.recommendation,
         ...(files === null ? {} : { files }),
         ...(row.kind === 'plan' ? { plan: row.context_md } : {}),
+        ...(head.mode === 'review_plan' ? { previous: await previousPlanFor(ctx, helpId) } : {}),
         ...(row.kind === 'questions' ? { batch_lead: row.question } : {}),
       })
     },
@@ -706,7 +806,7 @@ function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string):
     'save_help_result',
     {
       description:
-        'Save your result. A suggestion: option_id (one the question offers), text, or both, with reasoning and unsure (what you are unsure of). A whole-batch suggestion: answers only, one for every question of the batch, each with question_id, option_id or text, reasoning and unsure, and no other field. An explanation: asked (what is being asked), matters (why it matters to the task) and leads_to (what each option, or an answer in words, would lead to), and no option. For a decision help the fields depend on the mode. review: verdict (changes or nothing_to_change), findings (kind, where, text; a finding may carry choices, 2 to 5 short ways to settle it, with recommended the index of the one you would choose) and unsure. restate: changes, requirements and left_out. recommend: why_stopped, action, reasoning and unsure. check: checked_against, produced, unfinished (where, text) and unsure. advise: variant (one the proposal offers now), reasoning and unsure. code_review: verdict (changes or nothing_to_change), findings (kind: bug, breaks, duplicate, fit or test; file; line, optional; text; matters) and unsure. Refused with the field to fix when it does not fit; fix it and save again.',
+        'Save your result. A suggestion: option_id (one the question offers), text, or both, with reasoning and unsure (what you are unsure of). A whole-batch suggestion: answers only, one for every question of the batch, each with question_id, option_id or text, reasoning and unsure, and no other field. An explanation: asked (what is being asked), matters (why it matters to the task) and leads_to (what each option, or an answer in words, would lead to), and no option. For a decision help the fields depend on the mode. review and review_plan: findings and unsure, and no verdict (the board derives it). Each finding has kind, where, text, destination (blocker, next_gate or outside) and evidence; an outside finding also has a title and its text in the labels Where, Found, Problem and Impact; a review next_gate finding also has where and edit; a finding may carry choices, 2 to 5 short ways to settle it, with recommended the index of the one you would choose. review kinds: missing, contradiction, uncheckable, risk. review_plan kinds: uncovered, missing_file, risk, simpler. restate: changes, requirements and left_out. recommend: why_stopped, action, reasoning and unsure. check: checked_against, produced, unfinished (where, text) and unsure. advise: variant (one the proposal offers now), reasoning and unsure. code_review: findings (kind: bug, breaks, duplicate, fit or test; file; line, optional; text; matters; destination blocker or outside; evidence; title for an outside one), next_step (merge, merge_and_file, fix_by_hand, rerun_keep or rerun_again), reasoning and unsure. Refused with the field to fix when it does not fit; fix it and save again.',
       inputSchema: {
         option_id: z.string().optional(),
         text: z.string().optional(),
@@ -738,9 +838,14 @@ function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string):
               matters: z.string().optional(),
               choices: z.array(z.string()).optional(),
               recommended: z.number().optional(),
+              destination: z.string().optional(),
+              evidence: z.string().optional(),
+              title: z.string().optional(),
+              edit: z.string().optional(),
             }),
           )
           .optional(),
+        next_step: z.string().optional(),
         changes: z.string().optional(),
         requirements: z.string().optional(),
         left_out: z.string().optional(),
