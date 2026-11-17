@@ -156,7 +156,9 @@ export async function readSubjectFacts(db: Db, taskId: string): Promise<SubjectF
   const openProposals = await openProposalIds(db, taskId)
   const block = (run?.block ?? null) as Block | null
   const kept =
-    task.state === 'failed' ? await planToKeepFor(db as Kysely<Database>, taskId) : undefined
+    task.state === 'failed' || task.state === 'review'
+      ? await planToKeepFor(db as Kysely<Database>, taskId)
+      : undefined
   return {
     taskState: task.state,
     blockCause: block?.cause ?? null,
@@ -357,6 +359,11 @@ export class HelpService {
       if (row === undefined) throw new NotFoundError('No such approval request')
       if (row.kind === 'proposal')
         throw new ConflictError('A proposal is settled on the Proposals tab; its help is there', {
+          reason: 'not_offered',
+        })
+      // Review plan is offered on a plan request only.
+      if (pressed === 'review_plan' && row.kind !== 'plan')
+        throw new ConflictError('Review plan belongs to a plan request', {
           reason: 'not_offered',
         })
       const block = row.block as Block | null
@@ -914,6 +921,31 @@ export class HelpService {
       )
       const mode = help.mode as QuestionHelpMode
       const batch = (help.questions ?? []) as BatchQuestion[]
+      if (mode === 'review_plan') {
+        const planFindings = checkDecisionResult('review_plan', input, {
+          recommendable: [],
+          checkedAgainst: 'approved_spec',
+        })
+        if (planFindings.length > 0)
+          return {
+            error: [
+              'The result was not saved:',
+              ...planFindings.map((f) => `- ${f.field}: ${f.code.replaceAll('_', ' ')}`),
+            ].join('\n'),
+          }
+        await trx
+          .updateTable('helps')
+          .set({
+            status: 'succeeded',
+            result: JSON.stringify(decisionResultOf('review_plan', input)),
+            ended_at: this.clock(),
+          })
+          .where('id', '=', helpId)
+          .execute()
+        await endHelpRun(trx, help.run_id, 'succeeded', null, this.clock())
+        await this.announce(trx, help.run_id)
+        return { ok: true as const }
+      }
       const findings =
         mode === 'suggest_all'
           ? checkBatchResult(batch, input)
@@ -982,6 +1014,7 @@ export class HelpService {
         ? (await proposalsOf(trx, help.task_id)).find((view) => view.id === subject.proposal_id)
         : undefined
     const findings = checkDecisionResult(mode, input, {
+      planToKeep: facts.planToKeep,
       recommendable: recommendableActions(facts),
       checkedAgainst: specRead(facts).checkedAgainst,
       ...(proposal === undefined ? {} : { offeredVariants: proposal.offered }),

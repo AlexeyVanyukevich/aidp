@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
   checkDecisionResult,
+  decisionResultOf,
   type DecisionCheckFacts,
   type DecisionResultInput,
 } from '../../src/modules/approvals/help-rules.js'
 
-type Mode = 'review' | 'restate' | 'recommend' | 'check' | 'code_review'
+type Mode = 'review' | 'review_plan' | 'restate' | 'recommend' | 'check' | 'code_review'
 interface Row {
   name: string
   mode: Mode
@@ -18,70 +19,200 @@ interface Row {
 const FACTS: DecisionCheckFacts = {
   recommendable: ['cancel', 'rerun_again', 'mark_done'],
   checkedAgainst: 'approved_spec',
+  planToKeep: false,
 }
 const long = 'x'.repeat(4_001)
-const item = { kind: 'missing', text: 'No retry limit' }
+const item = { kind: 'missing', text: 'No retry limit', destination: 'blocker', evidence: 'R3' }
+const next = {
+  kind: 'risk',
+  where: 'Context',
+  text: 'Vague',
+  destination: 'next_gate',
+  evidence: 'Context',
+  edit: 'Say which.',
+}
+const outside = {
+  kind: 'risk',
+  text: '**Where:** a.ts\n**Found:** today\n**Problem:** p\n**Impact:** i',
+  title: 'A bug elsewhere',
+  destination: 'outside',
+  evidence: 'a.ts:1',
+}
 
 const rows: Row[] = [
+  { name: 'a blocker', mode: 'review', input: { findings: [item], unsure: 'u' }, expected: [] },
+  { name: 'no findings', mode: 'review', input: { unsure: 'u' }, expected: [] },
   {
-    name: 'a review with changes',
+    name: 'a verdict is not saved',
     mode: 'review',
     input: { verdict: 'changes', findings: [item], unsure: 'u' },
-    expected: [],
+    expected: ['verdict:not_allowed'],
   },
   {
-    name: 'nothing to change',
+    name: 'a finding without a destination',
     mode: 'review',
-    input: { verdict: 'nothing_to_change', unsure: 'u' },
-    expected: [],
-  },
-  {
-    name: 'nothing to change with findings',
-    mode: 'review',
-    input: { verdict: 'nothing_to_change', findings: [item], unsure: 'u' },
-    expected: ['findings:not_allowed'],
-  },
-  {
-    name: 'changes without findings',
-    mode: 'review',
-    input: { verdict: 'changes', findings: [], unsure: 'u' },
+    input: { findings: [{ ...item, destination: undefined }], unsure: 'u' },
     expected: ['findings:required'],
   },
   {
-    name: 'a review without a verdict',
+    name: 'a destination of later',
     mode: 'review',
-    input: { unsure: 'u' },
-    expected: ['verdict:required'],
+    input: { findings: [{ ...item, destination: 'later' }], unsure: 'u' },
+    expected: ['findings:unknown_destination'],
+  },
+  {
+    name: 'a finding without evidence',
+    mode: 'review',
+    input: { findings: [{ ...item, evidence: undefined }], unsure: 'u' },
+    expected: ['findings:required'],
+  },
+  {
+    name: 'evidence of 501 characters',
+    mode: 'review',
+    input: { findings: [{ ...item, evidence: 'e'.repeat(501) }], unsure: 'u' },
+    expected: ['findings:too_long'],
+  },
+  {
+    name: 'an outside finding',
+    mode: 'review',
+    input: { findings: [outside], unsure: 'u' },
+    expected: [],
+  },
+  {
+    name: 'an outside finding without Impact',
+    mode: 'review',
+    input: {
+      findings: [{ ...outside, text: '**Where:** a\n**Found:** b\n**Problem:** c' }],
+      unsure: 'u',
+    },
+    expected: ['findings:required'],
+  },
+  {
+    name: 'an outside finding without a title',
+    mode: 'review',
+    input: { findings: [{ ...outside, title: undefined }], unsure: 'u' },
+    expected: ['findings:required'],
+  },
+  {
+    name: 'an outside title of 201 characters',
+    mode: 'review',
+    input: { findings: [{ ...outside, title: 't'.repeat(201) }], unsure: 'u' },
+    expected: ['findings:too_long'],
+  },
+  {
+    name: 'a blocker with a title',
+    mode: 'review',
+    input: { findings: [{ ...item, title: 'T' }], unsure: 'u' },
+    expected: ['findings:not_allowed'],
+  },
+  {
+    name: 'a next-gate finding with an edit',
+    mode: 'review',
+    input: { findings: [next], unsure: 'u' },
+    expected: [],
+  },
+  {
+    name: 'a next-gate finding without an edit',
+    mode: 'review',
+    input: { findings: [{ ...next, edit: undefined }], unsure: 'u' },
+    expected: ['findings:required'],
+  },
+  {
+    name: 'a next-gate finding without where',
+    mode: 'review',
+    input: { findings: [{ ...next, where: undefined }], unsure: 'u' },
+    expected: ['findings:required'],
+  },
+  {
+    name: 'an edit of 4001 characters',
+    mode: 'review',
+    input: { findings: [{ ...next, edit: long }], unsure: 'u' },
+    expected: ['findings:too_long'],
+  },
+  {
+    name: 'a blocker with an edit',
+    mode: 'review',
+    input: { findings: [{ ...item, edit: 'x' }], unsure: 'u' },
+    expected: ['findings:not_allowed'],
   },
   {
     name: 'an unknown finding kind',
     mode: 'review',
-    input: { verdict: 'changes', findings: [{ kind: 'nit', text: 't' }], unsure: 'u' },
+    input: { findings: [{ ...item, kind: 'nit' }], unsure: 'u' },
     expected: ['findings:unknown_kind'],
   },
   {
     name: 'a long where',
     mode: 'review',
-    input: { verdict: 'changes', findings: [{ ...item, where: 'w'.repeat(101) }], unsure: 'u' },
+    input: { findings: [{ ...item, where: 'w'.repeat(101) }], unsure: 'u' },
     expected: ['findings:too_long'],
   },
   {
     name: 'thirty-one findings',
     mode: 'review',
-    input: { verdict: 'changes', findings: Array.from({ length: 31 }, () => item), unsure: 'u' },
+    input: { findings: Array.from({ length: 31 }, () => item), unsure: 'u' },
     expected: ['findings:too_many'],
   },
-  {
-    name: 'a review without unsure',
-    mode: 'review',
-    input: { verdict: 'nothing_to_change' },
-    expected: ['unsure:required'],
-  },
+  { name: 'a review without unsure', mode: 'review', input: {}, expected: ['unsure:required'] },
   {
     name: 'a question field in a review',
     mode: 'review',
-    input: { verdict: 'nothing_to_change', unsure: 'u', asked: 'a' },
+    input: { unsure: 'u', asked: 'a' },
     expected: ['asked:not_allowed'],
+  },
+  {
+    name: 'a plan review of a criterion',
+    mode: 'review_plan',
+    input: {
+      findings: [{ ...item, kind: 'uncovered', where: 'R3', evidence: 'R3' }],
+      unsure: 'u',
+    },
+    expected: [],
+  },
+  ...['missing_file', 'risk', 'simpler'].map((kind) => ({
+    name: `a plan review finding of kind ${kind}`,
+    mode: 'review_plan' as const,
+    input: { findings: [{ ...item, kind }], unsure: 'u' },
+    expected: [],
+  })),
+  {
+    name: 'a plan review finding of kind bug',
+    mode: 'review_plan',
+    input: { findings: [{ ...item, kind: 'bug' }], unsure: 'u' },
+    expected: ['findings:unknown_kind'],
+  },
+  {
+    name: 'a plan review next-gate finding with an edit',
+    mode: 'review_plan',
+    input: { findings: [next], unsure: 'u' },
+    expected: ['findings:not_allowed'],
+  },
+  {
+    name: 'a plan review next-gate finding',
+    mode: 'review_plan',
+    input: {
+      findings: [{ ...item, destination: 'next_gate', kind: 'risk' }],
+      unsure: 'u',
+    },
+    expected: [],
+  },
+  {
+    name: 'a plan review with choices',
+    mode: 'review_plan',
+    input: { findings: [{ ...item, kind: 'risk', choices: ['a', 'b'], recommended: 0 }], unsure: 'u' },
+    expected: [],
+  },
+  ...(['option_id', 'text', 'asked', 'matters', 'leads_to'] as const).map((field) => ({
+    name: `${field} in a plan review`,
+    mode: 'review_plan' as const,
+    input: { findings: [], unsure: 'u', [field]: 'x' },
+    expected: [`${field}:not_allowed`],
+  })),
+  {
+    name: 'answers in a plan review',
+    mode: 'review_plan',
+    input: { unsure: 'u', answers: [{ question_id: 'q' }] } as DecisionResultInput,
+    expected: ['answers:not_allowed'],
   },
   {
     name: 'a restatement',
@@ -181,96 +312,173 @@ const bug = {
   line: 12,
   text: 'Off by one',
   matters: 'Loses a row',
+  destination: 'blocker',
+  evidence: 'server/src/a.ts:12',
 }
+const outsideCode = { ...bug, destination: 'outside', title: 'Elsewhere', text: outside.text }
+const step = (next_step: string, extra: Partial<DecisionResultInput> = {}) => ({
+  unsure: 'u',
+  reasoning: 'r',
+  next_step,
+  ...extra,
+})
 const codeRows: Row[] = [
   {
-    name: 'a code review with a finding',
+    name: 'a code review with a blocker and fix_by_hand',
     mode: 'code_review',
-    input: { verdict: 'changes', findings: [bug], unsure: 'u' },
+    input: { findings: [bug], ...step('fix_by_hand') },
     expected: [],
   },
   {
     name: 'a finding without a line',
     mode: 'code_review',
-    input: { verdict: 'changes', findings: [{ ...bug, line: undefined }], unsure: 'u' },
+    input: { findings: [{ ...bug, line: undefined }], ...step('fix_by_hand') },
     expected: [],
   },
   {
-    name: 'nothing to change in a code review',
+    name: 'merge with no findings',
     mode: 'code_review',
-    input: { verdict: 'nothing_to_change', unsure: 'u' },
+    input: step('merge'),
     expected: [],
+  },
+  {
+    name: 'merge with one finding',
+    mode: 'code_review',
+    input: { findings: [outsideCode], ...step('merge') },
+    expected: ['next_step:not_offered'],
+  },
+  {
+    name: 'merge_and_file with one outside finding',
+    mode: 'code_review',
+    input: { findings: [outsideCode], ...step('merge_and_file') },
+    expected: [],
+  },
+  {
+    name: 'merge_and_file with only a blocker',
+    mode: 'code_review',
+    input: { findings: [bug], ...step('merge_and_file') },
+    expected: ['next_step:not_offered'],
+  },
+  {
+    name: 'fix_by_hand with only an outside finding',
+    mode: 'code_review',
+    input: { findings: [outsideCode], ...step('fix_by_hand') },
+    expected: ['next_step:not_offered'],
+  },
+  {
+    name: 'rerun_keep with only an outside finding',
+    mode: 'code_review',
+    input: { findings: [outsideCode], ...step('rerun_keep') },
+    facts: { planToKeep: true },
+    expected: ['next_step:not_offered'],
+  },
+  {
+    name: 'rerun_again with no findings',
+    mode: 'code_review',
+    input: step('rerun_again'),
+    expected: ['next_step:not_offered'],
+  },
+  {
+    name: 'rerun_keep with a blocker and no plan to keep',
+    mode: 'code_review',
+    input: { findings: [bug], ...step('rerun_keep') },
+    expected: ['next_step:not_offered'],
+  },
+  {
+    name: 'rerun_keep with a blocker and a plan to keep',
+    mode: 'code_review',
+    input: { findings: [bug], ...step('rerun_keep') },
+    facts: { planToKeep: true },
+    expected: [],
+  },
+  {
+    name: 'a next step of resume',
+    mode: 'code_review',
+    input: { findings: [bug], ...step('resume') },
+    expected: ['next_step:unknown_action'],
+  },
+  {
+    name: 'a code review without a next step',
+    mode: 'code_review',
+    input: { unsure: 'u', reasoning: 'r' },
+    expected: ['next_step:required'],
+  },
+  {
+    name: 'a code review without reasoning',
+    mode: 'code_review',
+    input: { unsure: 'u', next_step: 'merge' },
+    expected: ['reasoning:required'],
+  },
+  {
+    name: 'a next-gate finding in a code review',
+    mode: 'code_review',
+    input: { findings: [bug, { ...bug, destination: 'next_gate' }], ...step('fix_by_hand') },
+    expected: ['findings:not_offered'],
+  },
+  {
+    name: 'a verdict in a code review',
+    mode: 'code_review',
+    input: { verdict: 'changes', findings: [bug], ...step('fix_by_hand') },
+    expected: ['verdict:not_allowed'],
   },
   {
     name: 'a kind of style',
     mode: 'code_review',
-    input: { verdict: 'changes', findings: [{ ...bug, kind: 'style' }], unsure: 'u' },
+    input: { findings: [{ ...bug, kind: 'style' }], ...step('fix_by_hand') },
     expected: ['findings:unknown_kind'],
   },
   {
     name: 'a blank file',
     mode: 'code_review',
-    input: { verdict: 'changes', findings: [{ ...bug, file: ' ' }], unsure: 'u' },
+    input: { findings: [{ ...bug, file: ' ' }], ...step('fix_by_hand') },
     expected: ['findings:required'],
   },
   {
     name: 'a file of 301 characters',
     mode: 'code_review',
-    input: { verdict: 'changes', findings: [{ ...bug, file: 'f'.repeat(301) }], unsure: 'u' },
+    input: { findings: [{ ...bug, file: 'f'.repeat(301) }], ...step('fix_by_hand') },
     expected: ['findings:too_long'],
   },
   {
     name: 'a line of 0',
     mode: 'code_review',
-    input: { verdict: 'changes', findings: [{ ...bug, line: 0 }], unsure: 'u' },
+    input: { findings: [{ ...bug, line: 0 }], ...step('fix_by_hand') },
     expected: ['findings:invalid_line'],
   },
   {
     name: 'a fractional line',
     mode: 'code_review',
-    input: { verdict: 'changes', findings: [{ ...bug, line: 1.5 }], unsure: 'u' },
+    input: { findings: [{ ...bug, line: 1.5 }], ...step('fix_by_hand') },
     expected: ['findings:invalid_line'],
   },
   {
     name: 'a missing matters',
     mode: 'code_review',
-    input: { verdict: 'changes', findings: [{ ...bug, matters: undefined }], unsure: 'u' },
+    input: { findings: [{ ...bug, matters: undefined }], ...step('fix_by_hand') },
     expected: ['findings:required'],
   },
   {
     name: 'a text that is too long',
     mode: 'code_review',
-    input: { verdict: 'changes', findings: [{ ...bug, text: long }], unsure: 'u' },
+    input: { findings: [{ ...bug, text: long }], ...step('fix_by_hand') },
     expected: ['findings:too_long'],
-  },
-  {
-    name: 'nothing to change with findings',
-    mode: 'code_review',
-    input: { verdict: 'nothing_to_change', findings: [bug], unsure: 'u' },
-    expected: ['findings:not_allowed'],
-  },
-  {
-    name: 'changes with none',
-    mode: 'code_review',
-    input: { verdict: 'changes', findings: [], unsure: 'u' },
-    expected: ['findings:required'],
   },
   {
     name: 'thirty-one findings',
     mode: 'code_review',
-    input: { verdict: 'changes', findings: Array.from({ length: 31 }, () => bug), unsure: 'u' },
+    input: { findings: Array.from({ length: 31 }, () => bug), ...step('fix_by_hand') },
     expected: ['findings:too_many'],
   },
   {
     name: 'a code review without unsure',
     mode: 'code_review',
-    input: { verdict: 'nothing_to_change' },
+    input: { reasoning: 'r', next_step: 'merge' },
     expected: ['unsure:required'],
   },
   {
     name: 'a field of another mode',
     mode: 'code_review',
-    input: { verdict: 'nothing_to_change', unsure: 'u', why_stopped: 'w' },
+    input: { ...step('merge'), why_stopped: 'w' },
     expected: ['why_stopped:not_allowed'],
   },
 ]
@@ -282,5 +490,21 @@ describe('checkDecisionResult', () => {
       (finding) => `${finding.field}:${finding.code}`,
     )
     expect(found).toEqual(expected)
+  })
+})
+
+describe('decisionResultOf for the shared review shape', () => {
+  const stored = (mode: 'review' | 'review_plan' | 'code_review', input: DecisionResultInput) =>
+    decisionResultOf(mode, input) as { verdict: string; blockers: number }
+
+  it.each([
+    { name: 'two blockers and one next-gate', findings: [item, item, next], verdict: 'changes', blockers: 2 },
+    { name: 'next-gate and outside only', findings: [next, outside], verdict: 'ready', blockers: 0 },
+    { name: 'no findings', findings: [], verdict: 'ready', blockers: 0 },
+  ])('derives $verdict from $name', ({ findings, verdict, blockers }) => {
+    for (const mode of ['review', 'review_plan'] as const) {
+      const result = stored(mode, { findings, unsure: 'u' })
+      expect({ verdict: result.verdict, blockers: result.blockers }).toEqual({ verdict, blockers })
+    }
   })
 })

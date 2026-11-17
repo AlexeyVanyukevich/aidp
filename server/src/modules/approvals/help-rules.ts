@@ -7,6 +7,7 @@ import type {
   ProposalOutcome,
   QuestionHelpMode,
 } from '../../shared/vocabulary.js'
+import { missingLabels, TITLE_LIMIT } from '../proposals/proposal.rules.js'
 import type { ApprovalOption, BatchQuestion, Finding } from './approval-rules.js'
 
 /**
@@ -94,7 +95,7 @@ export function questionOf(
 
 /** What a saved result must be. The first finding names the field to fix. */
 export function checkHelpResult(
-  mode: Exclude<QuestionHelpMode, 'suggest_all'>,
+  mode: Exclude<QuestionHelpMode, 'suggest_all' | 'review_plan'>,
   options: ApprovalOption[],
   input: HelpResultInput,
 ): Finding[] {
@@ -128,7 +129,7 @@ export function checkHelpResult(
 
 /** The result as it is stored: only the fields of its mode. */
 export function resultOf(
-  mode: Exclude<QuestionHelpMode, 'suggest_all'>,
+  mode: Exclude<QuestionHelpMode, 'suggest_all' | 'review_plan'>,
   input: HelpResultInput,
 ): HelpResult {
   if (mode === 'explain')
@@ -257,9 +258,14 @@ export interface DecisionResultInput {
         matters?: string | undefined
         choices?: string[] | undefined
         recommended?: number | undefined
+        destination?: string | undefined
+        evidence?: string | undefined
+        title?: string | undefined
+        edit?: string | undefined
       }[]
     | undefined
   unsure?: string | undefined
+  next_step?: string | undefined
   changes?: string | undefined
   requirements?: string | undefined
   left_out?: string | undefined
@@ -276,6 +282,7 @@ export interface DecisionResultInput {
   asked?: string | undefined
   matters?: string | undefined
   leads_to?: string | undefined
+  answers?: unknown
 }
 
 /** What the board knows when it checks a decision help's result. */
@@ -286,21 +293,25 @@ export interface DecisionCheckFacts {
   checkedAgainst: string
   /** The variants a proposal offers now: what an advise help may recommend. */
   offeredVariants?: readonly string[]
+  /** Whether `planToKeepFor` finds a plan for the task: what `rerun_keep` needs. */
+  planToKeep?: boolean
 }
 
 const DECISION_FIELDS = {
-  review: ['verdict', 'findings', 'unsure'],
+  review: ['findings', 'unsure'],
+  review_plan: ['findings', 'unsure'],
   restate: ['changes', 'requirements', 'left_out'],
   recommend: ['why_stopped', 'action', 'reasoning', 'unsure'],
   check: ['checked_against', 'produced', 'unfinished', 'unsure'],
   advise: ['variant', 'reasoning', 'unsure'],
-  code_review: ['verdict', 'findings', 'unsure'],
+  code_review: ['findings', 'unsure', 'next_step', 'reasoning'],
 } as const
 
 const ALL_RESULT_FIELDS = [
   'verdict',
   'findings',
   'unsure',
+  'next_step',
   'changes',
   'requirements',
   'left_out',
@@ -316,14 +327,26 @@ const ALL_RESULT_FIELDS = [
   'asked',
   'matters',
   'leads_to',
+  'answers',
 ] as const
 
 const ACTION_IDS = ['resume', 'cancel', 'rerun_again', 'rerun_keep', 'mark_done']
 const FINDING_KINDS = ['missing', 'contradiction', 'uncheckable', 'risk']
+const PLAN_FINDING_KINDS = ['uncovered', 'missing_file', 'risk', 'simpler']
+const DESTINATIONS = ['blocker', 'next_gate', 'outside']
+const NEXT_STEPS = ['merge', 'merge_and_file', 'fix_by_hand', 'rerun_keep', 'rerun_again']
+const EVIDENCE_LIMIT = 500
+const EDIT_LIMIT = 4_000
 const CODE_FINDING_KINDS = ['bug', 'breaks', 'duplicate', 'fit', 'test']
 const FILE_LIMIT = 300
 export type DecisionResultMode =
-  'review' | 'restate' | 'recommend' | 'check' | 'advise' | 'code_review'
+  | 'review'
+  | 'review_plan'
+  | 'restate'
+  | 'recommend'
+  | 'check'
+  | 'advise'
+  | 'code_review'
 const LIST_LIMIT = 30
 const WHERE_LIMIT = 100
 const CHOICES_MIN = 2
@@ -340,6 +363,7 @@ export interface DecisionFinding {
     | 'too_many'
     | 'unknown_kind'
     | 'unknown_verdict'
+    | 'unknown_destination'
     | 'unknown_action'
     | 'not_offered'
     | 'wrong_source'
@@ -384,14 +408,11 @@ export function checkDecisionResult(
     if (list === undefined) return
     if (list.length > LIST_LIMIT) findings.push({ field, code: 'too_many' })
     for (const item of list) {
-      if (field === 'findings' && !FINDING_KINDS.includes(item.kind ?? ''))
-        findings.push({ field, code: 'unknown_kind' })
       if (blank(item.text)) findings.push({ field, code: 'required' })
       else if (item.text.trim().length > HELP_LIMITS.text)
         findings.push({ field, code: 'too_long' })
       if (item.where !== undefined && item.where.trim().length > WHERE_LIMIT)
         findings.push({ field, code: 'too_long' })
-      if (field === 'findings') choiceFindings(item.choices, item.recommended)
     }
   }
   const choiceFindings = (choices: string[] | undefined, recommended: number | undefined) => {
@@ -415,6 +436,51 @@ export function checkDecisionResult(
       findings.push({ field, code: 'unknown_choice' })
   }
 
+  /** The destination, evidence, title and edit every finding of the shared shape carries. */
+  const shapeFinding = (
+    item: NonNullable<DecisionResultInput['findings']>[number],
+    opts: { edit: boolean; nextGate: boolean },
+  ) => {
+    const field = 'findings'
+    const { destination } = item
+    if (destination === undefined) findings.push({ field, code: 'required' })
+    else if (!DESTINATIONS.includes(destination))
+      findings.push({ field, code: 'unknown_destination' })
+    else if (destination === 'next_gate' && !opts.nextGate)
+      findings.push({ field, code: 'not_offered' })
+    if (blank(item.evidence)) findings.push({ field, code: 'required' })
+    else if ((item.evidence ?? '').trim().length > EVIDENCE_LIMIT)
+      findings.push({ field, code: 'too_long' })
+    if (destination === 'outside') {
+      if (blank(item.title)) findings.push({ field, code: 'required' })
+      else if ((item.title ?? '').trim().length > TITLE_LIMIT)
+        findings.push({ field, code: 'too_long' })
+      if (missingLabels(item.text ?? '').length > 0) findings.push({ field, code: 'required' })
+    } else if (item.title !== undefined) findings.push({ field, code: 'not_allowed' })
+    if (destination === 'next_gate' && opts.edit) {
+      if (blank(item.where)) findings.push({ field, code: 'required' })
+      if (blank(item.edit)) findings.push({ field, code: 'required' })
+      else if ((item.edit ?? '').trim().length > EDIT_LIMIT)
+        findings.push({ field, code: 'too_long' })
+    } else if (item.edit !== undefined) findings.push({ field, code: 'not_allowed' })
+  }
+
+  const specItems = (kinds: readonly string[], edit: boolean) => {
+    const list = input.findings
+    if (list === undefined) return
+    if (list.length > LIST_LIMIT) findings.push({ field: 'findings', code: 'too_many' })
+    for (const item of list) {
+      if (!kinds.includes(item.kind)) findings.push({ field: 'findings', code: 'unknown_kind' })
+      if (blank(item.text)) findings.push({ field: 'findings', code: 'required' })
+      else if (item.text.trim().length > HELP_LIMITS.text)
+        findings.push({ field: 'findings', code: 'too_long' })
+      if (item.where !== undefined && item.where.trim().length > WHERE_LIMIT)
+        findings.push({ field: 'findings', code: 'too_long' })
+      shapeFinding(item, { edit, nextGate: true })
+      choiceFindings(item.choices, item.recommended)
+    }
+  }
+
   const codeItems = () => {
     const list = input.findings
     if (list === undefined) return
@@ -425,6 +491,7 @@ export function checkDecisionResult(
       if (item.where !== undefined) findings.push({ field: 'findings', code: 'not_allowed' })
       if (item.choices !== undefined || item.recommended !== undefined)
         findings.push({ field: 'findings', code: 'not_allowed' })
+      shapeFinding(item, { edit: false, nextGate: false })
       if (blank(item.file)) findings.push({ field: 'findings', code: 'required' })
       else if ((item.file ?? '').trim().length > FILE_LIMIT)
         findings.push({ field: 'findings', code: 'too_long' })
@@ -439,30 +506,24 @@ export function checkDecisionResult(
   }
 
   if (mode === 'code_review') {
-    if (input.verdict !== 'changes' && input.verdict !== 'nothing_to_change')
-      findings.push({
-        field: 'verdict',
-        code: input.verdict === undefined ? 'required' : 'unknown_verdict',
-      })
     codeItems()
-    const count = input.findings?.length ?? 0
-    if (input.verdict === 'changes' && count === 0)
-      findings.push({ field: 'findings', code: 'required' })
-    if (input.verdict === 'nothing_to_change' && count > 0)
-      findings.push({ field: 'findings', code: 'not_allowed' })
+    const list = input.findings ?? []
+    const blockers = list.filter((item) => item.destination === 'blocker').length
+    const outsideCount = list.filter((item) => item.destination === 'outside').length
+    const step = input.next_step
+    if (step === undefined) findings.push({ field: 'next_step', code: 'required' })
+    else if (!NEXT_STEPS.includes(step)) findings.push({ field: 'next_step', code: 'unknown_action' })
+    else if (
+      (step === 'merge' && list.length > 0) ||
+      (step === 'merge_and_file' && (blockers > 0 || outsideCount === 0)) ||
+      (['fix_by_hand', 'rerun_keep', 'rerun_again'].includes(step) && blockers === 0) ||
+      (step === 'rerun_keep' && facts.planToKeep !== true)
+    )
+      findings.push({ field: 'next_step', code: 'not_offered' })
+    text('reasoning', true)
     text('unsure', true)
-  } else if (mode === 'review') {
-    if (input.verdict !== 'changes' && input.verdict !== 'nothing_to_change')
-      findings.push({
-        field: 'verdict',
-        code: input.verdict === undefined ? 'required' : 'unknown_verdict',
-      })
-    items('findings', input.findings)
-    const count = input.findings?.length ?? 0
-    if (input.verdict === 'changes' && count === 0)
-      findings.push({ field: 'findings', code: 'required' })
-    if (input.verdict === 'nothing_to_change' && count > 0)
-      findings.push({ field: 'findings', code: 'not_allowed' })
+  } else if (mode === 'review' || mode === 'review_plan') {
+    specItems(mode === 'review' ? FINDING_KINDS : PLAN_FINDING_KINDS, mode === 'review')
     text('unsure', true)
   } else if (mode === 'restate') {
     for (const field of ['changes', 'requirements', 'left_out'] as const) text(field, true)
@@ -506,30 +567,45 @@ export function decisionResultOf(
   read: CheckoutRead = { commit: null, skipped: [] },
 ): HelpResult {
   const t = (value: string | undefined) => (value ?? '').trim()
+  const blockerCount = (input.findings ?? []).filter(
+    (item) => item.destination === 'blocker',
+  ).length
+  const derived = { verdict: blockerCount === 0 ? 'ready' : 'changes', blockers: blockerCount } as const
+  /** What every finding of the shared shape stores. */
+  const shared = (item: NonNullable<DecisionResultInput['findings']>[number]) => ({
+    destination: item.destination as 'blocker' | 'next_gate' | 'outside',
+    evidence: t(item.evidence),
+    ...(item.destination === 'outside' ? { title: t(item.title) } : {}),
+  })
   if (mode === 'code_review')
     return {
       mode,
-      verdict: input.verdict === 'changes' ? 'changes' : 'nothing_to_change',
+      ...derived,
       findings: (input.findings ?? []).map((item) => ({
         kind: item.kind as 'bug' | 'breaks' | 'duplicate' | 'fit' | 'test',
         where: item.line === undefined ? t(item.file) : `${t(item.file)}:${item.line}`,
         text: t(item.text),
         matters: t(item.matters),
+        ...shared(item),
       })),
+      next_step: input.next_step as 'merge' | 'merge_and_file' | 'fix_by_hand' | 'rerun_keep' | 'rerun_again',
+      reasoning: t(input.reasoning),
       unsure: t(input.unsure),
       commit: read.commit,
       skipped: read.skipped,
     }
   const where = (value: string | undefined) =>
     value === undefined || blank(value) ? {} : { where: value.trim() }
-  if (mode === 'review')
+  if (mode === 'review' || mode === 'review_plan')
     return {
       mode,
-      verdict: input.verdict === 'changes' ? 'changes' : 'nothing_to_change',
+      ...derived,
       findings: (input.findings ?? []).map((item) => ({
-        kind: item.kind as 'missing' | 'contradiction' | 'uncheckable' | 'risk',
+        kind: item.kind as never,
         ...where(item.where),
         text: item.text.trim(),
+        ...shared(item),
+        ...(item.edit === undefined ? {} : { edit: item.edit.trim() }),
         ...(item.choices === undefined || item.recommended === undefined
           ? {}
           : {

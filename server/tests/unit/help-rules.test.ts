@@ -152,12 +152,16 @@ type ReviewFinding = {
   recommended?: number
   file?: string
   matters?: string
+  destination?: string
+  evidence?: string
 }
 const FACTS = { recommendable: [], checkedAgainst: 'latest_spec' }
 const finding = (extra: Partial<ReviewFinding>): ReviewFinding => ({
   kind: 'missing',
   where: 'R1',
   text: 'X',
+  destination: 'blocker',
+  evidence: 'R1',
   ...extra,
 })
 const longChoice = 'x'.repeat(201)
@@ -181,7 +185,7 @@ describe('checkDecisionResult for review choices', () => {
   it.each(rows)('%s', (_name, extra, codes) => {
     const out = checkDecisionResult(
       'review',
-      { verdict: 'changes', findings: [finding(extra)], unsure: 'u' },
+      { findings: [finding(extra)], unsure: 'u' },
       FACTS,
     )
     expect(out).toEqual(codes.map((code) => ({ field: 'findings', code })))
@@ -195,9 +199,20 @@ describe('checkDecisionResult for review choices', () => {
     const out = checkDecisionResult(
       'code_review',
       {
-        verdict: 'changes',
-        findings: [{ kind: 'bug', file: 'a.ts', text: 'T', matters: 'M', ...extra }],
+        findings: [
+          {
+            kind: 'bug',
+            file: 'a.ts',
+            text: 'T',
+            matters: 'M',
+            destination: 'blocker',
+            evidence: 'a.ts:1',
+            ...extra,
+          },
+        ],
         unsure: 'u',
+        reasoning: 'r',
+        next_step: 'fix_by_hand',
       },
       FACTS,
     )
@@ -216,7 +231,6 @@ describe('decisionResultOf for review choices', () => {
   ]
   it.each(rows)('%s', (_name, extra, stored) => {
     const result = decisionResultOf('review', {
-      verdict: 'changes',
       findings: [finding(extra)],
       unsure: 'u',
     })

@@ -49,11 +49,12 @@ export const HELP_MODES = [
   'advise',
   'code_review',
   'suggest_all',
+  'review_plan',
 ] as const
 export type HelpMode = (typeof HELP_MODES)[number]
 
 /** The modes of a question help; the others belong to a decision of the card. */
-export type QuestionHelpMode = 'suggest' | 'explain' | 'suggest_all'
+export type QuestionHelpMode = 'suggest' | 'explain' | 'suggest_all' | 'review_plan'
 
 /** How a project suggests a batch's answers: every question in one help, or one at a time. */
 export const BATCH_SUGGESTS = ['whole', 'one'] as const
@@ -81,6 +82,33 @@ export type HelpSubject =
 export const HELP_STATUSES = ['queued', 'running', 'succeeded', 'failed', 'stopped'] as const
 export type HelpStatus = (typeof HELP_STATUSES)[number]
 
+export const FINDING_DESTINATIONS = ['blocker', 'next_gate', 'outside'] as const
+export type FindingDestination = (typeof FINDING_DESTINATIONS)[number]
+export const NEXT_STEPS = [
+  'merge',
+  'merge_and_file',
+  'fix_by_hand',
+  'rerun_keep',
+  'rerun_again',
+] as const
+export type NextStep = (typeof NEXT_STEPS)[number]
+
+/** The shape the board stores for a review at any of the three gates. */
+export interface ReviewShape<Kind extends string, Extra> {
+  verdict: 'ready' | 'changes'
+  blockers: number
+  findings: ({
+    kind: Kind
+    text: string
+    destination: FindingDestination
+    evidence: string
+    title?: string
+    choices?: string[]
+    recommended?: number
+  } & Extra)[]
+  unsure: string
+}
+
 /** What a helper saved: a suggestion, or a plain restatement in three parts. */
 export type HelpResult =
   | {
@@ -106,33 +134,23 @@ export type HelpResult =
       matters: string
       leads_to: string
     }
-  | {
-      mode: 'review'
-      verdict: 'changes' | 'nothing_to_change'
-      findings: {
-        kind: 'missing' | 'contradiction' | 'uncheckable' | 'risk'
-        where?: string
-        text: string
-        choices?: string[]
-        recommended?: number
-      }[]
-      unsure: string
-    }
-  | {
+  | ({ mode: 'review' } & ReviewShape<
+      'missing' | 'contradiction' | 'uncheckable' | 'risk',
+      { where?: string; edit?: string }
+    >)
+  | ({ mode: 'review_plan' } & ReviewShape<
+      'uncovered' | 'missing_file' | 'risk' | 'simpler',
+      { where?: string }
+    >)
+  | ({
       mode: 'code_review'
-      verdict: 'changes' | 'nothing_to_change'
-      findings: {
-        kind: 'bug' | 'breaks' | 'duplicate' | 'fit' | 'test'
-        where: string
-        text: string
-        matters: string
-      }[]
-      unsure: string
       /** The commit the helper read: HEAD of the worktree, from its `help_checkout` event. */
       commit: string | null
       /** The files the board skipped by name, from the same event; none when it has none. */
       skipped: { path: string; skip: 'lockfile' | 'generated' }[]
-    }
+      next_step: NextStep
+      reasoning: string
+    } & ReviewShape<'bug' | 'breaks' | 'duplicate' | 'fit' | 'test', { where: string; matters: string }>)
   | { mode: 'restate'; changes: string; requirements: string; left_out: string }
   | {
       mode: 'recommend'
