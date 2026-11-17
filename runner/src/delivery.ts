@@ -209,7 +209,15 @@ export async function carryOut(
   }
 
   const handoffFor = (name: 'plan' | 'build' | 'verify') => async (): Promise<string> => {
+    // A kept plan sends the note to Build and Verify; planning again sends it to the planner only.
+    const rerunNote =
+      run.note === null || run.note === undefined || run.note.trim() === ''
+        ? undefined
+        : (kept === null) === (name === 'plan')
+          ? run.note
+          : undefined
     const common = {
+      ...(rerunNote === undefined ? {} : { rerunNote }),
       taskKey: task.key,
       title: task.title,
       specVersion: specOf().version,

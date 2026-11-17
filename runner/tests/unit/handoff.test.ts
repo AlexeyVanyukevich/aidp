@@ -27,6 +27,19 @@ describe('buildHandoff', () => {
     expect(text).toContain('<return_format>')
   })
 
+  it('carries the Re-run note in its own element, apart from the verifier’s note', () => {
+    const text = buildHandoff({
+      ...BASE,
+      phase: 'verify',
+      note: 'The base moved.',
+      rerunNote: 'keep <tests> in tests/unit',
+    })
+    expect(text.match(/<rerun_note>/g)).toHaveLength(1)
+    expect(text).toContain('<rerun_note>\nkeep &lt;tests&gt; in tests/unit\n</rerun_note>')
+    expect(text).toContain('<note>\nThe base moved.\n</note>')
+    expect(buildHandoff(BASE)).not.toContain('<rerun_note>')
+  })
+
   it('cuts a long previous plan with the shared cut', () => {
     const text = buildHandoff({
       ...BASE,
