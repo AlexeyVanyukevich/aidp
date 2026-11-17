@@ -340,13 +340,7 @@ const EDIT_LIMIT = 4_000
 const CODE_FINDING_KINDS = ['bug', 'breaks', 'duplicate', 'fit', 'test']
 const FILE_LIMIT = 300
 export type DecisionResultMode =
-  | 'review'
-  | 'review_plan'
-  | 'restate'
-  | 'recommend'
-  | 'check'
-  | 'advise'
-  | 'code_review'
+  'review' | 'review_plan' | 'restate' | 'recommend' | 'check' | 'advise' | 'code_review'
 const LIST_LIMIT = 30
 const WHERE_LIMIT = 100
 const CHOICES_MIN = 2
@@ -512,7 +506,8 @@ export function checkDecisionResult(
     const outsideCount = list.filter((item) => item.destination === 'outside').length
     const step = input.next_step
     if (step === undefined) findings.push({ field: 'next_step', code: 'required' })
-    else if (!NEXT_STEPS.includes(step)) findings.push({ field: 'next_step', code: 'unknown_action' })
+    else if (!NEXT_STEPS.includes(step))
+      findings.push({ field: 'next_step', code: 'unknown_action' })
     else if (
       (step === 'merge' && list.length > 0) ||
       (step === 'merge_and_file' && (blockers > 0 || outsideCount === 0)) ||
@@ -570,7 +565,10 @@ export function decisionResultOf(
   const blockerCount = (input.findings ?? []).filter(
     (item) => item.destination === 'blocker',
   ).length
-  const derived = { verdict: blockerCount === 0 ? 'ready' : 'changes', blockers: blockerCount } as const
+  const derived = {
+    verdict: blockerCount === 0 ? 'ready' : 'changes',
+    blockers: blockerCount,
+  } as const
   /** What every finding of the shared shape stores. */
   const shared = (item: NonNullable<DecisionResultInput['findings']>[number]) => ({
     destination: item.destination as 'blocker' | 'next_gate' | 'outside',
@@ -588,7 +586,8 @@ export function decisionResultOf(
         matters: t(item.matters),
         ...shared(item),
       })),
-      next_step: input.next_step as 'merge' | 'merge_and_file' | 'fix_by_hand' | 'rerun_keep' | 'rerun_again',
+      next_step: input.next_step as
+        'merge' | 'merge_and_file' | 'fix_by_hand' | 'rerun_keep' | 'rerun_again',
       reasoning: t(input.reasoning),
       unsure: t(input.unsure),
       commit: read.commit,

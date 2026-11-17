@@ -285,9 +285,7 @@ describe('save_help_result for a decision help', () => {
     })
     expect(saved.isError).toBe(false)
     const listed = (await app.inject({ url: `/api/tasks/${s.taskId}/helps` })).json()
-    expect(listed[0].result.findings).toEqual([
-      { ...BLOCKER, choices: ['A', 'B'], recommended: 1 },
-    ])
+    expect(listed[0].result.findings).toEqual([{ ...BLOCKER, choices: ['A', 'B'], recommended: 1 }])
   })
 
   it('refuses a field of another mode, naming it', async () => {

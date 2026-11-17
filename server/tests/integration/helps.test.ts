@@ -121,7 +121,12 @@ describe('asking for a help', () => {
   })
 
   it('queues one review_plan help on a plan request', async () => {
-    const plan = await open({ kind: 'plan', options: [], recommendation: null, context_md: '# Plan' })
+    const plan = await open({
+      kind: 'plan',
+      options: [],
+      recommendation: null,
+      context_md: '# Plan',
+    })
     const first = await ask(plan.approvalId, { mode: 'review_plan' })
     expect(first.statusCode).toBe(201)
     expect(first.json()).toMatchObject({ mode: 'review_plan', status: 'queued' })
@@ -136,7 +141,12 @@ describe('asking for a help', () => {
   })
 
   it('refuses review_plan on a request that is not a plan', async () => {
-    const other = await open({ kind: 'out_of_plan', files: ['a.ts'], options: [], recommendation: null })
+    const other = await open({
+      kind: 'out_of_plan',
+      files: ['a.ts'],
+      options: [],
+      recommendation: null,
+    })
     const refused = await ask(other.approvalId, { mode: 'review_plan' })
     expect(refused.statusCode).toBe(409)
     expect(refused.json().details).toMatchObject({ reason: 'not_offered' })

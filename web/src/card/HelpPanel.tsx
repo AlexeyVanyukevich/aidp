@@ -416,10 +416,7 @@ function ReviewView({
         </>
       )}
       {picking && (
-        <Button
-          type="button"
-          onClick={() => onUseFindings(result, picks)}
-        >
+        <Button type="button" onClick={() => onUseFindings(result, picks)}>
           Use these findings
         </Button>
       )}

@@ -199,7 +199,10 @@ const rows: Row[] = [
   {
     name: 'a plan review with choices',
     mode: 'review_plan',
-    input: { findings: [{ ...item, kind: 'risk', choices: ['a', 'b'], recommended: 0 }], unsure: 'u' },
+    input: {
+      findings: [{ ...item, kind: 'risk', choices: ['a', 'b'], recommended: 0 }],
+      unsure: 'u',
+    },
     expected: [],
   },
   ...(['option_id', 'text', 'asked', 'matters', 'leads_to'] as const).map((field) => ({
@@ -498,8 +501,18 @@ describe('decisionResultOf for the shared review shape', () => {
     decisionResultOf(mode, input) as { verdict: string; blockers: number }
 
   it.each([
-    { name: 'two blockers and one next-gate', findings: [item, item, next], verdict: 'changes', blockers: 2 },
-    { name: 'next-gate and outside only', findings: [next, outside], verdict: 'ready', blockers: 0 },
+    {
+      name: 'two blockers and one next-gate',
+      findings: [item, item, next],
+      verdict: 'changes',
+      blockers: 2,
+    },
+    {
+      name: 'next-gate and outside only',
+      findings: [next, outside],
+      verdict: 'ready',
+      blockers: 0,
+    },
     { name: 'no findings', findings: [], verdict: 'ready', blockers: 0 },
   ])('derives $verdict from $name', ({ findings, verdict, blockers }) => {
     for (const mode of ['review', 'review_plan'] as const) {

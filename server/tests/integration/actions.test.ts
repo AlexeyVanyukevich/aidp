@@ -182,7 +182,11 @@ describe('Re-run', () => {
     it.each([
       ['no body', undefined, null],
       ['a blank note', { note: '   ' }, null],
-      ['a note with spaces round it', { plan: 'keep', note: ' keep tests in tests/unit ' }, 'keep tests in tests/unit'],
+      [
+        'a note with spaces round it',
+        { plan: 'keep', note: ' keep tests in tests/unit ' },
+        'keep tests in tests/unit',
+      ],
     ])('stores the note for %s trimmed, or null', async (_name, payload, stored) => {
       const { taskId } = await failedWithPlan('high')
       expect((await rerun(taskId, payload)).statusCode).toBe(200)

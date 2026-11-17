@@ -150,7 +150,10 @@ export type HelpResult =
       skipped: { path: string; skip: 'lockfile' | 'generated' }[]
       next_step: NextStep
       reasoning: string
-    } & ReviewShape<'bug' | 'breaks' | 'duplicate' | 'fit' | 'test', { where: string; matters: string }>)
+    } & ReviewShape<
+      'bug' | 'breaks' | 'duplicate' | 'fit' | 'test',
+      { where: string; matters: string }
+    >)
   | { mode: 'restate'; changes: string; requirements: string; left_out: string }
   | {
       mode: 'recommend'
