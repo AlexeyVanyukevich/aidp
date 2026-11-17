@@ -13,6 +13,8 @@ export interface HandoffInput {
   description?: string
   /** What the owner asked a redraft to change. */
   note?: string
+  /** The owner's note on the earlier run, from a Re-run; apart from `note` (the redraft's, the verifier's). */
+  rerunNote?: string | undefined
   budgetUsd: number | null
   summaries: { phase: string; attempt: number; text: string }[]
   plan?: string
@@ -153,6 +155,8 @@ export function buildHandoff(input: HandoffInput): string {
   if (input.specVersion !== undefined && input.specMd !== undefined)
     parts.push(`<spec version="${input.specVersion}">\n${escape(input.specMd)}\n</spec>`)
   if (input.note !== undefined) parts.push(`<note>\n${escape(input.note)}\n</note>`)
+  if (input.rerunNote !== undefined)
+    parts.push(`<rerun_note>\n${escape(input.rerunNote)}\n</rerun_note>`)
   if (input.phase === 'spec' && input.base?.commit !== undefined)
     parts.push(`<base branch="${attr(input.base.branch)}" commit="${attr(input.base.commit)}"/>`)
   if (input.phase === 'build' && input.base !== undefined)

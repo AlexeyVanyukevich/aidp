@@ -201,6 +201,42 @@ describe('a run holding a copied plan', () => {
   })
 })
 
+describe('a run with a Re-run note', () => {
+  const NOTE = 'keep tests in tests/unit'
+  const rerunNotes = (h: ReturnType<typeof harness>) =>
+    Object.fromEntries(
+      Object.entries(h.handoffs).map(([name, text]) => [name, (text.match(/<rerun_note>/g) ?? []).length]),
+    )
+
+  it('plan again: only the Plan handoff carries it', async () => {
+    const h = harness({})
+    const work = { kind: 'start', run: { ...RUN, note: NOTE } } as Extract<Work, { kind: 'start' }>
+    await carryOut(work, h.deps)
+    expect(h.handoffs['plan-1']).toContain(`<rerun_note>\n${NOTE}\n</rerun_note>`)
+    expect(rerunNotes(h)).toMatchObject({ 'plan-1': 1, 'build-1': 0, 'verify-1': 0 })
+  })
+
+  it('keep plan: every Build and Verify handoff carries it, and a resume still does', async () => {
+    const h = harness({})
+    withPlan(h)
+    const run: RunWork = { ...RUN, note: NOTE, kept_plan: { artifact_id: 'plan-1', from_run: 1 } }
+    await carryOut({ kind: 'start', run } as Extract<Work, { kind: 'start' }>, h.deps)
+    expect(rerunNotes(h)).toEqual({ 'build-1': 1, 'verify-1': 1 })
+
+    const again = harness({})
+    withPlan(again)
+    const work: Work = {
+      kind: 'resume',
+      run,
+      checkpoint: { ...checkpoint('prepare', 1), plan_artifact_id: 'plan-1' },
+      message: INTERRUPTED,
+      allowed_files: ['src/retry.ts'],
+    }
+    await carryOut(work as Extract<Work, { kind: 'resume' }>, again.deps)
+    expect(again.handoffs['build-1']).toContain(`<rerun_note>\n${NOTE}\n</rerun_note>`)
+  })
+})
+
 describe('a re-planning run', () => {
   it('AC9: hands the planner the previous plans, and a medium plan still meets the gate', async () => {
     const h = harness({ confidence: ['medium'] })
