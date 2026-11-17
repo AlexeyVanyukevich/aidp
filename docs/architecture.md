@@ -858,8 +858,9 @@ run left no checkpoint — and the plan a Re-run would keep; or what Mark done c
 delivery run with its report and pull request). For a stopped run, `get_phase_record` reads the
 run's latest non-help phase: the newest 300 entries in time order and `earlier_left_out`, the
 number before them. A question help's `get_phase_record` still takes the first 300 events, as the
-backlog says. `save_help_result` checks a result by mode and names the field to fix: `review` (a
-verdict, findings that are empty exactly when nothing is to change, what it is unsure of; a
+backlog says. `save_help_result` checks a result by mode and names the field to fix. The three
+reviews (`review`, `review_plan`, `code_review`) share one shape, described below; the other
+modes are: `review` (findings, what it is unsure of; a
 finding may carry `choices`, 2 to 5 strings of at most 200 characters each, none blank or equal
 after trimming, with `recommended`, the index of one of them, given together: refused as too few,
 too many, required, too long, duplicate, not allowed (`recommended` alone) or unknown choice; each
@@ -867,16 +868,69 @@ choice is stored trimmed with its whitespace runs turned into one space),
 `restate` (what changes, what it requires, what it leaves out), `recommend` (why it stopped, an
 action among the recommendable ones, reasoning, unsure) and `check` (what it checked against,
 which must equal the source for the card's state, what the runs produced, the unfinished items,
-unsure), and `code_review` (a verdict as in `review`; findings of at most 30, each a `kind` among
+unsure), and `code_review` (findings of at most 30, each a `kind` among
 `bug`, `breaks`, `duplicate`, `fit` and `test`, a `file`, an optional `line` of at least 1, `text`
-and `matters`; neither `choices` nor `recommended` is allowed on one). A saved review stores each finding as `{ kind, where, text, matters }`, `where`
+and `matters`; neither `choices` nor `recommended` is allowed on one; a `next_step` and its
+`reasoning`). A saved review stores each finding as `{ kind, where, text, matters, destination,
+evidence }`, `where`
 being `file` or `file:line`, and the result carries `commit` and `skipped`, which the server
 takes from the payload of the help run's `help_checkout` event: the commit or null, and the files
 skipped by name (`{ path, skip }`) or none. The PR tab shows `skipped` as "Not reviewed", so the
 helper never lists those files under `unsure`, whose 4,000 characters a large pull request's
 lockfiles and generated files would otherwise fill. For a `pull_request` help `get_decision`
 returns the run's number, branch and pull request, the approved spec, the run's accepted plan or
-null, and its latest Verify report or null.
+null, its latest Verify report or null, `plan_to_keep` (the run number and body of the plan
+`planToKeepFor` finds for the task, or null) and `plan_review_points`.
+
+**The shared review shape.** Review spec, Review plan and Review pull request each save findings,
+never a verdict. Every finding has one `destination`: `blocker` (left alone, it makes the work do
+the wrong thing or fail its own criteria), `next_gate` (wording, a small gap, anything the next
+agent can settle without a decision) or `outside` (it belongs to another task), and `evidence` of
+1 to 500 characters: a place as `path:line`, a part of the spec, a command and its output line, or
+"not checked". `save_help_result` refuses a finding that lacks either, names `findings`, and
+refuses a `verdict` as `not_allowed`; the board stores `verdict` (`ready` with no blocker,
+otherwise `changes`) and `blockers`. An `outside` finding has a `title` of 1 to 200 characters and
+a `text` in the labels Where, Found, Problem and Impact (the labels `propose_task` checks); no
+other destination takes a `title`. A Review spec `next_gate` finding has a `where` and an `edit`
+of up to 4,000 characters, the text to paste into the spec; `edit` is refused anywhere else.
+`code_review` refuses `next_gate`, as no gate follows the pull request. On the card a result opens
+with "Ready" or "Changes needed: N blocker(s)", then Blockers, the next-gate group and Outside the
+task, each under its own heading and each finding with its evidence; an outside finding is listed
+and has no control. Migration 015 retired every succeeded `review` and `code_review` help saved
+before the shape, so a card never shows the old one.
+
+**Review plan.** A request of kind `plan` offers a third help beside Suggest an answer and
+Explain simply: `POST /api/approvals/:id/helps` takes `{ mode: 'review_plan' }`, answers
+`409 not_offered` on any other kind, and answers a press while one is queued or running with that
+help. It reads the plan, the approved spec and the code, read-only. Finding kinds: `uncovered`
+(`where` names the criterion), `missing_file`, `risk` and `simpler`; `choices` and `recommended`
+work as in Review spec. For a `review_plan` help `get_question` also returns `previous`: null
+unless the asking run has an earlier `plan` request the owner answered with words; otherwise
+`diff` (a `lineDiff` from that plan to this one, or the earlier plan's whole text when `lineDiff`
+returns null or the diff is longer than the text), `answer` (the owner's words) and
+`earlier_review` (the verdict and findings of that request's newest succeeded plan review, without
+`unsure`, or null). The helper turns `previous` into a re-review: a point of the answer dropped or
+partly taken is a blocker quoting it, a change nobody asked for is a `risk`, and a settled point
+is not raised again. Use these findings puts the blocker and next-gate lines (as at Review spec,
+with `Decision:` and `Open choice, ask me:` lines under a finding with choices) into the words
+field, clears Approve plan, and sends nothing; it is offered only when a blocker stands.
+
+**Where a next-gate point goes.** At the spec gate with a blocker it joins the Redraft note; with
+no blocker it is shown as an edit in a `pre` block to paste before approving. At the plan gate
+with a blocker it joins the words; with no blocker it waits for the pull request gate, where
+`get_decision` hands the `code_review` helper `plan_review_points`: the next-gate findings, with
+kind, where, text and evidence, of the newest succeeded plan review (retired or not) on the pull
+request run's newest `plan` request answered with Approve plan, and none for a high-confidence
+plan or a plan kept by a Re-run. The helper raises a point the pull request leaves unsettled as a
+blocker or an outside finding. Approve spec and Approve plan take no note, so nothing else carries
+a point forward.
+
+**`next_step`.** A `code_review` also saves `next_step` (`merge`, `merge_and_file`,
+`fix_by_hand`, `rerun_keep`, `rerun_again`) and `reasoning`. `merge_and_file` is refused with a
+blocker or without an outside finding, `merge` with any finding, the three others without a
+blocker, and `rerun_keep` when `plan_to_keep` is null, all as `not_offered` on `next_step`; any
+other value is `unknown_action`. The PR tab shows "Next step:" and "Why:". The step is advice and
+does nothing on its own.
 
 A decision help is claimed on the help lane (`POST /api/runner/helps/claim`) and shares its three
 slots with question helps. The work carries the project's `repo_path` and `base_branch`, the
@@ -1005,9 +1059,24 @@ start, leaves the file. A message other than the nudge is never replaced.
 
 **Re-run.** A Failed card offers two choices, both the `rerun` move (Failed → Ready) with the
 latest approved spec. `POST /api/tasks/:id/actions/rerun` takes an optional body
-`{ "plan": "keep" | "again" }`; no body means `again`, `keep` with no plan to keep answers
-`409 conflict` and moves nothing, and any other value answers `400 validation_error` naming
-`plan`.
+`{ "plan": "keep" | "again", "note": string }`, checked against a TypeBox schema with
+`additionalProperties: false`; no body means `again` with no note, `keep` with no plan to keep
+answers `409 conflict` and moves nothing, and an unknown field, any other `plan` or a `note` of
+over 4,000 characters answers `400 validation_error` naming the field.
+
+The `note` is stored trimmed in the new delivery run's `note` column (null when blank), so a
+resumed run reads it from there. With plan again the Plan handoff carries it in a
+`<rerun_note>` element and no other phase does; with keep plan every Build handoff and every
+Verify handoff of the run carries it. It is the owner's word on the earlier run and no
+criterion: the planner's, builder's and verifier's prompts say it never overrides the spec, a
+change to a criterion still goes through the plan gate's withdrawn list, and Verify reads it as
+context only. On a Failed card the Re-run buttons sit beside the field "Note for the next run".
+Use the pull request review appears when a succeeded `code_review` help of the new shape, retired
+or not, names the latest delivery run as its `pr_run_id`; the helps listing returns the newest
+such help for a Failed card. Each finding is put in the note or left out (blockers start in,
+outside findings out), and Fill note writes the chosen lines, each with its evidence, after the
+words already there, under "From the pull request review of <date and time>, at commit <12
+characters, or unknown>:". It sends nothing.
 
 - **Re-run and plan again** queues a run whose planner is handed the earlier plans. The
   handoff carries the newest plan any earlier delivery run saved on the same spec version in a
