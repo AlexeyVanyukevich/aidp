@@ -483,7 +483,27 @@ export class HelpService {
         keep.add(help.id)
       }
     }
-    return rows.filter((help) => keep.has(help.id)).map(({ retired_at: _retired, ...help }) => help)
+    const shown = rows
+      .filter((help) => keep.has(help.id))
+      .map(({ retired_at: _retired, ...help }) => help)
+    // A Failed card's Re-run note may be filled from the pull request review of its latest
+    // delivery run, retired or not: the newest one of the new shape is listed for that.
+    if (facts?.taskState === 'failed' && facts.latestDeliveryRunId !== null) {
+      const latestRun = facts.latestDeliveryRunId
+      const review = all.find(
+        (help) =>
+          help.decision === 'pull_request' &&
+          help.status === 'succeeded' &&
+          (help.subject as { pr_run_id?: string } | null)?.pr_run_id === latestRun &&
+          help.result?.mode === 'code_review' &&
+          typeof help.result.blockers === 'number',
+      )
+      if (review !== undefined && !shown.some((help) => help.id === review.id)) {
+        const { retired_at: _retired, ...help } = review
+        shown.push(help)
+      }
+    }
+    return shown
   }
 
   /**

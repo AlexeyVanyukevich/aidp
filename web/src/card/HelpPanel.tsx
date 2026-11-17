@@ -150,12 +150,18 @@ export function HelpPanel({
   level,
   onAsk,
   onUse,
+  planReview,
 }: {
   help: QuestionHelp
   options: ApprovalOption[]
   level: 4 | 5
   onAsk: (mode: AskedHelpMode) => void
   onUse: (result: Suggestion) => void
+  /** A plan request's Review plan: asking it, and Use these findings on its result. */
+  planReview?: {
+    onAsk: () => void
+    onUseFindings: (result: ReviewResult | PlanReviewResult, picks: FindingPick[]) => void
+  }
 }) {
   const label = (result: Suggestion) =>
     options.find((option) => option.id === result.option_id)?.label
@@ -174,16 +180,38 @@ export function HelpPanel({
       heading: 'In plain words',
       failureLine: (reason) => failureText('explain', reason),
     },
+    ...(planReview === undefined
+      ? []
+      : [
+          {
+            id: 'review_plan' as const,
+            label: 'Review plan',
+            state: help.review_plan,
+            heading: 'Plan review',
+            failureLine: (reason: string) => `No plan review: ${reason}`,
+          },
+        ]),
   ]
   return (
     <div className="help">
       <div className="help-buttons">
-        <HelpButtons modes={modes} onAsk={(mode) => onAsk(mode as AskedHelpMode)} />
+        <HelpButtons
+          modes={modes}
+          onAsk={(mode) => {
+            if (mode === 'review_plan') planReview?.onAsk()
+            else onAsk(mode as AskedHelpMode)
+          }}
+        />
       </div>
       <HelpResults
         modes={modes}
         level={level}
         renderers={{
+          ...(planReview === undefined
+            ? {}
+            : {
+                review_plan: decisionRenderers(null, planReview.onUseFindings, level).review_plan,
+              }),
           suggest: (suggestion) => (
             <>
               {suggestion.option_id !== undefined && (

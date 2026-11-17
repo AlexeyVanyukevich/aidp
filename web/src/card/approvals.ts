@@ -136,6 +136,8 @@ export interface ModeHelp {
 export interface QuestionHelp {
   suggest: ModeHelp
   explain: ModeHelp
+  /** Review plan: only a plan request offers it. */
+  review_plan: ModeHelp
 }
 
 type Suggestion = Extract<HelpResult, { mode: 'suggest' }>
@@ -167,11 +169,16 @@ export function questionHelp(
       busy: inFlight(latest),
       shown: mine.find((h) => h.status === 'succeeded')?.result ?? undefined,
       failure: latest?.status === 'failed' ? (latest.reason ?? 'the helper failed') : undefined,
+      ...(mine.find((h) => h.status === 'succeeded') === undefined
+        ? {}
+        : { id: (mine.find((h) => h.status === 'succeeded') as HelpView).id }),
     }
   }
   const explain = of('explain')
+  const review_plan = { ...of('review_plan'), subject: null }
   const ownHelps = mineOf('suggest', index)
-  if (index === null || questionId === undefined) return { suggest: of('suggest'), explain }
+  if (index === null || questionId === undefined)
+    return { suggest: of('suggest'), explain, review_plan }
 
   // A batch question: its own suggestion, and its answer in the whole batch's, the newer shown.
   const wholeHelps = mineOf('suggest_all', null)
@@ -215,6 +222,7 @@ export function questionHelp(
           }),
     },
     explain,
+    review_plan,
   }
 }
 

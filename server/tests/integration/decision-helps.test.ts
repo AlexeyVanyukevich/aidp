@@ -344,3 +344,116 @@ describe('the pull request review', () => {
     )
   })
 })
+
+describe('the pull request review for a Re-run (AC20)', () => {
+  const result = (marker: string, shape: 'new' | 'old') =>
+    JSON.stringify(
+      shape === 'new'
+        ? {
+            mode: 'code_review',
+            verdict: 'changes',
+            blockers: 1,
+            findings: [
+              {
+                kind: 'bug',
+                where: 'a.ts:1',
+                text: marker,
+                matters: 'm',
+                destination: 'blocker',
+                evidence: 'a.ts:1',
+              },
+            ],
+            next_step: 'rerun_again',
+            reasoning: 'r',
+            unsure: 'u',
+            commit: null,
+            skipped: [],
+          }
+        : {
+            mode: 'code_review',
+            verdict: 'changes',
+            findings: [{ kind: 'bug', where: 'a.ts:1', text: marker, matters: 'm' }],
+            unsure: 'u',
+            commit: null,
+            skipped: [],
+          },
+    )
+  async function failedWith(
+    helps: {
+      marker: string
+      shape: 'new' | 'old'
+      at: string
+      retired: boolean
+      run?: 'latest' | 'other'
+    }[],
+  ) {
+    const { taskId, runId } = await seedQueuedRun(db(), { state: 'failed' })
+    await db()
+      .updateTable('runs')
+      .set({ status: 'failed', queued_at: null, pr_number: 7 })
+      .where('id', '=', runId)
+      .execute()
+    for (const help of helps) {
+      const helpRun = await db()
+        .insertInto('runs')
+        .values({
+          task_id: taskId,
+          kind: 'help',
+          number: 1 + Math.floor(Math.random() * 1e6),
+          status: 'succeeded',
+        })
+        .returning('id')
+        .executeTakeFirstOrThrow()
+      await db()
+        .insertInto('helps')
+        .values({
+          run_id: helpRun.id,
+          decision: 'pull_request',
+          mode: 'code_review',
+          status: 'succeeded',
+          subject: JSON.stringify({
+            pr_run_id: help.run === 'other' ? crypto.randomUUID() : runId,
+          }),
+          result: result(help.marker, help.shape),
+          created_at: new Date(help.at),
+          retired_at: help.retired ? new Date() : null,
+        })
+        .execute()
+    }
+    return taskId
+  }
+  const markers = async (taskId: string) =>
+    (
+      (await app.inject({ method: 'GET', url: `/api/tasks/${taskId}/helps` })).json() as {
+        mode: string
+        result: { findings: { text: string }[] }
+      }[]
+    )
+      .filter((h) => h.mode === 'code_review')
+      .map((h) => h.result.findings[0]!.text)
+
+  it('lists a retired, new-shape review of the latest delivery run', async () => {
+    const taskId = await failedWith([
+      { marker: 'old one', shape: 'new', at: '2026-11-01T10:00:00Z', retired: true },
+    ])
+    expect(await markers(taskId)).toEqual(['old one'])
+  })
+
+  it('lists the newest of two', async () => {
+    const taskId = await failedWith([
+      { marker: 'older', shape: 'new', at: '2026-11-01T10:00:00Z', retired: true },
+      { marker: 'newer', shape: 'new', at: '2026-11-02T10:00:00Z', retired: true },
+    ])
+    expect(await markers(taskId)).toEqual(['newer'])
+  })
+
+  it.each([
+    ['an old-shape review', { shape: 'old' as const, run: 'latest' as const }],
+    ['a review of another run', { shape: 'new' as const, run: 'other' as const }],
+  ])('lists nothing for %s', async (_name, extra) => {
+    const taskId = await failedWith([
+      { marker: 'x', at: '2026-11-01T10:00:00Z', retired: true, ...extra },
+    ])
+    expect(await markers(taskId)).toEqual([])
+  })
+})
