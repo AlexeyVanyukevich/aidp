@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import type { TypeBoxTypeProvider } from '@fastify/type-provider-typebox'
-import { Type } from 'typebox'
+import { Type, type Static } from 'typebox'
+import { Compile } from 'typebox/compile'
 import { ValidationError } from '../../shared/errors.js'
 import { Uuid } from '../../shared/schemas.js'
 import { CostService } from '../costs/cost.service.js'
@@ -23,12 +24,15 @@ import {
   AcceptTitleBody,
   CreateTaskBody,
   PatchTaskBody,
+  RerunBody,
   ProjectKeyParams,
   RedraftBody,
   ReorderBody,
   TaskParams,
 } from './task.schemas.js'
 import { TaskService } from './task.service.js'
+
+const rerunBody = Compile(RerunBody)
 
 export function registerTasks(instance: FastifyInstance): void {
   const app = instance.withTypeProvider<TypeBoxTypeProvider>()
@@ -82,18 +86,29 @@ export function registerTasks(instance: FastifyInstance): void {
     },
   )
 
-  // Re-run takes an optional body, checked by hand: a missing one means "plan again".
-  app.post('/api/tasks/:id/actions/rerun', { schema: { params: TaskParams } }, async (request) => {
-    const body = request.body as { plan?: unknown } | null | undefined
-    const plan = body?.plan ?? 'again'
-    if (
-      (body !== null && body !== undefined && typeof body !== 'object') ||
-      (plan !== 'keep' && plan !== 'again')
-    )
-      throw new ValidationError('plan must be "keep" or "again"', { field: 'plan' })
-    await performAction(app.db, request.params.id, 'rerun', app.clock(), plan)
-    return service.get(request.params.id)
-  })
+  // Re-run takes an optional body: a missing one means "plan again" with no note.
+  app.post(
+    '/api/tasks/:id/actions/rerun',
+    { schema: { params: TaskParams } },
+    async (request) => {
+      // Checked against the schema here, not by Fastify: a missing body is valid.
+      const given = request.body ?? {}
+      if (!rerunBody.Check(given)) {
+        const first = rerunBody.Errors(given)[0]
+        const extra = (first?.params as { additionalProperties?: string[] } | undefined)
+          ?.additionalProperties?.[0]
+        throw new ValidationError(first?.message ?? 'The body is not valid', {
+          field: extra ?? first?.instancePath.replace(/^\//, '') ?? 'body',
+        })
+      }
+      const body = given as Static<typeof RerunBody>
+      await performAction(app.db, request.params.id, 'rerun', app.clock(), {
+        plan: body?.plan ?? 'again',
+        note: body?.note ?? null,
+      })
+      return service.get(request.params.id)
+    },
+  )
 
   // The one action with a body; a static path, so it wins over `:action` (slice 3 spec, §8).
   app.post(

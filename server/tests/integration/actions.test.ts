@@ -158,6 +158,37 @@ describe('Re-run', () => {
       expect(await artifactsOf(fresh.id)).toEqual([])
     })
 
+    it.each([
+      ['an unknown field', { plan: 'again', note: 'x', extra: 1 }, 'extra'],
+      ['a note of 4001 characters', { note: 'n'.repeat(4_001) }, 'note'],
+    ])('refuses %s with 400 naming the field', async (_name, payload, field) => {
+      const { taskId } = await failedWithPlan('high')
+      const response = await rerun(taskId, payload)
+      expect(response.statusCode).toBe(400)
+      expect(response.json().error).toBe('validation_error')
+      expect(JSON.stringify(response.json().details)).toContain(field)
+    })
+
+    const noteOf = async (taskId: string) =>
+      (
+        await getTestDb()
+          .selectFrom('runs')
+          .select('note')
+          .where('task_id', '=', taskId)
+          .where('number', '=', 2)
+          .executeTakeFirstOrThrow()
+      ).note
+
+    it.each([
+      ['no body', undefined, null],
+      ['a blank note', { note: '   ' }, null],
+      ['a note with spaces round it', { plan: 'keep', note: ' keep tests in tests/unit ' }, 'keep tests in tests/unit'],
+    ])('stores the note for %s trimmed, or null', async (_name, payload, stored) => {
+      const { taskId } = await failedWithPlan('high')
+      expect((await rerun(taskId, payload)).statusCode).toBe(200)
+      expect(await noteOf(taskId)).toBe(stored)
+    })
+
     it('refuses another value with 400 naming plan', async () => {
       const { taskId } = await failedWithPlan('high')
       const response = await rerun(taskId, { plan: 'later' })

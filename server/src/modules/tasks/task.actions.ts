@@ -82,8 +82,8 @@ export async function performAction(
   taskId: string,
   action: Action,
   now: Date,
-  /** Re-run only: keep the plan of an earlier run, or plan again (the default). */
-  plan: 'keep' | 'again' = 'again',
+  /** Re-run only: keep the plan of an earlier run or plan again, and the owner's note. */
+  rerun: { plan: 'keep' | 'again'; note: string | null } = { plan: 'again', note: null },
 ): Promise<void> {
   await db.transaction().execute(async (trx) => {
     if (action === 'cancel') {
@@ -141,6 +141,8 @@ export async function performAction(
       return
     }
 
+    const { plan } = rerun
+    const note = rerun.note === null || blank(rerun.note) ? null : rerun.note.trim()
     await moveTask(trx, taskId, 'rerun')
     const spec = await trx
       .selectFrom('specs')
@@ -155,6 +157,8 @@ export async function performAction(
     if (plan === 'keep' && kept === undefined)
       throw new ConflictError('This task has no accepted plan to keep', { reason: 'no_plan' })
     const runId = await queueDeliveryRun(trx, taskId, spec.version, now)
+    if (note !== null)
+      await trx.updateTable('runs').set({ note }).where('id', '=', runId).execute()
     if (kept === undefined) return
     const source = await trx
       .selectFrom('artifacts')

@@ -53,3 +53,12 @@ export const ReorderBody = Type.Union([
   Type.Object({}, { additionalProperties: false }),
   Type.Null(),
 ])
+
+/** Re-run's optional body: which plan to use, and the owner's word on the earlier run. */
+export const RerunBody = Type.Object(
+  {
+    plan: Type.Optional(Type.Union([Type.Literal('keep'), Type.Literal('again')])),
+    note: Type.Optional(Type.String({ maxLength: 4_000 })),
+  },
+  { additionalProperties: false },
+)
