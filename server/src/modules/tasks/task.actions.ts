@@ -157,8 +157,7 @@ export async function performAction(
     if (plan === 'keep' && kept === undefined)
       throw new ConflictError('This task has no accepted plan to keep', { reason: 'no_plan' })
     const runId = await queueDeliveryRun(trx, taskId, spec.version, now)
-    if (note !== null)
-      await trx.updateTable('runs').set({ note }).where('id', '=', runId).execute()
+    if (note !== null) await trx.updateTable('runs').set({ note }).where('id', '=', runId).execute()
     if (kept === undefined) return
     const source = await trx
       .selectFrom('artifacts')

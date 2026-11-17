@@ -87,28 +87,24 @@ export function registerTasks(instance: FastifyInstance): void {
   )
 
   // Re-run takes an optional body: a missing one means "plan again" with no note.
-  app.post(
-    '/api/tasks/:id/actions/rerun',
-    { schema: { params: TaskParams } },
-    async (request) => {
-      // Checked against the schema here, not by Fastify: a missing body is valid.
-      const given = request.body ?? {}
-      if (!rerunBody.Check(given)) {
-        const first = rerunBody.Errors(given)[0]
-        const extra = (first?.params as { additionalProperties?: string[] } | undefined)
-          ?.additionalProperties?.[0]
-        throw new ValidationError(first?.message ?? 'The body is not valid', {
-          field: extra ?? first?.instancePath.replace(/^\//, '') ?? 'body',
-        })
-      }
-      const body = given as Static<typeof RerunBody>
-      await performAction(app.db, request.params.id, 'rerun', app.clock(), {
-        plan: body?.plan ?? 'again',
-        note: body?.note ?? null,
+  app.post('/api/tasks/:id/actions/rerun', { schema: { params: TaskParams } }, async (request) => {
+    // Checked against the schema here, not by Fastify: a missing body is valid.
+    const given = request.body ?? {}
+    if (!rerunBody.Check(given)) {
+      const first = rerunBody.Errors(given)[0]
+      const extra = (first?.params as { additionalProperties?: string[] } | undefined)
+        ?.additionalProperties?.[0]
+      throw new ValidationError(first?.message ?? 'The body is not valid', {
+        field: extra ?? first?.instancePath.replace(/^\//, '') ?? 'body',
       })
-      return service.get(request.params.id)
-    },
-  )
+    }
+    const body = given as Static<typeof RerunBody>
+    await performAction(app.db, request.params.id, 'rerun', app.clock(), {
+      plan: body?.plan ?? 'again',
+      note: body?.note ?? null,
+    })
+    return service.get(request.params.id)
+  })
 
   // The one action with a body; a static path, so it wins over `:action` (slice 3 spec, §8).
   app.post(

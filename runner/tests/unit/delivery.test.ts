@@ -205,7 +205,10 @@ describe('a run with a Re-run note', () => {
   const NOTE = 'keep tests in tests/unit'
   const rerunNotes = (h: ReturnType<typeof harness>) =>
     Object.fromEntries(
-      Object.entries(h.handoffs).map(([name, text]) => [name, (text.match(/<rerun_note>/g) ?? []).length]),
+      Object.entries(h.handoffs).map(([name, text]) => [
+        name,
+        (text.match(/<rerun_note>/g) ?? []).length,
+      ]),
     )
 
   it('plan again: only the Plan handoff carries it', async () => {

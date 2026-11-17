@@ -192,7 +192,10 @@ export type HelpResult =
       skipped?: { path: string; skip: 'lockfile' | 'generated' }[]
       next_step: NextStep
       reasoning: string
-    } & ReviewShape<'bug' | 'breaks' | 'duplicate' | 'fit' | 'test', { where: string; matters: string }>)
+    } & ReviewShape<
+      'bug' | 'breaks' | 'duplicate' | 'fit' | 'test',
+      { where: string; matters: string }
+    >)
   | ({ mode: 'review' } & ReviewShape<
       'missing' | 'contradiction' | 'uncheckable' | 'risk',
       { where?: string; edit?: string }
