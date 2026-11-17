@@ -36,7 +36,13 @@ export interface RunWork {
     budget_usd: number | null
   }
   /** The spec at `spec_version`: null for a first draft. */
-  spec: { version: number; body_md: string; criteria: SpecCriterion[] } | null
+  spec: {
+    version: number
+    body_md: string
+    criteria: SpecCriterion[]
+    /** The owner's note for the planner, given at the spec gate; null when none. */
+    approval_note: string | null
+  } | null
   project: {
     key: string
     repo_path: string
@@ -344,6 +350,7 @@ export class RunnerService {
         'projects.setup_command',
         'specs.body_md',
         'specs.criteria',
+        'specs.approval_note',
       ])
       .where('runs.id', '=', runId)
       .executeTakeFirstOrThrow()
@@ -399,7 +406,12 @@ export class RunnerService {
       spec:
         row.version === null || row.body_md === null
           ? null
-          : { version: row.version, body_md: row.body_md, criteria: row.criteria ?? [] },
+          : {
+              version: row.version,
+              body_md: row.body_md,
+              criteria: row.criteria ?? [],
+              approval_note: row.approval_note,
+            },
       project: {
         key: row.key,
         repo_path: row.repo_path,

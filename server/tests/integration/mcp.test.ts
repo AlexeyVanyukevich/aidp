@@ -6,7 +6,17 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { buildTestApp, closeTestDb, getTestDb, resetDb, TEST_RUNNER_KEY } from './helpers.js'
 import { LIMITS } from '../../src/modules/approvals/approval-rules.js'
 import { renderPlan } from '../../src/modules/mcp/plan-check.js'
-import { GOOD_SPEC, seedProject, seedQueuedRun, seedTask, seedTitleRun } from './fixtures.js'
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { registerBoardTools } from '../../src/modules/mcp/board-tools.js'
+import {
+  GOOD_SPEC,
+  seedProject,
+  seedQueuedRun,
+  seedRunningRun,
+  seedTask,
+  seedTitleRun,
+} from './fixtures.js'
 
 let app: FastifyInstance
 let base: string
@@ -117,6 +127,20 @@ describe('the board MCP server', () => {
     expect(
       JSON.parse(text(await client.callTool({ name: 'get_spec', arguments: {} }))),
     ).toMatchObject({ version: 1, requirements: ['R1'], criteria: [{ id: 'AC1' }] })
+  })
+
+  it('does not hand the approval note to get_spec in a delivery run', async () => {
+    const { client, taskId } = await session()
+    await getTestDb()
+      .updateTable('specs')
+      .set({ approval_note: 'avoid the fake clock' })
+      .where('task_id', '=', taskId)
+      .execute()
+    const spec = JSON.parse(text(await client.callTool({ name: 'get_spec', arguments: {} })))
+    expect(spec).not.toHaveProperty('approval_note')
+    expect(text(await client.callTool({ name: 'get_spec', arguments: {} }))).not.toContain(
+      'fake clock',
+    )
   })
 
   it('saves a plan that checks out, on the running phase', async () => {
@@ -866,5 +890,75 @@ describe('suggest_title', () => {
     expect(result.isError).toBe(true)
     expect(text(result)).toContain('title: must not be blank')
     expect(await titleArtifacts(runId)).toEqual([])
+  })
+})
+
+describe('get_question for a plan review: approval_note', () => {
+  async function helpClient(note: string | null) {
+    const db = getTestDb()
+    const run = await seedRunningRun(db)
+    await db
+      .updateTable('specs')
+      .set({ approval_note: note })
+      .where('task_id', '=', run.taskId)
+      .execute()
+    const approval = await db
+      .insertInto('approval_requests')
+      .values({
+        run_id: run.runId,
+        kind: 'plan',
+        question: 'Approve?',
+        options: '[]',
+        recommendation: null,
+        phase_id: null,
+        checkpoint: null,
+        context_md: 'step 1',
+        status: 'open',
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow()
+    const help = await db
+      .insertInto('helps')
+      .values({
+        run_id: run.runId,
+        approval_id: approval.id,
+        decision: 'question',
+        mode: 'review_plan',
+        status: 'running',
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow()
+    const server = new McpServer({ name: 'board', version: '1.0.0' })
+    registerBoardTools(server, {
+      db,
+      runId: run.runId,
+      taskId: run.taskId,
+      helpId: help.id,
+      clock: () => new Date(),
+    })
+    const [a, b] = InMemoryTransport.createLinkedPair()
+    await server.connect(a)
+    const client = new Client({ name: 'test', version: '0.0.0' })
+    await client.connect(b)
+    return client
+  }
+  const questionOf = async (note: string | null) =>
+    JSON.parse(
+      text(await (await helpClient(note)).callTool({ name: 'get_question', arguments: {} })),
+    )
+
+  it('returns the note on the spec version the run works to', async () => {
+    expect((await questionOf('keep the retry small')).approval_note).toBe('keep the retry small')
+  })
+
+  it('returns null for a spec without a note', async () => {
+    expect((await questionOf(null)).approval_note).toBeNull()
+  })
+
+  it('has a save_help_result description that does not say a finding has an edit', async () => {
+    const { tools } = await (await helpClient(null)).listTools()
+    const description = tools.find((t) => t.name === 'save_help_result')?.description ?? ''
+    expect(description).not.toBe('')
+    expect(description).not.toMatch(/\bedit\b/)
   })
 })

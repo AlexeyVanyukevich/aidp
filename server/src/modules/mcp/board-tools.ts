@@ -654,6 +654,22 @@ async function decisionRecord(ctx: ToolContext, helpId: string, head: HelpHead) 
   }
 }
 
+/** The note the owner gave at the spec gate, on the version the asking run works to; or null. */
+async function approvalNoteFor(ctx: ToolContext, helpId: string): Promise<string | null> {
+  const row = await ctx.db
+    .selectFrom('helps')
+    .innerJoin('runs', 'runs.id', 'helps.run_id')
+    .innerJoin('specs', (join) =>
+      join
+        .onRef('specs.task_id', '=', 'runs.task_id')
+        .onRef('specs.version', '=', 'runs.spec_version'),
+    )
+    .select('specs.approval_note')
+    .where('helps.id', '=', helpId)
+    .executeTakeFirst()
+  return row?.approval_note ?? null
+}
+
 /**
  * What a review of a re-presented plan reads from before it: the newest earlier `plan` request of
  * the asking run that the owner answered with words, and what changed since. Null on the first.
@@ -708,7 +724,7 @@ function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string):
     'get_question',
     {
       description:
-        'Read the question you were asked to help with: the question, its context, its options with the recommendation (for a whole-batch suggestion: kind, batch_lead and every question of the batch in order, each with its id, question, context_md, options and recommendation), and for a request to change files the files, for a migration request the path and the whole file, and for a plan the plan.',
+        'Read the question you were asked to help with: the question, its context, its options with the recommendation (for a whole-batch suggestion: kind, batch_lead and every question of the batch in order, each with its id, question, context_md, options and recommendation), and for a request to change files the files, for a migration request the path and the whole file, and for a plan the plan. For a plan review it also returns previous and approval_note: the owner’s note for the planner, given at the spec gate, or null.',
     },
     async () => {
       const head = await helpHead(ctx, helpId)
@@ -737,7 +753,12 @@ function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string):
         recommendation: asked.recommendation,
         ...(files === null ? {} : { files }),
         ...(row.kind === 'plan' ? { plan: row.context_md } : {}),
-        ...(head.mode === 'review_plan' ? { previous: await previousPlanFor(ctx, helpId) } : {}),
+        ...(head.mode === 'review_plan'
+          ? {
+              previous: await previousPlanFor(ctx, helpId),
+              approval_note: await approvalNoteFor(ctx, helpId),
+            }
+          : {}),
         ...(row.kind === 'questions' ? { batch_lead: row.question } : {}),
       })
     },
@@ -806,7 +827,7 @@ function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string):
     'save_help_result',
     {
       description:
-        'Save your result. A suggestion: option_id (one the question offers), text, or both, with reasoning and unsure (what you are unsure of). A whole-batch suggestion: answers only, one for every question of the batch, each with question_id, option_id or text, reasoning and unsure, and no other field. An explanation: asked (what is being asked), matters (why it matters to the task) and leads_to (what each option, or an answer in words, would lead to), and no option. For a decision help the fields depend on the mode. review and review_plan: findings and unsure, and no verdict (the board derives it). Each finding has kind, where, text, destination (blocker, next_gate or outside) and evidence; an outside finding also has a title and its text in the labels Where, Found, Problem and Impact; a review next_gate finding also has where and edit; a finding may carry choices, 2 to 5 short ways to settle it, with recommended the index of the one you would choose. review kinds: missing, contradiction, uncheckable, risk. review_plan kinds: uncovered, missing_file, risk, simpler. restate: changes, requirements and left_out. recommend: why_stopped, action, reasoning and unsure. check: checked_against, produced, unfinished (where, text) and unsure. advise: variant (one the proposal offers now), reasoning and unsure. code_review: findings (kind: bug, breaks, duplicate, fit or test; file; line, optional; text; matters; destination blocker or outside; evidence; title for an outside one), next_step (merge, merge_and_file, fix_by_hand, rerun_keep or rerun_again), reasoning and unsure. Refused with the field to fix when it does not fit; fix it and save again.',
+        'Save your result. A suggestion: option_id (one the question offers), text, or both, with reasoning and unsure (what you are unsure of). A whole-batch suggestion: answers only, one for every question of the batch, each with question_id, option_id or text, reasoning and unsure, and no other field. An explanation: asked (what is being asked), matters (why it matters to the task) and leads_to (what each option, or an answer in words, would lead to), and no option. For a decision help the fields depend on the mode. review and review_plan: findings and unsure, and no verdict (the board derives it). Each finding has kind, where, text, destination (blocker, next_gate or outside) and evidence; an outside finding also has a title and its text in the labels Where, Found, Problem and Impact; a review next_gate finding also has where; a finding may carry choices, 2 to 5 short ways to settle it, with recommended the index of the one you would choose. review kinds: missing, contradiction, uncheckable, risk. review_plan kinds: uncovered, missing_file, risk, simpler. restate: changes, requirements and left_out. recommend: why_stopped, action, reasoning and unsure. check: checked_against, produced, unfinished (where, text) and unsure. advise: variant (one the proposal offers now), reasoning and unsure. code_review: findings (kind: bug, breaks, duplicate, fit or test; file; line, optional; text; matters; destination blocker or outside; evidence; title for an outside one), next_step (merge, merge_and_file, fix_by_hand, rerun_keep or rerun_again), reasoning and unsure. Refused with the field to fix when it does not fit; fix it and save again.',
       inputSchema: {
         option_id: z.string().optional(),
         text: z.string().optional(),

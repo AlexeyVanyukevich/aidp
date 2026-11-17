@@ -336,7 +336,6 @@ const PLAN_FINDING_KINDS = ['uncovered', 'missing_file', 'risk', 'simpler']
 const DESTINATIONS = ['blocker', 'next_gate', 'outside']
 const NEXT_STEPS = ['merge', 'merge_and_file', 'fix_by_hand', 'rerun_keep', 'rerun_again']
 const EVIDENCE_LIMIT = 500
-const EDIT_LIMIT = 4_000
 const CODE_FINDING_KINDS = ['bug', 'breaks', 'duplicate', 'fit', 'test']
 const FILE_LIMIT = 300
 export type DecisionResultMode =
@@ -430,10 +429,13 @@ export function checkDecisionResult(
       findings.push({ field, code: 'unknown_choice' })
   }
 
-  /** The destination, evidence, title and edit every finding of the shared shape carries. */
+  /**
+   * The destination, evidence and title every finding of the shared shape carries, and a Review
+   * spec next-gate finding's where. An edit is refused on every finding.
+   */
   const shapeFinding = (
     item: NonNullable<DecisionResultInput['findings']>[number],
-    opts: { edit: boolean; nextGate: boolean },
+    opts: { where: boolean; nextGate: boolean },
   ) => {
     const field = 'findings'
     const { destination } = item
@@ -451,15 +453,13 @@ export function checkDecisionResult(
         findings.push({ field, code: 'too_long' })
       if (missingLabels(item.text ?? '').length > 0) findings.push({ field, code: 'required' })
     } else if (item.title !== undefined) findings.push({ field, code: 'not_allowed' })
-    if (destination === 'next_gate' && opts.edit) {
-      if (blank(item.where)) findings.push({ field, code: 'required' })
-      if (blank(item.edit)) findings.push({ field, code: 'required' })
-      else if ((item.edit ?? '').trim().length > EDIT_LIMIT)
-        findings.push({ field, code: 'too_long' })
-    } else if (item.edit !== undefined) findings.push({ field, code: 'not_allowed' })
+    if (destination === 'next_gate' && opts.where && blank(item.where))
+      findings.push({ field, code: 'required' })
+    // A next-gate point goes into the owner's note for the next gate, not into an edit.
+    if (item.edit !== undefined) findings.push({ field, code: 'not_allowed' })
   }
 
-  const specItems = (kinds: readonly string[], edit: boolean) => {
+  const specItems = (kinds: readonly string[], where: boolean) => {
     const list = input.findings
     if (list === undefined) return
     if (list.length > LIST_LIMIT) findings.push({ field: 'findings', code: 'too_many' })
@@ -470,7 +470,7 @@ export function checkDecisionResult(
         findings.push({ field: 'findings', code: 'too_long' })
       if (item.where !== undefined && item.where.trim().length > WHERE_LIMIT)
         findings.push({ field: 'findings', code: 'too_long' })
-      shapeFinding(item, { edit, nextGate: true })
+      shapeFinding(item, { where, nextGate: true })
       choiceFindings(item.choices, item.recommended)
     }
   }
@@ -485,7 +485,7 @@ export function checkDecisionResult(
       if (item.where !== undefined) findings.push({ field: 'findings', code: 'not_allowed' })
       if (item.choices !== undefined || item.recommended !== undefined)
         findings.push({ field: 'findings', code: 'not_allowed' })
-      shapeFinding(item, { edit: false, nextGate: false })
+      shapeFinding(item, { where: false, nextGate: false })
       if (blank(item.file)) findings.push({ field: 'findings', code: 'required' })
       else if ((item.file ?? '').trim().length > FILE_LIMIT)
         findings.push({ field: 'findings', code: 'too_long' })
@@ -604,7 +604,6 @@ export function decisionResultOf(
         ...where(item.where),
         text: item.text.trim(),
         ...shared(item),
-        ...(item.edit === undefined ? {} : { edit: item.edit.trim() }),
         ...(item.choices === undefined || item.recommended === undefined
           ? {}
           : {

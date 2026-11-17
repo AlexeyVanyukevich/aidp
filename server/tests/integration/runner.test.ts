@@ -259,6 +259,43 @@ describe('POST /api/runner/claim', () => {
     expect((await claim()).json().work.run.number).toBe(1)
   })
 
+  it('carries the approval note of the spec, for a run and for a re-run of the version', async () => {
+    const { taskId } = await seedQueuedRun(getTestDb())
+    await getTestDb()
+      .updateTable('specs')
+      .set({ approval_note: 'avoid the fake clock' })
+      .where('task_id', '=', taskId)
+      .execute()
+    expect((await claim()).json().work.run.spec.approval_note).toBe('avoid the fake clock')
+    await getTestDb()
+      .updateTable('runs')
+      .set({ status: 'succeeded' })
+      .where('task_id', '=', taskId)
+      .execute()
+    await getTestDb()
+      .updateTable('tasks')
+      .set({ state: 'ready' })
+      .where('id', '=', taskId)
+      .execute()
+    await getTestDb()
+      .insertInto('runs')
+      .values({
+        task_id: taskId,
+        kind: 'delivery',
+        number: 2,
+        spec_version: 1,
+        status: 'queued',
+        queued_at: new Date(),
+      })
+      .execute()
+    expect((await claim()).json().work.run.spec.approval_note).toBe('avoid the fake clock')
+  })
+
+  it('carries a null approval note for a spec without one', async () => {
+    await seedQueuedRun(getTestDb())
+    expect((await claim()).json().work.run.spec.approval_note).toBeNull()
+  })
+
   it('waits for work when asked to, and answers as soon as a run is queued', async () => {
     const pending = claim(5_000)
     await new Promise((done) => setTimeout(done, 200))
