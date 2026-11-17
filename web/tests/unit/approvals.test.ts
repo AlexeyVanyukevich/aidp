@@ -17,6 +17,9 @@ import {
   unanswered,
   applySuggestion,
   fillNoteFromReview,
+  fillRerunNote,
+  defaultRerunPicks,
+  type PrReviewResult,
   type FindingPick,
   preSendProblem,
   NO_WORDS_WITH_PLAN,
@@ -423,22 +426,24 @@ describe('singleAnswer', () => {
 })
 
 describe('fillNoteFromReview', () => {
-  type Finding = ReviewResult['findings'][number]
+  type Finding = Omit<ReviewResult['findings'][number], 'destination' | 'evidence'> &
+    Partial<Pick<ReviewResult['findings'][number], 'destination' | 'evidence'>>
   const review = (findings: Finding[]): ReviewResult => ({
     mode: 'review',
     verdict: 'changes',
-    findings,
+    blockers: findings.length,
+    findings: findings.map((f) => ({ destination: 'blocker', evidence: 'R1', ...f })),
     unsure: 'The deadline.',
   })
   const retry: Finding = { kind: 'missing', where: 'R1', text: 'No retry limit' }
-  const LINE = '- missing (R1): No retry limit'
+  const LINE = '- blocker, missing (R1): No retry limit'
   it.each<[string, string, Finding[], string]>([
     ['an empty note', '', [retry], LINE],
     [
       'a whitespace-only note, two findings in order',
       '  \n ',
       [retry, { kind: 'risk', text: 'Slow' }],
-      `${LINE}\n- risk: Slow`,
+      `${LINE}\n- blocker, risk: Slow`,
     ],
     ['a note ending in a blank line', 'Also rename X.\n\n', [retry], `Also rename X.\n\n${LINE}`],
     ['words with no trailing space', 'Also rename X.', [retry], `Also rename X.\n\n${LINE}`],
@@ -452,7 +457,7 @@ describe('fillNoteFromReview', () => {
         { kind: 'uncheckable', text: 'c' },
         { kind: 'risk', where: 'R4', text: 'd' },
       ],
-      '- missing: a\n- contradiction (R2): b\n- uncheckable: c\n- risk (R4): d',
+      '- blocker, missing: a\n- blocker, contradiction (R2): b\n- blocker, uncheckable: c\n- blocker, risk (R4): d',
     ],
   ])('fills %s', (_name, note, findings, expected) => {
     expect(fillNoteFromReview(note, review(findings))).toBe(expected)
@@ -460,11 +465,13 @@ describe('fillNoteFromReview', () => {
 })
 
 describe('fillNoteFromReview with picks', () => {
-  type Finding = ReviewResult['findings'][number]
+  type Finding = Omit<ReviewResult['findings'][number], 'destination' | 'evidence'> &
+    Partial<Pick<ReviewResult['findings'][number], 'destination' | 'evidence'>>
   const review = (findings: Finding[]): ReviewResult => ({
     mode: 'review',
     verdict: 'changes',
-    findings,
+    blockers: findings.length,
+    findings: findings.map((f) => ({ destination: 'blocker', evidence: 'R1', ...f })),
     unsure: 'u',
   })
   const ab = (recommended: number): Finding => ({
@@ -476,7 +483,7 @@ describe('fillNoteFromReview with picks', () => {
   })
   const abc: Finding = { ...ab(1), choices: ['A', 'B', 'C'] }
   const plain: Finding = { kind: 'risk', text: 'Slow' }
-  const head = '- missing (R1): X'
+  const head = '- blocker, missing (R1): X'
   it.each<[string, string, Finding[], FindingPick[], string]>([
     ['the recommended choice picked', '', [ab(0)], [1], `${head}\n  Decision: B`],
     ['the recommended choice picked, no marker', '', [ab(0)], [0], `${head}\n  Decision: A`],
@@ -502,13 +509,13 @@ describe('fillNoteFromReview with picks', () => {
       `${head}\n  Open choice, ask me: A; B (recommended); or C`,
     ],
     ['no picks', '', [ab(0)], [], `${head}\n  Open choice, ask me: A (recommended); or B`],
-    ['a finding without choices as written', '', [plain], ['written'], '- risk: Slow'],
+    ['a finding without choices as written', '', [plain], ['written'], '- blocker, risk: Slow'],
     [
       'one left out between two',
       '',
       [plain, ab(0), plain],
       ['written', 'out', 'written'],
-      '- risk: Slow\n- risk: Slow',
+      '- blocker, risk: Slow\n- blocker, risk: Slow',
     ],
     ['every finding left out', 'Keep this.', [plain, ab(0)], ['out', 'out'], 'Keep this.'],
     ['every finding left out, blank note', '', [plain], ['out'], ''],
@@ -828,3 +835,99 @@ describe('whole-batch announcements', () => {
 })
 
 const helpAnnouncement2 = (approval: ApprovalView) => (h: HelpView) => helpAnnouncement(h, approval)
+
+describe('fillNoteFromReview by destination', () => {
+  const finding = (
+    destination: 'blocker' | 'next_gate' | 'outside',
+    extra: Partial<ReviewResult['findings'][number]> = {},
+  ): ReviewResult['findings'][number] => ({
+    kind: 'risk',
+    where: 'Context',
+    text: `a ${destination}`,
+    destination,
+    evidence: 'Context',
+    ...extra,
+  })
+  const result = (findings: ReviewResult['findings']): ReviewResult => ({
+    mode: 'review',
+    verdict: 'changes',
+    blockers: findings.filter((f) => f.destination === 'blocker').length,
+    findings,
+    unsure: 'u',
+  })
+
+  it('names each destination and never writes an outside finding', () => {
+    const note = fillNoteFromReview(
+      '',
+      result([finding('blocker'), finding('next_gate'), finding('outside')]),
+    )
+    expect(note).toBe(
+      '- blocker, risk (Context): a blocker\n- next gate, risk (Context): a next_gate',
+    )
+  })
+
+  it('puts a Decision line under a blocker with a chosen choice', () => {
+    const note = fillNoteFromReview(
+      '',
+      result([finding('blocker', { choices: ['A', 'B'], recommended: 0 }), finding('outside')]),
+      [1, 'written'],
+    )
+    expect(note).toBe('- blocker, risk (Context): a blocker\n  Decision: B')
+  })
+})
+
+describe('fillRerunNote', () => {
+  const finding = (
+    destination: 'blocker' | 'outside',
+    text: string,
+  ): PrReviewResult['findings'][number] => ({
+    kind: 'bug',
+    where: 'a.ts:1',
+    text,
+    matters: 'm',
+    destination,
+    evidence: 'a.ts:1',
+  })
+  const review = (
+    commit: string | null,
+    ...findings: PrReviewResult['findings']
+  ): PrReviewResult => ({
+    mode: 'code_review',
+    verdict: 'changes',
+    blockers: 1,
+    findings,
+    next_step: 'fix_by_hand',
+    reasoning: 'r',
+    unsure: 'u',
+    commit,
+  })
+  const at = '2026-11-17T10:30:00.000Z'
+
+  it('begins with the review’s date and commit and lists the chosen findings with evidence', () => {
+    const text = fillRerunNote(
+      'Mine.',
+      review('0123456789abcdef', finding('blocker', 'Off by one'), finding('outside', 'Elsewhere')),
+      at,
+      ['in', 'out'],
+    )
+    expect(text).toBe(
+      'Mine.\n\nFrom the pull request review of 2026-11-17 10:30, at commit 0123456789ab:\n- blocker, bug (a.ts:1): Off by one Evidence: a.ts:1',
+    )
+  })
+
+  it('says unknown when the review has no commit', () => {
+    expect(fillRerunNote('', review(null, finding('blocker', 'x')), at, ['in'])).toContain(
+      'at commit unknown:',
+    )
+  })
+
+  it('leaves the note as it was when nothing is chosen', () => {
+    expect(fillRerunNote('Mine.', review(null, finding('outside', 'x')), at, ['out'])).toBe('Mine.')
+  })
+
+  it('starts blockers at Put in the note and outside findings at Leave out', () => {
+    expect(
+      defaultRerunPicks(review(null, finding('blocker', 'a'), finding('outside', 'b'))),
+    ).toEqual(['in', 'out'])
+  })
+})

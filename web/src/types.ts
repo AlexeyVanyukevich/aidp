@@ -140,9 +140,9 @@ export interface ApprovalView {
   created_at: string
   answered_at: string | null
 }
-export type QuestionHelpMode = 'suggest' | 'explain' | 'suggest_all'
+export type QuestionHelpMode = 'suggest' | 'explain' | 'suggest_all' | 'review_plan'
 /** The modes a client asks for: the server alone turns a batch's suggest into suggest_all. */
-export type AskedHelpMode = Exclude<QuestionHelpMode, 'suggest_all'>
+export type AskedHelpMode = 'suggest' | 'explain'
 /** How a project suggests a batch's answers: the whole batch in one help, or one question each. */
 export type BatchSuggest = 'whole' | 'one'
 export type HelpMode =
@@ -151,6 +151,25 @@ export type HelpDecision =
   'question' | 'spec_review' | 'stopped_run' | 'mark_done' | 'proposal' | 'pull_request'
 export type HelpStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'stopped'
 export type StoppedRunAction = 'resume' | 'cancel' | 'rerun_again' | 'rerun_keep' | 'mark_done'
+export type FindingDestination = 'blocker' | 'next_gate' | 'outside'
+export type NextStep = 'merge' | 'merge_and_file' | 'fix_by_hand' | 'rerun_keep' | 'rerun_again'
+
+/** The shape every review of a gate has: a derived verdict, and findings with a destination. */
+export interface ReviewShape<Kind extends string, Extra> {
+  verdict: 'ready' | 'changes'
+  blockers: number
+  findings: ({
+    kind: Kind
+    text: string
+    destination: FindingDestination
+    evidence: string
+    title?: string
+    choices?: string[]
+    recommended?: number
+  } & Extra)[]
+  unsure: string
+}
+
 /** What a helper saved: a suggestion, a plain restatement, or advice on a decision of the card. */
 export type HelpResult =
   | { mode: 'suggest'; option_id?: string; text?: string; reasoning: string; unsure: string }
@@ -165,33 +184,23 @@ export type HelpResult =
       }[]
     }
   | { mode: 'explain'; asked: string; matters: string; leads_to: string }
-  | {
+  | ({
       mode: 'code_review'
-      verdict: 'changes' | 'nothing_to_change'
-      findings: {
-        kind: 'bug' | 'breaks' | 'duplicate' | 'fit' | 'test'
-        where: string
-        text: string
-        matters: string
-      }[]
-      unsure: string
       /** The commit the helper read; null when the board has none. */
       commit: string | null
       /** The files the board skipped by name; absent on a review saved before it recorded them. */
       skipped?: { path: string; skip: 'lockfile' | 'generated' }[]
-    }
-  | {
-      mode: 'review'
-      verdict: 'changes' | 'nothing_to_change'
-      findings: {
-        kind: 'missing' | 'contradiction' | 'uncheckable' | 'risk'
-        where?: string
-        text: string
-        choices?: string[]
-        recommended?: number
-      }[]
-      unsure: string
-    }
+      next_step: NextStep
+      reasoning: string
+    } & ReviewShape<'bug' | 'breaks' | 'duplicate' | 'fit' | 'test', { where: string; matters: string }>)
+  | ({ mode: 'review' } & ReviewShape<
+      'missing' | 'contradiction' | 'uncheckable' | 'risk',
+      { where?: string; edit?: string }
+    >)
+  | ({ mode: 'review_plan' } & ReviewShape<
+      'uncovered' | 'missing_file' | 'risk' | 'simpler',
+      { where?: string }
+    >)
   | { mode: 'restate'; changes: string; requirements: string; left_out: string }
   | {
       mode: 'recommend'

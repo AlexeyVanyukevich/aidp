@@ -5,6 +5,7 @@ import type {
   HelpMode,
   HelpResult,
   AskedHelpMode,
+  NextStep,
   StoppedRunAction,
 } from '../types'
 import {
@@ -16,6 +17,8 @@ import {
   suggestHeading,
   type ModeHelp,
   type QuestionHelp,
+  type PlanReviewResult,
+  type PrReviewResult,
   type ReviewResult,
 } from './approvals'
 
@@ -92,6 +95,8 @@ export function HelpResults({
         return renderers.explain?.(result)
       case 'review':
         return renderers.review?.(result)
+      case 'review_plan':
+        return renderers.review_plan?.(result)
       case 'restate':
         return renderers.restate?.(result)
       case 'recommend':
@@ -221,7 +226,7 @@ export function HelpPanel({
 
 /** The mode of a decision help: its label, state and the words of its heading and failure. */
 export function decisionMode(
-  id: 'review' | 'restate' | 'recommend' | 'check' | 'code_review',
+  id: 'review' | 'review_plan' | 'restate' | 'recommend' | 'check' | 'code_review',
   label: string,
   state: ModeHelp,
 ): PanelMode {
@@ -254,60 +259,139 @@ const pickValue = (pick: FindingPick) => (typeof pick === 'number' ? `choice-${p
 const pickOf = (value: string): FindingPick =>
   value === 'out' || value === 'written' ? value : Number(value.slice('choice-'.length))
 
+type Gate = 'spec' | 'plan' | 'pull_request'
+type AnyReview = ReviewResult | PlanReviewResult | PrReviewResult
+type AnyFinding = AnyReview['findings'][number]
+
+/** The label of each next step a pull request review may give. */
+export const NEXT_STEP_LABEL: Record<NextStep, string> = {
+  merge: 'Merge',
+  merge_and_file: 'Merge, then file the findings outside the task',
+  fix_by_hand: 'Fix by hand on the branch',
+  rerun_keep: 'Close the pull request, then Re-run with this plan',
+  rerun_again: 'Close the pull request, then Re-run and plan again',
+}
+
+/** The heading of the next-gate group: it depends on the gate and on whether a blocker stands. */
+export function nextGateHeading(gate: Gate, hasBlocker: boolean): string {
+  if (gate === 'spec')
+    return hasBlocker ? 'Goes into the note with the blockers' : 'Edits to make before approving'
+  return hasBlocker ? 'Goes into the words with the blockers' : 'Waits for the pull request gate'
+}
+
 /**
- * A Spec review result: its findings, Unsure about and, when a handler is given and the verdict is
- * `changes`, a radio group per finding and Use these findings. The picks live here, so a different
- * result, which remounts this, starts from "Use as written" again.
+ * A review result at any gate, in one shape: Ready or Changes needed, then Blockers, the next-gate
+ * group and Outside the task, each under its own heading one level below the result's, then
+ * Unsure about. When a handler is given and a blocker stands, a radio group per blocker and
+ * next-gate finding and Use these findings. The picks live here, so a different result, which
+ * remounts this, starts from "Use as written" again.
  */
 function ReviewView({
   result,
+  gate,
+  level,
   onUseFindings,
 }: {
-  result: ReviewResult
-  onUseFindings: ((result: ReviewResult, picks: FindingPick[]) => void) | undefined
+  result: AnyReview
+  gate: Gate
+  level: 3 | 4 | 5
+  onUseFindings:
+    ((result: ReviewResult | PlanReviewResult, picks: FindingPick[]) => void) | undefined
 }) {
   const [picks, setPicks] = useState<FindingPick[]>(() => result.findings.map(() => 'written'))
-  const picking = onUseFindings !== undefined && result.verdict === 'changes'
+  const picking =
+    onUseFindings !== undefined && result.blockers > 0 && result.mode !== 'code_review'
+  const Heading = `h${level + 1}` as 'h4' | 'h5' | 'h6'
+  const entries = result.findings.map((finding, index) => ({ finding, index }))
+  const inGroup = (destination: AnyFinding['destination']) =>
+    entries.filter(({ finding }) => finding.destination === destination)
+
+  const item = ({ finding, index }: { finding: AnyFinding; index: number }) => {
+    const choices = finding.choices ?? []
+    const where = 'where' in finding && finding.where !== undefined ? ` (${finding.where})` : ''
+    const controls = picking && finding.destination !== 'outside'
+    const edit = 'edit' in finding ? finding.edit : undefined
+    return (
+      <li key={index}>
+        {finding.destination === 'outside' && finding.title !== undefined && (
+          <strong>{finding.title}: </strong>
+        )}
+        {result.mode === 'code_review' ? (
+          <Badge tone="neutral">{finding.kind}</Badge>
+        ) : (
+          <strong>{finding.kind}</strong>
+        )}
+        {where}: {finding.text}
+        {'matters' in finding && (
+          <>
+            {' '}
+            <strong>Why it matters:</strong> {finding.matters}
+          </>
+        )}{' '}
+        <strong>Evidence:</strong> {finding.evidence}
+        {!controls && choices.length > 0 && (
+          <> Choices: {choicesLabel(choices, finding.recommended)}</>
+        )}
+        {edit !== undefined && result.blockers === 0 && <pre>{edit}</pre>}
+        {controls && (
+          <RadioGroup
+            label={`What to do with finding ${index + 1}`}
+            value={pickValue(picks[index] ?? 'written')}
+            onChange={(value) =>
+              setPicks((now) => now.map((pick, i) => (i === index ? pickOf(value) : pick)))
+            }
+          >
+            <Radio value="written">Use as written</Radio>
+            {choices.map((choice, at) => (
+              <Radio key={at} value={pickValue(at)}>
+                {at === finding.recommended ? `${choice} (recommended)` : choice}
+              </Radio>
+            ))}
+            <Radio value="out">Leave out</Radio>
+          </RadioGroup>
+        )}
+      </li>
+    )
+  }
+  const group = (heading: string, list: typeof entries) =>
+    list.length === 0 ? null : (
+      <>
+        <Heading>{heading}</Heading>
+        <ul>{list.map(item)}</ul>
+      </>
+    )
   return (
     <>
-      {result.verdict === 'nothing_to_change' ? (
-        <p>Nothing to change.</p>
-      ) : (
-        <ul>
-          {result.findings.map((finding, index) => {
-            const choices = finding.choices ?? []
-            return (
-              <li key={index}>
-                <strong>{finding.kind}</strong>
-                {finding.where === undefined ? '' : ` (${finding.where})`}: {finding.text}
-                {!picking && choices.length > 0 && (
-                  <> Choices: {choicesLabel(choices, finding.recommended)}</>
-                )}
-                {picking && (
-                  <RadioGroup
-                    label={`What to do with finding ${index + 1}`}
-                    value={pickValue(picks[index] ?? 'written')}
-                    onChange={(value) =>
-                      setPicks((now) => now.map((pick, i) => (i === index ? pickOf(value) : pick)))
-                    }
-                  >
-                    <Radio value="written">Use as written</Radio>
-                    {choices.map((choice, at) => (
-                      <Radio key={at} value={pickValue(at)}>
-                        {at === finding.recommended ? `${choice} (recommended)` : choice}
-                      </Radio>
-                    ))}
-                    <Radio value="out">Leave out</Radio>
-                  </RadioGroup>
-                )}
-              </li>
-            )
-          })}
-        </ul>
+      <p>
+        {result.blockers === 0
+          ? 'Ready'
+          : `Changes needed: ${result.blockers} ${result.blockers === 1 ? 'blocker' : 'blockers'}`}
+      </p>
+      {group('Blockers', inGroup('blocker'))}
+      {group(nextGateHeading(gate, result.blockers > 0), inGroup('next_gate'))}
+      {group('Outside the task', inGroup('outside'))}
+      {result.mode === 'code_review' && (result.skipped ?? []).length > 0 && (
+        <Part title="Not reviewed">
+          {(result.skipped ?? []).map((file, index) => (
+            <Fragment key={file.path}>
+              {index > 0 && ', '}
+              <code>{file.path}</code> ({file.skip})
+            </Fragment>
+          ))}
+        </Part>
       )}
       <Part title="Unsure about">{result.unsure}</Part>
+      {result.mode === 'code_review' && (
+        <>
+          <Part title="Next step">{NEXT_STEP_LABEL[result.next_step] ?? result.next_step}</Part>
+          <Part title="Why">{result.reasoning}</Part>
+        </>
+      )}
       {picking && (
-        <Button type="button" onClick={() => onUseFindings(result, picks)}>
+        <Button
+          type="button"
+          onClick={() => onUseFindings(result as ReviewResult | PlanReviewResult, picks)}
+        >
           Use these findings
         </Button>
       )}
@@ -316,42 +400,24 @@ function ReviewView({
 }
 
 /**
- * Renderers for the modes of the card's decisions. The Spec review result holds a radio group per
- * finding and Use these findings when a handler is given and its verdict is `changes`; no other
- * result holds a focusable control.
+ * Renderers for the modes of the card's decisions. The Spec review and Review plan results hold a
+ * radio group per finding and Use these findings when a handler is given and a blocker stands; no
+ * other result holds a focusable control. `level` is the heading level of the result.
  */
 export function decisionRenderers(
   checkedVersion: number | null,
-  onUseFindings?: (result: ReviewResult, picks: FindingPick[]) => void,
+  onUseFindings?: (result: ReviewResult | PlanReviewResult, picks: FindingPick[]) => void,
+  level: 3 | 4 | 5 = 3,
 ): Renderers {
   return {
-    review: (result) => <ReviewView result={result} onUseFindings={onUseFindings} />,
+    review: (result) => (
+      <ReviewView result={result} gate="spec" level={level} onUseFindings={onUseFindings} />
+    ),
+    review_plan: (result) => (
+      <ReviewView result={result} gate="plan" level={level} onUseFindings={onUseFindings} />
+    ),
     code_review: (result) => (
-      <>
-        {result.verdict === 'nothing_to_change' ? (
-          <p>Nothing to change.</p>
-        ) : (
-          <ul>
-            {result.findings.map((finding, index) => (
-              <li key={index}>
-                <Badge tone="neutral">{finding.kind}</Badge> ({finding.where}): {finding.text}{' '}
-                <strong>Why it matters:</strong> {finding.matters}
-              </li>
-            ))}
-          </ul>
-        )}
-        {(result.skipped ?? []).length > 0 && (
-          <Part title="Not reviewed">
-            {(result.skipped ?? []).map((file, index) => (
-              <Fragment key={file.path}>
-                {index > 0 && ', '}
-                <code>{file.path}</code> ({file.skip})
-              </Fragment>
-            ))}
-          </Part>
-        )}
-        <Part title="Unsure about">{result.unsure}</Part>
-      </>
+      <ReviewView result={result} gate="pull_request" level={level} onUseFindings={undefined} />
     ),
     restate: (result) => (
       <>

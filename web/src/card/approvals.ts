@@ -279,6 +279,10 @@ export function helpAnnouncement(help: HelpView, approval: ApprovalView | undefi
     return help.status === 'failed'
       ? `No suggestions for the batch: ${help.reason ?? 'the helper failed'}`
       : `Suggested answers ready for all ${approval?.question_count ?? (help.result?.mode === 'suggest_all' ? help.result.answers.length : 0)} questions`
+  if (help.mode === 'review_plan')
+    return help.status === 'failed'
+      ? `No plan review: ${help.reason ?? 'the helper failed'}.`
+      : 'Plan review ready.'
   if (help.status === 'failed')
     return `${help.mode === 'suggest' ? 'No suggestion' : 'No explanation'} for ${label}: ${help.reason ?? 'the helper failed'}`
   return help.mode === 'suggest'
@@ -354,6 +358,10 @@ export function applySuggestion(kind: ApprovalKind, current: Choice, result: Hel
 }
 
 export type ReviewResult = Extract<HelpResult, { mode: 'review' }>
+export type PlanReviewResult = Extract<HelpResult, { mode: 'review_plan' }>
+export type PrReviewResult = Extract<HelpResult, { mode: 'code_review' }>
+/** A review of the spec or of the plan: the two whose findings can go into the owner's words. */
+export type GateReviewResult = ReviewResult | PlanReviewResult
 
 /** What the owner picked for one finding: its text as written, leaving it out, or a choice. */
 export type FindingPick = 'written' | 'out' | number
@@ -375,21 +383,28 @@ export function choicesLabel(choices: string[], recommended: number | undefined)
     .join('; ')
 }
 
+const DESTINATION_WORDS = {
+  blocker: 'blocker',
+  next_gate: 'next gate',
+  outside: 'outside',
+} as const
+
 /**
- * The Redraft note after Use these findings: one line per finding that is not left out, with the
- * owner's decision or an open-choice marker under it, added after a blank line to words already
- * there. Unsure about and the verdict stay out. A missing pick is "Use as written". When every
- * finding is left out the note is returned as it was.
+ * The words after Use these findings: one line per blocker and next-gate finding that is not left
+ * out, with the owner's decision or an open-choice marker under it, added after a blank line to
+ * words already there. Outside findings, Unsure about and the verdict stay out. A missing pick is
+ * "Use as written". When nothing is left to write the words are returned as they were.
  */
 export function fillNoteFromReview(
   note: string,
-  result: ReviewResult,
+  result: GateReviewResult,
   picks: readonly FindingPick[] = [],
 ): string {
   const lines = result.findings.flatMap((finding, index) => {
+    if (finding.destination === 'outside') return []
     const pick = picks[index] ?? 'written'
     if (pick === 'out') return []
-    const line = `- ${finding.kind}${finding.where === undefined ? '' : ` (${finding.where})`}: ${finding.text}`
+    const line = `- ${DESTINATION_WORDS[finding.destination]}, ${finding.kind}${finding.where === undefined ? '' : ` (${finding.where})`}: ${finding.text}`
     const choices = finding.choices ?? []
     if (typeof pick === 'number' && choices[pick] !== undefined)
       return [`${line}\n  Decision: ${choices[pick]}`]
@@ -400,6 +415,41 @@ export function fillNoteFromReview(
   if (lines.length === 0) return note
   const words = note.trimEnd()
   return words === '' ? lines.join('\n') : `${words}\n\n${lines.join('\n')}`
+}
+
+/** What the owner chose for a finding of the pull request review: put it in the note, or not. */
+export type RerunPick = 'in' | 'out'
+
+/** Blockers start at Put in the note, and outside findings at Leave out. */
+export function defaultRerunPicks(result: PrReviewResult): RerunPick[] {
+  return result.findings.map((finding) => (finding.destination === 'blocker' ? 'in' : 'out'))
+}
+
+/** The date and time of a stored timestamp as `2026-11-17 10:30`, in UTC. */
+const dateTime = (iso: string) => `${iso.slice(0, 10)} ${iso.slice(11, 16)}`
+
+/**
+ * The Re-run note after Fill note: the chosen findings of the pull request review, each with its
+ * evidence, after any words already there. Nothing chosen leaves the note as it was.
+ */
+export function fillRerunNote(
+  note: string,
+  result: PrReviewResult,
+  createdAt: string,
+  picks: readonly RerunPick[],
+): string {
+  const lines = result.findings.flatMap((finding, index) =>
+    (picks[index] ?? 'out') === 'out'
+      ? []
+      : [
+          `- ${DESTINATION_WORDS[finding.destination]}, ${finding.kind} (${finding.where}): ${finding.text} Evidence: ${finding.evidence}`,
+        ],
+  )
+  if (lines.length === 0) return note
+  const commit = result.commit === null ? 'unknown' : result.commit.slice(0, 12)
+  const block = `From the pull request review of ${dateTime(createdAt)}, at commit ${commit}:\n${lines.join('\n')}`
+  const words = note.trimEnd()
+  return words === '' ? block : `${words}\n\n${block}`
 }
 
 /** A refusal the form can give before sending: an approval carries no words. */
@@ -461,6 +511,7 @@ export function resultHeading(
       : `Pull request review of ${commit.slice(0, 7)}`
   }
   const version = `v${subject?.spec_version ?? '?'}`
+  if (mode === 'review_plan') return 'Plan review'
   if (mode === 'review') return `Spec review of ${version}`
   if (mode === 'restate') return `${version} in plain words`
   if (mode === 'recommend') return 'Suggested next step'
@@ -470,6 +521,7 @@ export function resultHeading(
 /** A failed decision help's sentence, without the final full stop. */
 export function decisionFailure(mode: HelpMode, subject: HelpSubject | null, reason: string) {
   if (mode === 'code_review') return `No pull request review: ${reason}`
+  if (mode === 'review_plan') return `No plan review: ${reason}`
   const version = `v${subject?.spec_version ?? '?'}`
   if (mode === 'review') return `No spec review for ${version}: ${reason}`
   if (mode === 'restate') return `No plain-words spec for ${version}: ${reason}`
@@ -488,6 +540,7 @@ export function decisionAnnouncement(help: HelpView): string | null {
       ? 'Pull request review ready.'
       : `Pull request review ready for ${commit.slice(0, 7)}.`
   }
+  if (help.mode === 'review_plan') return 'Plan review ready.'
   const version = `v${help.subject?.spec_version ?? '?'}`
   if (help.mode === 'review') return `Spec review ready for ${version}.`
   if (help.mode === 'restate') return `Plain-words spec ready for ${version}.`

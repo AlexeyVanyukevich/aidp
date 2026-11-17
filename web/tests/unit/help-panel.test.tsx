@@ -51,11 +51,13 @@ vi.mock('@zellige/react', () => ({
   }) => <button aria-busy={busy === true ? 'true' : 'false'}>{children as string}</button>,
 }))
 
+const F = { destination: 'blocker', evidence: 'R1' } as const
 const RESULTS: Record<HelpMode, HelpResult> = {
   suggest: { mode: 'suggest', reasoning: 'r', unsure: 'u', text: 't' },
   suggest_all: { mode: 'suggest_all', answers: [] },
   explain: { mode: 'explain', asked: 'a', matters: 'm', leads_to: 'l' },
-  review: { mode: 'review', verdict: 'nothing_to_change', findings: [], unsure: 'u' },
+  review: { mode: 'review', verdict: 'ready', blockers: 0, findings: [], unsure: 'u' },
+  review_plan: { mode: 'review_plan', verdict: 'ready', blockers: 0, findings: [], unsure: 'u' },
   restate: { mode: 'restate', changes: 'c', requirements: 'r', left_out: 'l' },
   recommend: {
     mode: 'recommend',
@@ -74,9 +76,19 @@ const RESULTS: Record<HelpMode, HelpResult> = {
   code_review: {
     mode: 'code_review',
     verdict: 'changes',
+    blockers: 1,
     findings: [
-      { kind: 'bug', where: 'server/src/a.ts:12', text: 'Off by one', matters: 'Loses a row' },
+      {
+        kind: 'bug',
+        where: 'server/src/a.ts:12',
+        text: 'Off by one',
+        matters: 'Loses a row',
+        destination: 'blocker',
+        evidence: 'server/src/a.ts:12',
+      },
     ],
+    next_step: 'rerun_again',
+    reasoning: 'The off-by-one needs a new plan',
     unsure: 'u',
     commit: 'abcdef0123456789',
     skipped: [],
@@ -403,7 +415,8 @@ describe('decisionRenderers and Use these findings', () => {
   const changes: HelpResult = {
     mode: 'review',
     verdict: 'changes',
-    findings: [{ kind: 'missing', where: 'R1', text: 'No retry limit' }],
+    blockers: 1,
+    findings: [{ kind: 'missing', where: 'R1', text: 'No retry limit', ...F }],
     unsure: 'u',
   }
   const render = (result: HelpResult, handler: boolean) => {
@@ -427,7 +440,7 @@ describe('decisionRenderers and Use these findings', () => {
     { name: 'changes, without it', result: changes, handler: false, button: false },
     ...(['with', 'without'] as const).flatMap((w) => [
       {
-        name: `nothing to change, ${w} the handler`,
+        name: `ready, ${w} the handler`,
         result: RESULTS.review,
         handler: w === 'with',
         button: false,
@@ -466,9 +479,10 @@ describe('the radios of a Spec review result', () => {
   const withChoices: HelpResult = {
     mode: 'review',
     verdict: 'changes',
+    blockers: 2,
     findings: [
-      { kind: 'missing', where: 'R1', text: 'X', choices: ['A', 'B'], recommended: 1 },
-      { kind: 'risk', text: 'Slow' },
+      { kind: 'missing', where: 'R1', text: 'X', choices: ['A', 'B'], recommended: 1, ...F },
+      { kind: 'risk', text: 'Slow', ...F },
     ],
     unsure: 'u',
   }
@@ -506,7 +520,7 @@ describe('the radios of a Spec review result', () => {
     expect(html).not.toContain('radio')
     expect(html).toContain('Choices: A; B (recommended)')
   })
-  it('holds no control for nothing to change', () => {
+  it('holds no control for a ready result', () => {
     const html = markup(RESULTS.review, true)
     expect(html).not.toContain('radio')
     expect(html).not.toContain('<button')
@@ -526,16 +540,19 @@ describe('the pull request review result', () => {
     expect(html).toContain('<strong>Why it matters:</strong> Loses a row')
     expect(html.indexOf('Why it matters:')).toBeLessThan(html.indexOf('Unsure about'))
   })
-  it('says Nothing to change. and holds no focusable control', () => {
+  it('says Ready and holds no focusable control', () => {
     const html = markup({
       mode: 'code_review',
-      verdict: 'nothing_to_change',
+      verdict: 'ready',
+      blockers: 0,
       findings: [],
+      next_step: 'merge',
+      reasoning: 'Nothing found',
       unsure: 'u',
       commit: null,
       skipped: [],
     })
-    expect(html).toContain('Nothing to change.')
+    expect(html).toContain('Ready')
     for (const html2 of [html, markup(RESULTS.code_review)]) {
       expect(html2).not.toMatch(/<(button|a|input|select|textarea)\b/)
     }
@@ -579,5 +596,97 @@ describe('the pull request review result', () => {
     const state = decisionHelp([review], 'pull_request').code_review
     expect(state?.shown).toEqual(RESULTS.code_review)
     expect(decisionHelp([review], 'mark_done').code_review?.shown).toBeUndefined()
+  })
+})
+
+describe('the shared review shape on the card (AC5, AC8, AC13, AC15)', () => {
+  const mixed = (mode: 'review' | 'review_plan', blocker: boolean) =>
+    ({
+      mode,
+      verdict: blocker ? 'changes' : 'ready',
+      blockers: blocker ? 1 : 0,
+      findings: [
+        ...(blocker
+          ? [{ kind: 'risk', text: 'A blocker', destination: 'blocker', evidence: 'R1' }]
+          : []),
+        {
+          kind: 'risk',
+          where: 'Context',
+          text: 'A small gap',
+          destination: 'next_gate',
+          evidence: 'Context',
+          ...(mode === 'review' ? { edit: 'Say which retry.' } : {}),
+        },
+        {
+          kind: 'risk',
+          text: '**Where:** a',
+          title: 'Elsewhere',
+          destination: 'outside',
+          evidence: 'a.ts:1',
+        },
+      ],
+      unsure: 'u',
+    }) as HelpResult
+  const html = (result: HelpResult, handler = true) => {
+    const renderers = decisionRenderers(null, handler ? () => undefined : undefined)
+    const node =
+      result.mode === 'review'
+        ? renderers.review?.(result)
+        : result.mode === 'review_plan'
+          ? renderers.review_plan?.(result)
+          : renderers.code_review?.(result as never)
+    return renderToStaticMarkup(<>{node}</>)
+  }
+
+  it('opens with the blocker count and groups the findings one level below the result', () => {
+    const out = html(mixed('review', true))
+    expect(out).toContain('Changes needed: 1 blocker')
+    expect(out).not.toContain('1 blockers')
+    for (const heading of ['Blockers', 'Goes into the note with the blockers', 'Outside the task'])
+      expect(out).toContain(`<h4>${heading}</h4>`)
+    expect(out.match(/Evidence:/g)).toHaveLength(3)
+  })
+
+  it('gives an outside finding no control', () => {
+    const out = html(mixed('review', true))
+    const outside = out.slice(out.indexOf('Outside the task'), out.indexOf('Unsure about'))
+    expect(outside).not.toMatch(/<(button|input|radio)/)
+    expect(outside).toContain('Elsewhere')
+  })
+
+  it('shows no heading for an empty group', () => {
+    const out = html(RESULTS.review)
+    expect(out).toContain('Ready')
+    for (const heading of ['Blockers', 'Outside the task']) expect(out).not.toContain(heading)
+  })
+
+  it.each([
+    ['review', true, 'Goes into the note with the blockers'],
+    ['review', false, 'Edits to make before approving'],
+    ['review_plan', true, 'Goes into the words with the blockers'],
+    ['review_plan', false, 'Waits for the pull request gate'],
+  ] as const)('%s with a blocker %s heads its next-gate group "%s"', (mode, blocker, heading) => {
+    expect(html(mixed(mode, blocker))).toContain(`<h4>${heading}</h4>`)
+  })
+
+  it('shows a ready spec review’s edit in a pre block, as written', () => {
+    expect(html(mixed('review', false))).toContain('<pre>Say which retry.</pre>')
+  })
+
+  it('offers Use these findings only with a blocker, and none on a ready plan review', () => {
+    expect(html(mixed('review_plan', true))).toContain('Use these findings')
+    const ready = html(mixed('review_plan', false))
+    expect(ready).not.toContain('Use these findings')
+    expect(ready).not.toContain('<button')
+    expect(ready).not.toContain('radiogroup')
+  })
+
+  it('shows the next step and why of a pull request review, and no button', () => {
+    const out = html(RESULTS.code_review)
+    expect(out).toContain(
+      '<strong>Next step:</strong> Close the pull request, then Re-run and plan again',
+    )
+    expect(out).toContain('<strong>Why:</strong> The off-by-one needs a new plan')
+    expect(out).not.toContain('<button')
   })
 })
