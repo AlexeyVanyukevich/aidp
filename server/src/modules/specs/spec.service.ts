@@ -13,6 +13,7 @@ export interface SpecView {
   body_md: string
   status: SpecRow['status']
   approved_at: string | null
+  approval_note: string | null
   lint: {
     requirements: string[]
     criteria: SpecCriterion[]
@@ -30,6 +31,7 @@ export function toSpecView(row: SpecRow): SpecView {
     body_md: row.body_md,
     status: row.status,
     approved_at: row.approved_at?.toISOString() ?? null,
+    approval_note: row.approval_note,
     lint: {
       requirements: parsed.requirements.map((r) => r.id),
       criteria: parsed.criteria,
@@ -120,7 +122,7 @@ export class SpecService {
     return toSpecView(row)
   }
 
-  async approve(specId: string): Promise<{ spec: SpecView; run_id: string }> {
+  async approve(specId: string, note?: string): Promise<{ spec: SpecView; run_id: string }> {
     return this.db.transaction().execute(async (trx) => {
       const spec = await this.specs.get(trx, specId)
       if (spec === undefined) throw new NotFoundError('No such spec')
@@ -138,9 +140,19 @@ export class SpecService {
       }
       await moveTask(trx, spec.task_id, 'approve')
       const at = this.clock()
-      await this.specs.approve(trx, spec.id, parsed.criteria, at)
+      const kept = note?.trim() ?? ''
+      const approvalNote = kept === '' ? null : kept
+      await this.specs.approve(trx, spec.id, parsed.criteria, at, approvalNote)
       const runId = await queueDeliveryRun(trx, spec.task_id, spec.version, at)
-      return { spec: toSpecView({ ...spec, status: 'approved', approved_at: at }), run_id: runId }
+      return {
+        spec: toSpecView({
+          ...spec,
+          status: 'approved',
+          approved_at: at,
+          approval_note: approvalNote,
+        }),
+        run_id: runId,
+      }
     })
   }
 }
