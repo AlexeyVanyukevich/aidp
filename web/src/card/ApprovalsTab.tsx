@@ -28,6 +28,10 @@ import {
   singleAnswer,
   answerRefusal,
   applySuggestion,
+  fillNoteFromReview,
+  type FindingPick,
+  type PlanReviewResult,
+  type ReviewResult,
   preSendProblem,
   type Choice,
 } from './approvals'
@@ -61,6 +65,8 @@ function SingleForm({
   sending,
   refused,
   onAsk,
+  onReviewPlan,
+  onAnnounce,
   onSend,
   onEdit,
 }: {
@@ -73,6 +79,8 @@ function SingleForm({
    */
   refused: { message: string } | undefined
   onAsk: (mode: AskedHelpMode) => void
+  onReviewPlan: () => void
+  onAnnounce: (message: string) => void
   onSend: (body: ApprovalAnswer) => void
   onEdit: () => void
 }) {
@@ -86,6 +94,24 @@ function SingleForm({
   useEffect(() => {
     if (refused !== undefined) field.current?.focus()
   }, [refused])
+
+  /** Use these findings: the lines go into the words, Approve plan is cleared, nothing is sent. */
+  const useFindings = (result: ReviewResult | PlanReviewResult, picks: FindingPick[]) => {
+    const next = fillNoteFromReview(choice.text, result, picks)
+    flushSync(() => {
+      setChoice({ text: next })
+      setProblem(undefined)
+    })
+    if (refused !== undefined) onEdit()
+    const words = field.current
+    words?.focus()
+    words?.setSelectionRange(next.length, next.length)
+    onAnnounce(
+      next === choice.text
+        ? 'Every finding is left out; the words are unchanged.'
+        : 'Findings put in the words.',
+    )
+  }
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
@@ -112,6 +138,9 @@ function SingleForm({
         options={approval.options}
         level={4}
         onAsk={onAsk}
+        {...(approval.kind === 'plan'
+          ? { planReview: { onAsk: onReviewPlan, onUseFindings: useFindings } }
+          : {})}
         onUse={(result) => {
           setChoice((now) => applySuggestion(approval.kind, now, result))
           setProblem(undefined)
@@ -254,6 +283,16 @@ export function ApprovalsTab({
       ),
     onSettled: () => client.invalidateQueries({ queryKey: ['helps', task.id] }),
   })
+  const planReview = useMutation({
+    mutationFn: (id: string) => api.reviewPlan(id),
+    onError: (error) =>
+      onProblem(
+        isConflict(error)
+          ? 'This question was answered or withdrawn meanwhile; its latest state is shown.'
+          : 'The plan review was not asked. Try again.',
+      ),
+    onSettled: () => client.invalidateQueries({ queryKey: ['helps', task.id] }),
+  })
   const askFor = (approval: ApprovalView) => (mode: AskedHelpMode, index: number | null) =>
     ask.mutate({ id: approval.id, mode, index })
 
@@ -344,6 +383,8 @@ export function ApprovalsTab({
                   sending={sending === 'single'}
                   refused={refused}
                   onAsk={(mode) => askFor(current)(mode, null)}
+                  onReviewPlan={() => planReview.mutate(current.id)}
+                  onAnnounce={onAnnounce}
                   onSend={(body) => {
                     setRefused(undefined)
                     send(current, body, 'single')
