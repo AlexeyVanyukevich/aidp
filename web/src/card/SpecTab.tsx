@@ -4,11 +4,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Field, Input, Markdown, Notice, Select, Textarea } from '@zellige/react'
 import { api, ApiError } from '../api'
 import { useAnnouncer } from '../announce'
-import { invalidField, isConflict, NO_NOTE, noteRefusal } from '../errors'
+import { invalidField, isConflict, NO_NOTE, NOTE_TOO_LONG, noteRefusal } from '../errors'
 import { Loaded } from '../Loaded'
 import type { HelpMode, SpecView, TaskView } from '../types'
 import {
   decisionHelp,
+  fillApprovalNote,
   fillNoteFromReview,
   NO_HELP,
   type FindingPick,
@@ -105,6 +106,11 @@ function SpecEditor({
   const [note, setNote] = useState('')
   const [noteMissing, setNoteMissing] = useState<string | undefined>()
   const [filled, setFilled] = useState(0)
+  // The note for the planner, sent with Approve; its own refusal, and a count like `filled`.
+  const [approvalNote, setApprovalNote] = useState('')
+  const [approvalNoteMissing, setApprovalNoteMissing] = useState<string | undefined>()
+  const [approvalFilled, setApprovalFilled] = useState(0)
+  const approvalNoteField = useRef<HTMLTextAreaElement>(null)
   const { message, setMessage, announce } = useAnnouncer()
   const [problem, setProblem] = useState<{ text: string } | undefined>()
   const problemBox = useRef<HTMLDivElement>(null)
@@ -121,6 +127,12 @@ function SpecEditor({
     field?.focus()
     field?.setSelectionRange(field.value.length, field.value.length)
   }, [filled])
+  useEffect(() => {
+    if (approvalFilled === 0) return
+    const field = approvalNoteField.current
+    field?.focus()
+    field?.setSelectionRange(field.value.length, field.value.length)
+  }, [approvalFilled])
 
   const latest = specs[0]
   const shown = specs.find((s) => s.id === selected) ?? latest
@@ -336,10 +348,22 @@ function SpecEditor({
     onSettled: refresh,
   })
   const approve = useMutation({
-    mutationFn: (id: string) => api.approve(id),
-    onMutate: () => setProblem(undefined),
-    onSuccess: onFrozen,
-    onError: fail('approve'),
+    mutationFn: (id: string) => api.approve(id, approvalNote === '' ? undefined : approvalNote),
+    onMutate: () => {
+      setProblem(undefined)
+      setApprovalNoteMissing(undefined)
+    },
+    onSuccess: () => {
+      setApprovalNote('')
+      onFrozen()
+    },
+    onError: (error) => {
+      if (invalidField(error) === 'note') {
+        flushSync(() => setApprovalNoteMissing(NOTE_TOO_LONG))
+        approvalNoteField.current?.focus()
+        announce(NOTE_TOO_LONG)
+      } else fail('approve')(error)
+    },
     onSettled: refresh,
   })
   const describe = useMutation({
@@ -470,6 +494,15 @@ function SpecEditor({
         ? 'Every finding is left out; What to change is unchanged.'
         : 'Findings put in What to change.',
     )
+  }
+
+  /** Findings go after the words already in the approval note; nothing is sent. */
+  const putFindingsInApprovalNote = (result: ReviewResult, picks: FindingPick[]) => {
+    const filledNote = fillApprovalNote(approvalNote, result, picks)
+    setApprovalNote(filledNote.note)
+    setApprovalNoteMissing(undefined)
+    setApprovalFilled((count) => count + 1)
+    announce(filledNote.message)
   }
 
   const startDraft = () => {
@@ -723,7 +756,12 @@ function SpecEditor({
           <HelpResults
             level={4}
             modes={reviewModes}
-            renderers={decisionRenderers(null, controls.redraft ? putFindingsInNote : undefined, 4)}
+            renderers={decisionRenderers(
+              null,
+              controls.redraft ? putFindingsInNote : undefined,
+              4,
+              canEdit && !open && buttons.approve ? putFindingsInApprovalNote : undefined,
+            )}
           />
         </section>
       )}
@@ -750,56 +788,82 @@ function SpecEditor({
           <Button onClick={() => leaveEditor(false)}>Discard changes</Button>
         </div>
       ) : canEdit ? (
-        <div className="actions" key="view">
-          {buttons.edit && (
-            <Button ref={focusOn('edit')} onClick={openEditor}>
-              Edit
-            </Button>
-          )}
-          {buttons.writeSpec && (
-            <Button ref={focusOn('write')} onClick={openEditor}>
-              Write spec
-            </Button>
+        <>
+          {(buttons.edit || buttons.writeSpec) && (
+            <div className="actions" key="edit">
+              {buttons.edit && (
+                <Button ref={focusOn('edit')} onClick={openEditor}>
+                  Edit
+                </Button>
+              )}
+              {buttons.writeSpec && (
+                <Button ref={focusOn('write')} onClick={openEditor}>
+                  Write spec
+                </Button>
+              )}
+            </div>
           )}
           {buttons.approve && (
-            <Button
-              variant="primary"
-              busy={approve.isPending}
-              disabled={!canApprove || rephrasing}
-              aria-describedby={rephrasing ? waitId : canApprove ? undefined : approveId}
-              onClick={() => shown && approve.mutate(shown.id)}
+            <Field
+              label="Note for the planner"
+              hint="The planner reads this with the approved spec. It does not change the spec."
+              error={approvalNoteMissing}
             >
-              Approve
-            </Button>
+              <Textarea
+                ref={approvalNoteField}
+                rows={3}
+                value={approvalNote}
+                onChange={(e) => {
+                  setApprovalNote(e.target.value)
+                  if (approvalNoteMissing !== undefined) setApprovalNoteMissing(undefined)
+                }}
+              />
+            </Field>
           )}
-          {inReview && buttons.approve && (
-            <HelpButtons modes={reviewModes} onAsk={(mode) => askReview.mutate(mode)} />
-          )}
-          {buttons.draftSpec && (
-            <Button
-              busy={draftSpec.isPending}
-              disabled={changed || rephrasing}
-              aria-describedby={rephrasing ? waitId : changed ? lockId : undefined}
-              onClick={startDraft}
-            >
-              Draft spec
-            </Button>
-          )}
-          {buttons.draftSpec && changed && (
-            <span id={lockId} className="muted">
-              {DRAFT_LOCK}
-            </span>
-          )}
-          {buttons.approve && !canApprove && !rephrasing && (
-            <span id={approveId} className="muted">
-              Approve needs the latest version saved, linting clean, with no open questions.
-            </span>
-          )}
-        </div>
+          <div className="actions" key="view">
+            {buttons.approve && (
+              <Button
+                variant="primary"
+                busy={approve.isPending}
+                disabled={!canApprove || rephrasing}
+                aria-describedby={rephrasing ? waitId : canApprove ? undefined : approveId}
+                onClick={() => shown && approve.mutate(shown.id)}
+              >
+                Approve
+              </Button>
+            )}
+            {inReview && buttons.approve && (
+              <HelpButtons modes={reviewModes} onAsk={(mode) => askReview.mutate(mode)} />
+            )}
+            {buttons.draftSpec && (
+              <Button
+                busy={draftSpec.isPending}
+                disabled={changed || rephrasing}
+                aria-describedby={rephrasing ? waitId : changed ? lockId : undefined}
+                onClick={startDraft}
+              >
+                Draft spec
+              </Button>
+            )}
+            {buttons.draftSpec && changed && (
+              <span id={lockId} className="muted">
+                {DRAFT_LOCK}
+              </span>
+            )}
+            {buttons.approve && !canApprove && !rephrasing && (
+              <span id={approveId} className="muted">
+                Approve needs the latest version saved, linting clean, with no open questions.
+              </span>
+            )}
+          </div>
+        </>
       ) : (
         shown?.status === 'approved' && (
           <p className="muted">Approved v{shown.version}; frozen for its runs.</p>
         )
+      )}
+      {shown?.status === 'approved' && typeof shown.approval_note === 'string' && (
+        <p className="muted approval-note">Note for the planner: {shown.approval_note}</p>
       )}
       {controls.redraft && (
         <form className="redraft" onSubmit={submitRedraft}>

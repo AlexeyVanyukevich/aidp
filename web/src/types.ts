@@ -262,6 +262,8 @@ export interface SpecView {
   body_md: string
   status: 'draft' | 'approved' | 'superseded'
   approved_at: string | null
+  /** The owner's note for the planner, given when this version was approved. */
+  approval_note: string | null
   lint: {
     requirements: string[]
     criteria: { id: string; requirements: string[]; text: string }[]

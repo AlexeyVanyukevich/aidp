@@ -137,8 +137,12 @@ export const api = {
   specs: (taskId: string) => request<SpecView[]>('GET', `/api/tasks/${taskId}/specs`),
   saveSpec: (taskId: string, body_md: string) =>
     request<SpecView>('POST', `/api/tasks/${taskId}/specs`, { body_md }),
-  approve: (specId: string) =>
-    request<{ spec: SpecView; run_id: string }>('POST', `/api/specs/${specId}/approve`),
+  approve: (specId: string, note?: string) =>
+    request<{ spec: SpecView; run_id: string }>(
+      'POST',
+      `/api/specs/${specId}/approve`,
+      note === undefined ? undefined : { note },
+    ),
   runs: (taskId: string) => request<RunView[]>('GET', `/api/tasks/${taskId}/runs`),
   approvals: (taskId: string) => request<ApprovalView[]>('GET', `/api/tasks/${taskId}/approvals`),
   openApprovals: () => request<OpenApproval[]>('GET', '/api/approvals?status=open'),
