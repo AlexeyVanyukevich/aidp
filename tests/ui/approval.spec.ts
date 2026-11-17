@@ -522,6 +522,91 @@ test('Use this answer with words at a plan gate unchecks Approve plan and clears
   await expect(changes).not.toHaveAttribute('aria-invalid', 'true')
 })
 
+/** A Review plan result with a blocker that offers choices and a point for the next gate. */
+const PLAN_REVIEW = {
+  mode: 'review_plan',
+  verdict: 'changes',
+  blockers: 1,
+  findings: [
+    {
+      kind: 'uncovered',
+      where: 'AC2',
+      text: 'No step meets AC2',
+      destination: 'blocker',
+      evidence: 'AC2',
+      choices: ['Add a step for AC2', 'Withdraw AC2'],
+      recommended: 0,
+    },
+    {
+      kind: 'risk',
+      where: 'Step 2',
+      text: 'The dead-letter path has no test',
+      destination: 'next_gate',
+      evidence: 'not checked',
+    },
+  ],
+  unsure: 'Whether AC2 is still wanted.',
+}
+
+test('Use these findings of a plan review fills the words, unchecks Approve plan and sends nothing', async ({
+  page,
+  request,
+}) => {
+  const panel = await openApprovals(page, request, 'Review plan findings', [PLAN_REQUEST])
+  const view = {
+    id: '00000000-0000-4000-8000-0000000000a2',
+    approval_id: PLAN_REQUEST.id,
+    decision: 'question',
+    subject: null,
+    question_index: null,
+    mode: 'review_plan',
+    status: 'succeeded',
+    result: PLAN_REVIEW,
+    reason: null,
+    created_at: '2026-11-17T10:00:00Z',
+  }
+  await page.route('**/api/approvals/*/helps', (route) => route.fulfill({ json: view }))
+  await page.route('**/api/tasks/*/helps', (route) => route.fulfill({ json: [view] }))
+  const approve = panel.getByRole('radio', { name: 'Approve plan' })
+  const changes = panel.getByRole('textbox', { name: 'Changes to ask for' })
+  const use = panel.getByRole('button', { name: 'Use these findings' })
+  const group = (n: number) =>
+    panel.getByRole('radiogroup', { name: `What to do with finding ${n}` })
+  await panel.getByRole('button', { name: 'Review plan' }).click()
+  await expect(panel.getByText('Changes needed: 1 blocker')).toBeVisible()
+  await expect(panel.getByText('Goes into the words with the blockers')).toBeVisible()
+  await approve.check()
+
+  const sent: string[] = []
+  page.on('request', (req) => {
+    if (req.url().includes('/api/') && req.method() !== 'GET') sent.push(req.url())
+  })
+  await group(1).getByRole('radio', { name: 'Add a step for AC2 (recommended)' }).check()
+  await use.click()
+  const words = [
+    '- blocker, uncovered (AC2): No step meets AC2',
+    '  Decision: Add a step for AC2',
+    '- next gate, risk (Step 2): The dead-letter path has no test',
+  ].join('\n')
+  await expect(changes).toHaveValue(words)
+  await expect(approve).not.toBeChecked()
+  // AC24: focus goes to the words, the caret at their end.
+  await expect(changes).toBeFocused()
+  expect(await changes.evaluate((el: HTMLTextAreaElement) => el.selectionStart)).toBe(words.length)
+  await expect(
+    page.getByRole('status').filter({ hasText: 'Findings put in the words.' }),
+  ).toBeVisible()
+  expect(sent).toEqual([])
+  await expectAccessible(page)
+
+  // A blocker left out is not in the words.
+  await changes.fill('')
+  await group(1).getByRole('radio', { name: 'Leave out' }).check()
+  await use.click()
+  await expect(changes).toHaveValue('- next gate, risk (Step 2): The dead-letter path has no test')
+  expect(sent).toEqual([])
+})
+
 test('after Clear choice, words ask the planner for a second plan', async ({ page, request }) => {
   const key = await approvedTask(request, ask(), 'Clear choice at the plan gate')
   await page.goto(appUrl('/p/ASK'))
