@@ -127,8 +127,11 @@ export const api = {
   discardSuggestion: (id: string) =>
     request<TaskView>('POST', `/api/tasks/${id}/suggestion/discard`),
   /** Re-run a Failed card: keep the accepted plan, or plan again. */
-  rerun: (id: string, plan: 'keep' | 'again') =>
-    request<TaskView>('POST', `/api/tasks/${id}/actions/rerun`, { plan }),
+  rerun: (id: string, plan: 'keep' | 'again', note?: string) =>
+    request<TaskView>('POST', `/api/tasks/${id}/actions/rerun`, {
+      plan,
+      ...(note === undefined || note.trim() === '' ? {} : { note }),
+    }),
   redraft: (id: string, note: string) =>
     request<TaskView>('POST', `/api/tasks/${id}/actions/redraft`, { note }),
   specs: (taskId: string) => request<SpecView[]>('GET', `/api/tasks/${taskId}/specs`),
@@ -147,6 +150,9 @@ export const api = {
       mode,
       ...(questionIndex === null ? {} : { question_index: questionIndex }),
     }),
+  /** Review plan: the third help of a plan request. */
+  reviewPlan: (approvalId: string) =>
+    request<HelpView>('POST', `/api/approvals/${approvalId}/helps`, { mode: 'review_plan' }),
   proposals: (taskId: string) => request<ProposalView[]>('GET', `/api/tasks/${taskId}/proposals`),
   settleProposal: (taskId: string, proposalId: string, variant: ProposalOutcome) =>
     request<ProposalView>('POST', `/api/tasks/${taskId}/proposals/${proposalId}/settle`, {

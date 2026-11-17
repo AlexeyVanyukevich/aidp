@@ -12,6 +12,7 @@ import {
   fillNoteFromReview,
   NO_HELP,
   type FindingPick,
+  type PlanReviewResult,
   type ReviewResult,
 } from './approvals'
 import { decisionMode, decisionRenderers, HelpButtons, HelpResults } from './HelpPanel'
@@ -459,13 +460,13 @@ function SpecEditor({
   })
 
   /** Findings go after the words already in the note; nothing is sent. */
-  const putFindingsInNote = (result: ReviewResult, picks: FindingPick[]) => {
+  const putFindingsInNote = (result: ReviewResult | PlanReviewResult, picks: FindingPick[]) => {
     const next = fillNoteFromReview(note, result, picks)
     setNote(next)
     setNoteMissing(undefined)
     setFilled((count) => count + 1)
     announce(
-      picks.length === result.findings.length && picks.every((pick) => pick === 'out')
+      next === note
         ? 'Every finding is left out; What to change is unchanged.'
         : 'Findings put in What to change.',
     )
@@ -722,7 +723,7 @@ function SpecEditor({
           <HelpResults
             level={4}
             modes={reviewModes}
-            renderers={decisionRenderers(null, controls.redraft ? putFindingsInNote : undefined)}
+            renderers={decisionRenderers(null, controls.redraft ? putFindingsInNote : undefined, 4)}
           />
         </section>
       )}
