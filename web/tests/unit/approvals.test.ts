@@ -17,6 +17,7 @@ import {
   unanswered,
   applySuggestion,
   fillNoteFromReview,
+  fillApprovalNote,
   fillRerunNote,
   defaultRerunPicks,
   type PrReviewResult,
@@ -929,5 +930,42 @@ describe('fillRerunNote', () => {
     expect(
       defaultRerunPicks(review(null, finding('blocker', 'a'), finding('outside', 'b'))),
     ).toEqual(['in', 'out'])
+  })
+})
+
+describe('fillApprovalNote', () => {
+  const ready = (findings: ReviewResult['findings']): ReviewResult => ({
+    mode: 'review',
+    verdict: 'ready',
+    blockers: 0,
+    findings,
+    unsure: 'u',
+  })
+  const next: ReviewResult['findings'][number] = {
+    kind: 'risk',
+    where: 'Context',
+    text: 'Name the clock',
+    destination: 'next_gate',
+    evidence: 'Context',
+  }
+  const cases: { name: string; note: string; picks: FindingPick[]; text: string; said: string }[] =
+    [
+      {
+        name: 'words already there',
+        note: 'Keep it small.',
+        picks: ['written'],
+        text: 'Keep it small.\n\n- next gate, risk (Context): Name the clock',
+        said: 'Findings put in Note for the planner.',
+      },
+      {
+        name: 'a finding left out',
+        note: 'Keep it small.',
+        picks: ['out'],
+        text: 'Keep it small.',
+        said: 'Every finding is left out; Note for the planner is unchanged.',
+      },
+    ]
+  it.each(cases)('fills $name', ({ note, picks, text, said }) => {
+    expect(fillApprovalNote(note, ready([next]), picks)).toEqual({ note: text, message: said })
   })
 })

@@ -250,3 +250,180 @@ test('a draft locks the version select and Redraft, and keeps the note typed', a
   await expect(version).toBeEnabled()
   await expect(note).toHaveValue('fix R2 and R3')
 })
+
+// The note for the planner: typed beside Approve, sent with it, and filled from Review spec.
+const NOTE_FIELD = 'Note for the planner'
+const nextGate = (text: string, choices?: string[]) => ({
+  kind: 'risk',
+  where: 'Context',
+  text,
+  destination: 'next_gate',
+  evidence: 'Context',
+  ...(choices === undefined ? {} : { choices, recommended: 0 }),
+})
+const outsideFinding = {
+  kind: 'risk',
+  text: '**Where:** a\n**Found:** b\n**Problem:** c\n**Impact:** d',
+  title: 'Elsewhere',
+  destination: 'outside',
+  evidence: 'a.ts:1',
+}
+
+/** Serves a ready Review spec result for the task, whatever the board holds. */
+async function serveReview(page: Page, taskId: string, findings: object[]) {
+  await page.route(`**/api/tasks/${taskId}/helps`, (route) =>
+    route.fulfill({
+      json: [
+        {
+          id: '00000000-0000-4000-8000-0000000000a1',
+          approval_id: null,
+          decision: 'spec_review',
+          subject: { spec_version: 1 },
+          question_index: null,
+          mode: 'review',
+          status: 'succeeded',
+          result: { mode: 'review', verdict: 'ready', blockers: 0, findings, unsure: 'u' },
+          reason: null,
+          created_at: '2026-11-17T10:00:00Z',
+        },
+      ],
+    }),
+  )
+}
+
+test('Use these findings fills the note for the planner, from a ready review, and sends nothing', async ({
+  page,
+  request,
+}) => {
+  const task = await newTask(request, 'Fill the approval note', SPEC)
+  await serveReview(page, task.id, [
+    nextGate('Name the clock', ['Use the fake clock', 'Use the real clock']),
+    nextGate('Say how long'),
+    outsideFinding,
+  ])
+  const { spec } = await openSpec(page, task.key, 'Fill the approval note')
+  const note = spec.getByRole('textbox', { name: NOTE_FIELD })
+  const redraft = spec.getByRole('textbox', { name: 'What to change' })
+  const use = spec.getByRole('button', { name: 'Use these findings' })
+  await note.fill('Keep it small.')
+  await redraft.fill('unchanged')
+  const requests: string[] = []
+  page.on('request', (req) => {
+    if (req.url().includes('/api/') && req.method() !== 'GET') requests.push(req.url())
+  })
+
+  await expect(
+    spec.getByRole('heading', { level: 5, name: 'Goes into the approval note' }),
+  ).toBeVisible()
+  await expect(spec.locator('pre')).toHaveCount(0)
+  const group = (n: number) =>
+    spec.getByRole('radiogroup', { name: `What to do with finding ${n}` })
+  await group(1).getByRole('radio', { name: 'Use the real clock' }).click()
+  await group(2).getByText('Leave out').click()
+  await expect(spec.getByRole('radiogroup', { name: 'What to do with finding 3' })).toHaveCount(0)
+  await use.click()
+  await expect(note).toHaveValue(
+    'Keep it small.\n\n- next gate, risk (Context): Name the clock\n  Decision: Use the real clock',
+  )
+  await expect(redraft).toHaveValue('unchanged')
+  await expect(note).toBeFocused()
+  expect(
+    await note.evaluate((el: HTMLTextAreaElement) => el.selectionStart === el.value.length),
+  ).toBe(true)
+  await expect(spec.getByRole('status').first()).toHaveText('Findings put in Note for the planner.')
+  expect(requests).toEqual([])
+  await expectAccessible(page)
+})
+
+test('a ready review with only outside findings offers no Use these findings', async ({
+  page,
+  request,
+}) => {
+  const task = await newTask(request, 'Outside only', SPEC)
+  await serveReview(page, task.id, [outsideFinding])
+  const { spec } = await openSpec(page, task.key, 'Outside only')
+  await expect(spec.getByRole('heading', { level: 5, name: 'Outside the task' })).toBeVisible()
+  await expect(spec.getByRole('button', { name: 'Use these findings' })).toHaveCount(0)
+})
+
+test('Approve sends the note for the planner, comes right after it, and an empty note sends no body', async ({
+  page,
+  request,
+}) => {
+  const task = await newTask(request, 'Approve with a note', SPEC)
+  const { spec } = await openSpec(page, task.key, 'Approve with a note')
+  const note = spec.getByRole('textbox', { name: NOTE_FIELD })
+  const approve = spec.getByRole('button', { name: 'Approve' })
+  await expect(note).toHaveAccessibleDescription(
+    'The planner reads this with the approved spec. It does not change the spec.',
+  )
+  // The field is the control right before Approve in the tab order.
+  await note.focus()
+  await page.keyboard.press('Tab')
+  await expect(approve).toBeFocused()
+
+  const posts: (string | null)[] = []
+  await page.route('**/api/specs/*/approve', async (route) => {
+    posts.push(route.request().postData())
+    await route.fulfill({ status: 500, json: { error: 'internal_error', message: 'no' } })
+  })
+  await note.fill('avoid the fake clock')
+  await approve.click()
+  await expect.poll(() => posts.length).toBe(1)
+  expect(JSON.parse(posts[0] ?? 'null')).toEqual({ note: 'avoid the fake clock' })
+  await note.fill('')
+  await approve.click()
+  await expect.poll(() => posts.length).toBe(2)
+  expect(posts[1]).toBeNull()
+})
+
+test('a refusal naming the note is shown on the field, which holds focus, and announced', async ({
+  page,
+  request,
+}) => {
+  const task = await newTask(request, 'Refuse the note', SPEC)
+  const { spec } = await openSpec(page, task.key, 'Refuse the note')
+  await page.route('**/api/specs/*/approve', (route) =>
+    route.fulfill({
+      status: 400,
+      json: { error: 'validation_error', message: 'bad', details: { field: 'note' } },
+    }),
+  )
+  const note = spec.getByRole('textbox', { name: NOTE_FIELD })
+  await note.fill('x'.repeat(10))
+  await spec.getByRole('button', { name: 'Approve' }).click()
+  await expect(note).toHaveAttribute('aria-invalid', 'true')
+  await expect(note).toBeFocused()
+  await expect(spec.getByRole('status').first()).toHaveText(
+    'The note is longer than 4,000 characters.',
+  )
+  await expectAccessible(page)
+})
+
+test('an approved version shows its note for the planner, and one without a note shows none', async ({
+  page,
+  request,
+}) => {
+  const withNote = await newTask(request, 'Approved with a note', SPEC)
+  const specs = (await (await request.get(appUrl(`/api/tasks/${withNote.id}/specs`))).json()) as {
+    id: string
+  }[]
+  // Two lines, as Use these findings writes them: the break must survive on the page.
+  const lines = 'avoid the fake clock\n- next gate, risk (Context): Name the clock'
+  await request.post(appUrl(`/api/specs/${specs[0]!.id}/approve`), { data: { note: lines } })
+  const { spec } = await openSpec(page, withNote.key, 'Approved with a note')
+  const shownNote = spec.getByText('Note for the planner: avoid the fake clock')
+  await expect(shownNote).toBeVisible()
+  expect(await shownNote.evaluate((el) => (el as HTMLElement).innerText)).toBe(
+    `Note for the planner: ${lines}`,
+  )
+
+  const without = await newTask(request, 'Approved without a note', SPEC)
+  const others = (await (await request.get(appUrl(`/api/tasks/${without.id}/specs`))).json()) as {
+    id: string
+  }[]
+  await request.post(appUrl(`/api/specs/${others[0]!.id}/approve`))
+  const { spec: bare } = await openSpec(page, without.key, 'Approved without a note')
+  await expect(bare.getByText('Approved v1; frozen for its runs.')).toBeVisible()
+  await expect(bare.getByText('Note for the planner:')).toHaveCount(0)
+})

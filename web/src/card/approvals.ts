@@ -425,6 +425,20 @@ export function fillNoteFromReview(
   return words === '' ? lines.join('\n') : `${words}\n\n${lines.join('\n')}`
 }
 
+/** The announcements of Use these findings at the spec gate, where the words go to the planner. */
+const APPROVAL_NOTE_FILLED = 'Findings put in Note for the planner.'
+const APPROVAL_NOTE_UNCHANGED = 'Every finding is left out; Note for the planner is unchanged.'
+
+/** The approval note after Use these findings, and what to announce; nothing is sent. */
+export function fillApprovalNote(
+  note: string,
+  result: GateReviewResult,
+  picks: readonly FindingPick[] = [],
+): { note: string; message: string } {
+  const next = fillNoteFromReview(note, result, picks)
+  return { note: next, message: next === note ? APPROVAL_NOTE_UNCHANGED : APPROVAL_NOTE_FILLED }
+}
+
 /** What the owner chose for a finding of the pull request review: put it in the note, or not. */
 export type RerunPick = 'in' | 'out'
 

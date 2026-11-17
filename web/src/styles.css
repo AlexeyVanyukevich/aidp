@@ -24,6 +24,10 @@ body {
 .muted {
   color: var(--zl-ink-soft);
 }
+/* A note filled by Use these findings is one line per finding: keep its breaks. */
+.approval-note {
+  white-space: pre-wrap;
+}
 .projects {
   list-style: none;
   padding: 0;

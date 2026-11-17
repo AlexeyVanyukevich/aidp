@@ -662,15 +662,39 @@ describe('the shared review shape on the card (AC5, AC8, AC13, AC15)', () => {
 
   it.each([
     ['review', true, 'Goes into the note with the blockers'],
-    ['review', false, 'Edits to make before approving'],
+    ['review', false, 'Goes into the approval note'],
     ['review_plan', true, 'Goes into the words with the blockers'],
     ['review_plan', false, 'Waits for the pull request gate'],
   ] as const)('%s with a blocker %s heads its next-gate group "%s"', (mode, blocker, heading) => {
     expect(html(mixed(mode, blocker))).toContain(`<h4>${heading}</h4>`)
   })
 
-  it('shows a ready spec review’s edit in a pre block, as written', () => {
-    expect(html(mixed('review', false))).toContain('<pre>Say which retry.</pre>')
+  it('renders a stored spec review that holds an edit without it, and with no pre block', () => {
+    for (const blocker of [false, true]) {
+      const out = html(mixed('review', blocker))
+      expect(out).not.toContain('<pre')
+      expect(out).not.toContain('Say which retry.')
+    }
+    expect(html(mixed('review', false))).toContain('<h4>Goes into the approval note</h4>')
+    expect(html(mixed('review', true))).toContain('<h4>Goes into the note with the blockers</h4>')
+  })
+
+  it('offers Use these findings on a ready spec review only with the approval-note handler', () => {
+    const ready = mixed('review', false)
+    const renderers = decisionRenderers(null, undefined, 3, () => undefined)
+    const out = renderToStaticMarkup(<>{renderers.review?.(ready as never)}</>)
+    expect(out).toContain('Use these findings')
+    expect(out).toContain('What to do with finding 1')
+    expect(html(ready)).not.toContain('Use these findings')
+    const outside = renderToStaticMarkup(
+      <>
+        {renderers.review?.({
+          ...ready,
+          findings: [(ready as never as { findings: unknown[] }).findings[1]],
+        } as never)}
+      </>,
+    )
+    expect(outside).not.toContain('Use these findings')
   })
 
   it('offers Use these findings only with a blocker, and none on a ready plan review', () => {

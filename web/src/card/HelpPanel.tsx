@@ -303,7 +303,7 @@ export const NEXT_STEP_LABEL: Record<NextStep, string> = {
 /** The heading of the next-gate group: it depends on the gate and on whether a blocker stands. */
 export function nextGateHeading(gate: Gate, hasBlocker: boolean): string {
   if (gate === 'spec')
-    return hasBlocker ? 'Goes into the note with the blockers' : 'Edits to make before approving'
+    return hasBlocker ? 'Goes into the note with the blockers' : 'Goes into the approval note'
   return hasBlocker ? 'Goes into the words with the blockers' : 'Waits for the pull request gate'
 }
 
@@ -319,16 +319,24 @@ function ReviewView({
   gate,
   level,
   onUseFindings,
+  onUseInNote,
 }: {
   result: AnyReview
   gate: Gate
   level: 3 | 4 | 5
   onUseFindings:
     ((result: ReviewResult | PlanReviewResult, picks: FindingPick[]) => void) | undefined
+  /** The spec gate's, for a result with no blocker: the next-gate findings go to the approval note. */
+  onUseInNote?: ((result: ReviewResult, picks: FindingPick[]) => void) | undefined
 }) {
   const [picks, setPicks] = useState<FindingPick[]>(() => result.findings.map(() => 'written'))
+  const toNote =
+    onUseInNote !== undefined &&
+    result.mode === 'review' &&
+    result.blockers === 0 &&
+    result.findings.some((finding) => finding.destination === 'next_gate')
   const picking =
-    onUseFindings !== undefined && result.blockers > 0 && result.mode !== 'code_review'
+    toNote || (onUseFindings !== undefined && result.blockers > 0 && result.mode !== 'code_review')
   const Heading = `h${level + 1}` as 'h4' | 'h5' | 'h6'
   const entries = result.findings.map((finding, index) => ({ finding, index }))
   const inGroup = (destination: AnyFinding['destination']) =>
@@ -338,7 +346,6 @@ function ReviewView({
     const choices = finding.choices ?? []
     const where = 'where' in finding && finding.where !== undefined ? ` (${finding.where})` : ''
     const controls = picking && finding.destination !== 'outside'
-    const edit = 'edit' in finding ? finding.edit : undefined
     return (
       <li key={index}>
         {finding.destination === 'outside' && finding.title !== undefined && (
@@ -360,7 +367,6 @@ function ReviewView({
         {!controls && choices.length > 0 && (
           <> Choices: {choicesLabel(choices, finding.recommended)}</>
         )}
-        {edit !== undefined && result.blockers === 0 && <pre>{edit}</pre>}
         {controls && (
           <RadioGroup
             label={`What to do with finding ${index + 1}`}
@@ -416,7 +422,14 @@ function ReviewView({
         </>
       )}
       {picking && (
-        <Button type="button" onClick={() => onUseFindings(result, picks)}>
+        <Button
+          type="button"
+          onClick={() =>
+            onUseInNote !== undefined && toNote && result.mode === 'review'
+              ? onUseInNote(result, picks)
+              : onUseFindings?.(result, picks)
+          }
+        >
           Use these findings
         </Button>
       )}
@@ -433,10 +446,17 @@ export function decisionRenderers(
   checkedVersion: number | null,
   onUseFindings?: (result: ReviewResult | PlanReviewResult, picks: FindingPick[]) => void,
   level: 3 | 4 | 5 = 3,
+  onUseInNote?: (result: ReviewResult, picks: FindingPick[]) => void,
 ): Renderers {
   return {
     review: (result) => (
-      <ReviewView result={result} gate="spec" level={level} onUseFindings={onUseFindings} />
+      <ReviewView
+        result={result}
+        gate="spec"
+        level={level}
+        onUseFindings={onUseFindings}
+        onUseInNote={onUseInNote}
+      />
     ),
     review_plan: (result) => (
       <ReviewView result={result} gate="plan" level={level} onUseFindings={onUseFindings} />

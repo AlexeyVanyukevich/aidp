@@ -78,8 +78,10 @@ test('Review spec and Explain simply give results under their headings, announce
   const use = spec.getByRole('button', { name: 'Use these findings' })
   const buttonsBefore = await buttonStates(card)
 
-  // Focus order: Edit, Approve, Review spec, Explain simply.
+  // Focus order: Edit, Note for the planner, Approve, Review spec, Explain simply.
   await tabTo(page, spec.getByRole('button', { name: 'Edit' }))
+  await page.keyboard.press('Tab')
+  await expect(spec.getByRole('textbox', { name: 'Note for the planner' })).toBeFocused()
   await page.keyboard.press('Tab')
   await expect(approve).toBeFocused()
   await page.keyboard.press('Tab')
