@@ -23,6 +23,7 @@ Backlog → (Draft spec, or the owner saves a spec) → Spec draft → Spec revi
   **Redraft**, which needs a note. Spec draft → Spec review when the spec run ends having saved a
   version. A spec run that fails, saves nothing or is cancelled sends its card back where it came
   from: Spec review if the task has a version, Backlog if not.
+- Spec review → Ready on **Approve**, which takes an optional note for the planner (below).
 - Running or Spec draft → Needs approval when an agent asks, or the plan gate stops a plan its
   planner was not confident of; Needs approval → Running, or Spec draft for a spec run, when the
   owner answers.
@@ -32,6 +33,24 @@ Backlog → (Draft spec, or the owner saves a spec) → Spec draft → Spec revi
 - Running → Failed when a phase fails, a failed Verify ends the run (attempt 3, or 4 after a runner-started Build), or the owner cancels; Ready,
   Needs approval and Blocked → Failed on Cancel of a delivery run. Failed → Ready on Re-run,
   which has two choices (below).
+
+**Approve's note.** `POST /api/specs/:id/approve` takes an optional body `{ note }`, a string of at
+most 4,000 characters, checked by hand against a TypeBox schema with `additionalProperties:
+false`, so a missing body is valid. An unknown field or a longer note answers `400
+validation_error` naming the field. The note is stored trimmed in the nullable column
+`specs.approval_note` of the approved version (migration 016); a note blank after trimming is
+stored as null, and no other version changes. `SpecView` carries `approval_note` for every
+version. Every delivery run of that version gets the note, a Re-run that plans again included: the
+claim's `spec` holds `approval_note` beside `version`, `body_md` and `criteria`. It reaches two
+readers only. The Plan handoff carries a non-null note in one escaped `<approval_note>` element
+(beside `<rerun_note>` on a Re-run that plans again), and the planner's prompt says it is the
+owner's points for planning: the plan keeps each or names it and says why the spec or the code
+rules it out; it is not a criterion, never overrides the spec, and loses to a conflicting plan-gate
+answer. For a `review_plan` help `get_question` also returns `approval_note` (the note on the spec
+version the asking run works to, or null), and the helper raises a dropped or partly taken point
+as a blocker quoting it. No Build or Verify handoff carries it, and `get_spec` never returns it.
+The Spec tab shows an optional field "Note for the planner" immediately before Approve, and "Note
+for the planner:" with the note wherever it shows an approved version that has one.
 
 Every move runs in a transaction: `moveTask` takes only a `Transaction`, locks the task row with
 `for update` before it checks the move is legal, and holds the lock to the commit, so a move that
@@ -891,8 +910,8 @@ agent can settle without a decision) or `outside` (it belongs to another task), 
 refuses a `verdict` as `not_allowed`; the board stores `verdict` (`ready` with no blocker,
 otherwise `changes`) and `blockers`. An `outside` finding has a `title` of 1 to 200 characters and
 a `text` in the labels Where, Found, Problem and Impact (the labels `propose_task` checks); no
-other destination takes a `title`. A Review spec `next_gate` finding has a `where` and an `edit`
-of up to 4,000 characters, the text to paste into the spec; `edit` is refused anywhere else.
+other destination takes a `title`. A Review spec `next_gate` finding has a `where`; `edit` is refused on every finding, in every
+mode, as `not_allowed` (a result stored before this holds one and still renders, without it).
 `code_review` refuses `next_gate`, as no gate follows the pull request. On the card a result opens
 with "Ready" or "Changes needed: N blocker(s)", then Blockers, the next-gate group and Outside the
 task, each under its own heading and each finding with its evidence; an outside finding is listed
@@ -916,14 +935,17 @@ with `Decision:` and `Open choice, ask me:` lines under a finding with choices) 
 field, clears Approve plan, and sends nothing; it is offered only when a blocker stands.
 
 **Where a next-gate point goes.** At the spec gate with a blocker it joins the Redraft note; with
-no blocker it is shown as an edit in a `pre` block to paste before approving. At the plan gate
+no blocker it goes into the Note for the planner (the "Goes into the approval note" group), which
+the planner and the Review plan helper read; the result offers Use these findings and the same
+picks as with a blocker, and the lines fill that field, after any words already there, with focus
+moving to it and "Findings put in Note for the planner." announced. A result with only outside
+findings offers no control. At the plan gate
 with a blocker it joins the words; with no blocker it waits for the pull request gate, where
 `get_decision` hands the `code_review` helper `plan_review_points`: the next-gate findings, with
 kind, where, text and evidence, of the newest succeeded plan review (retired or not) on the pull
 request run's newest `plan` request answered with Approve plan, and none for a high-confidence
 plan or a plan kept by a Re-run. The helper raises a point the pull request leaves unsettled as a
-blocker or an outside finding. Approve spec and Approve plan take no note, so nothing else carries
-a point forward.
+blocker or an outside finding. Approve plan takes no note, so nothing else carries a point forward.
 
 **`next_step`.** A `code_review` also saves `next_step` (`merge`, `merge_and_file`,
 `fix_by_hand`, `rerun_keep`, `rerun_again`) and `reasoning`. `merge_and_file` is refused with a
@@ -1712,28 +1734,37 @@ through the same announcer as the other writes, so a message equal to the last i
 When a whole-batch help ends, the region says, once, "Suggested answers ready for all <n>
 questions" or "No suggestions for the batch: <reason>", whichever tab is showing.
 
-Decision helps add buttons. In Spec review the Spec tab's action row reads Edit, Approve, Review
-spec, Explain simply, then the Redraft note field and Redraft; Approve and Redraft are enabled and
-disabled as without help. The results sit in a section under an `h3` "Help with v<n>", after the
-Lint section and before the tab's status region, each under an `h4` ("Spec review of v<n>": Nothing
-to change or the findings, then Unsure about, then, when the verdict is changes and the Redraft
-form is shown, the button Use these findings; "v<n> in plain words": What changes, What it
-requires, What it leaves out), with a failure line "No spec review for v<n>: <reason>". Use these
-findings puts one line per finding, `- <kind> (<where>): <text>` or `- <kind>: <text>` without a
-where, into What to change: alone when the field is blank, else after the words already there and
-a blank line. A second press adds the lines again. Unsure about stays out. When the Redraft form is
-shown, each finding also holds a radio group "What to do with finding <n>": "Use as written"
-(checked first), the finding's own choices in their saved order with " (recommended)" on the
-helper's pick, then "Leave out"; no choice is checked by default. The picks are held in the page
-only and reset to "Use as written" when a different review result is shown. A picked choice adds
-the line `  Decision: <choice>` (the choice alone, without the mark) under its finding; a finding
-with choices left "Use as written" adds `  Open choice, ask me: A (recommended); or B`, the
-choices in order with "or" before the last; a finding left out adds nothing. Without the form a
-finding with choices shows "Choices: A; B (recommended)" as text. It sends nothing and changes no
-decision button; focus moves to the field with the caret at its end, any error on the field is
-cleared, and "Findings put in What to change." is announced in the tab's status region on every
-press, repeated ones included. When every finding is left out the note stays as it was, and
-"Every finding is left out; What to change is unchanged." is announced instead. The card's action bar reads Move up, Move down, Mark done,
+Decision helps add buttons. In Spec review the Spec tab shows Edit, then the field "Note for the
+planner", then a row reading Approve, Review spec, Explain simply, then the Redraft note field and
+Redraft; Approve and Redraft are enabled and disabled as without help. The results sit in a section
+under an `h3` "Help with v<n>", after the Lint section and before the tab's status region, each
+under an `h4` ("Spec review of v<n>": Nothing to change or the findings, then Unsure about, then
+the button Use these findings when the result offers it; "v<n> in plain words": What changes, What
+it requires, What it leaves out), with a failure line "No spec review for v<n>: <reason>".
+
+Use these findings is offered in two cases, and fills a different field in each. With a blocker,
+while the Redraft form is shown, it fills What to change. On a result with no blocker and at least
+one next-gate finding, while Approve is shown, it fills Note for the planner. A result with only
+outside findings offers no control. It puts one line per blocker and next-gate finding,
+`- <destination>, <kind> (<where>): <text>` (`blocker` or `next gate`, and no ` (<where>)` without
+a where), into the field: alone when the field is blank, else after the words already there and a
+blank line. Outside findings and Unsure about stay out. A second press adds the lines again.
+Wherever it is offered, each blocker and next-gate finding also holds a radio group "What to do
+with finding <n>": "Use as written" (checked first), the finding's own choices in their saved order
+with " (recommended)" on the helper's pick, then "Leave out"; no choice is checked by default. The
+picks are held in the page only and reset to "Use as written" when a different review result is
+shown. A picked choice adds the line `  Decision: <choice>` (the choice alone, without the mark)
+under its finding; a finding with choices left "Use as written" adds
+`  Open choice, ask me: A (recommended); or B`, the choices in order with "or" before the last; a
+finding left out adds nothing. Where it is not offered, a finding with choices shows
+"Choices: A; B (recommended)" as text. It sends nothing and changes no decision button; focus moves
+to the field it filled with the caret at its end, any error on the field is cleared, and "Findings
+put in What to change." or "Findings put in Note for the planner." is announced in the tab's status
+region on every press, repeated ones included. When every finding is left out the field stays as it
+was, and "Every finding is left out; What to change is unchanged." (or "…; Note for the planner is
+unchanged.") is announced instead.
+
+The card's action bar reads Move up, Move down, Mark done,
 Check what is unfinished, Resume, Cancel run, Re-run with this plan, Re-run and plan again, Suggest
 what to do, each where it is shown. Their results ("Suggested next step", "What is unfinished") sit
 in one region after the status region and problem notice and before the Test command field, each
