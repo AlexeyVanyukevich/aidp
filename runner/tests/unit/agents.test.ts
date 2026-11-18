@@ -127,6 +127,35 @@ describe('the spec-writer', () => {
   })
 })
 
+const SPEC_WRITER_RULES: { rule: string; clause: string }[] = [
+  {
+    rule: 'a criterion’s evidence is something a run holds while Verify runs',
+    clause:
+      'A criterion’s evidence is something a run holds while Verify runs: the branch’s files and diff, the test command’s output, a command run on the branch’s tree, the build’s closing paragraph, or the board.',
+  },
+  {
+    rule: 'a base-run criterion says the builder makes and reports the run',
+    clause:
+      'A criterion that needs a run on the base’s code or the base commit says that the builder makes the run and reports it in its closing paragraph, with the criterion id, the command, the base commit, the counts and the quoted result lines.',
+  },
+  {
+    rule: 'no criterion whose Then holds only by chance',
+    clause:
+      'Never write a criterion whose Then holds only by chance, such as a flaky failure showing in some number of runs. An attempt to reproduce one is a requirement the builder reports on, with no criterion, and the criterion goes on a deterministic proof.',
+  },
+  {
+    rule: 'no criterion on the session’s review',
+    clause:
+      'Never write a criterion on the session’s review, which no run writes. Ask for the build’s closing paragraph instead.',
+  },
+]
+
+describe('the spec-writer’s rules for evidence', () => {
+  it.each(SPEC_WRITER_RULES)('says $rule', ({ clause }) => {
+    expect(AGENTS['spec-writer']!.prompt).toContain(clause)
+  })
+})
+
 const VERIFIER_TEST_RULES: { rule: string; clause: string }[] = [
   {
     rule: 'a passing command is evidence for a test in a suite it runs',
@@ -308,6 +337,46 @@ const VERIFIER_TEST_RULES: { rule: string; clause: string }[] = [
     clause:
       'A test the diff adds or changes that is written for no criterion, and has neither proof nor an accepted reason, is named in your summary and never fails a criterion',
   },
+  {
+    rule: 'a base-run criterion’s evidence is the builder’s report in the build summaries',
+    clause:
+      'Evidence for a criterion that asks for a run on the base’s code or on the base commit is the base-run report in the build summaries in <context>: the criterion’s id, the command, the base commit’s hash, the counts and the quoted output lines.',
+  },
+  {
+    rule: 'the verifier judges a base run from the report and never makes it',
+    clause:
+      'Judge such a criterion’s Then from the report’s counts and quoted lines, and never make the run yourself. A report whose counts make the Then hold passes the criterion.',
+  },
+  {
+    rule: 'a missing or incomplete base-run report fails with no base-run report',
+    clause:
+      'When no summary has the report, or the report leaves out the id, the command, the base commit, the counts or the quoted lines, the criterion fails, and its evidence starts with `no base-run report:` and says what is missing.',
+  },
+  {
+    rule: 'a criterion on the closing paragraph or the session’s review is judged from the build summaries',
+    clause:
+      'Evidence for a criterion that asks for something in the build’s closing paragraph or in “the session’s review” is the build summaries in <context>.',
+  },
+  {
+    rule: 'an unmarked criterion gets owner with not checkable in a run in two cases',
+    clause:
+      'A criterion not marked owner gets owner, with evidence that starts with `not checkable in a run:` and then the reason, in exactly two cases.',
+  },
+  {
+    rule: 'case (a) needs something no route holds, and visibly wrong work still fails',
+    clause:
+      '(a) it needs something that none of these routes holds: the branch’s files and diff, the test output, a command run on the branch’s tree, the build summaries, or the board through list_tasks and list_proposals; a criterion whose work you can see is wrong still gets fail.',
+  },
+  {
+    rule: 'case (b) needs a report showing at least the runs asked for, with counts',
+    clause:
+      '(b) its Then depends on an outcome no run can force, such as a flake showing, and a base-run report shows that the runs the criterion asks for were made, with counts at least the number it asks for.',
+  },
+  {
+    rule: 'a case (b) criterion with a missing report or fewer runs fails',
+    clause:
+      'A case (b) criterion whose report is missing, or shows fewer runs than asked for, fails with evidence that starts with `no base-run report:`.',
+  },
 ]
 
 const BUILDER_TEST_RULES: { rule: string; clause: string }[] = [
@@ -362,6 +431,40 @@ const BUILDER_TEST_RULES: { rule: string; clause: string }[] = [
     rule: 'the refactor reason',
     clause: 'changed only by a refactor',
   },
+  {
+    rule: 'the builder makes a run on the base for a criterion that asks for one, once the code is committed',
+    clause:
+      'When a criterion asks for a run on the base’s code or on the base commit, make that run once the code is committed, by the against-the-base procedure above.',
+  },
+  {
+    rule: 'the base-run puts back the criterion’s files, or every changed file for the base commit',
+    clause:
+      'Put back the base’s version of the files the criterion puts at the base or, for a run on the base commit, of every file the branch changes, and remove a file the base does not have.',
+  },
+  {
+    rule: 'the base-run command runs as many times as the criterion asks',
+    clause: 'Run the command the criterion names as many times as the criterion asks.',
+  },
+  {
+    rule: 'the base-run files are restored before any further edit or commit',
+    clause:
+      'restore every file with `git checkout HEAD -- <file>` at once, before any further edit or commit, as above.',
+  },
+  {
+    rule: 'the closing paragraph reports id, command, base hash, counts and quoted lines',
+    clause:
+      'report each such run in your closing paragraph: the criterion’s id, the command, the base commit’s hash, the counts (runs made, passed and failed) and the quoted output lines that show the result.',
+  },
+  {
+    rule: 'a later attempt reports every base-run criterion no summary reports',
+    clause:
+      'On a later attempt, report every such criterion that no summary in <context> already reports.',
+  },
+  {
+    rule: 'the closing paragraph gives what a criterion asks of it or of the session’s review',
+    clause:
+      'When a criterion asks for something in your closing paragraph or in “the session’s review”, your closing paragraph gives it.',
+  },
 ]
 
 describe('the builder’s rules for seeing a test fail', () => {
@@ -377,6 +480,12 @@ describe('the builder’s rules for seeing a test fail', () => {
 })
 
 describe('the verifier’s rules for tests', () => {
+  it('no longer says every other criterion never gets owner without exception', () => {
+    expect(AGENTS.verifier!.prompt).not.toContain(
+      'Every other criterion gets pass or fail, never owner.',
+    )
+  })
+
   it.each(VERIFIER_TEST_RULES)('says $rule', ({ clause }) => {
     expect(AGENTS.verifier!.prompt).toContain(clause)
   })
