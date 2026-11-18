@@ -98,7 +98,7 @@ describe('the board MCP server', () => {
     expect(response.status).toBe(401)
   })
 
-  it('offers the fourteen tools', async () => {
+  it('offers the fifteen tools', async () => {
     const { client } = await session()
     const { tools } = await client.listTools()
     expect(tools.map((t) => t.name).sort()).toEqual([
@@ -111,6 +111,7 @@ describe('the board MCP server', () => {
       'propose_task',
       'read_task',
       'request_approval',
+      'save_build_report',
       'save_plan',
       'save_report',
       'save_spec',
@@ -962,5 +963,221 @@ describe('get_question for a plan review: approval_note', () => {
     const description = tools.find((t) => t.name === 'save_help_result')?.description ?? ''
     expect(description).not.toBe('')
     expect(description).not.toMatch(/\bedit\b/)
+  })
+})
+
+describe('save_build_report', () => {
+  const NO_CALL = 'no Bash call in this Build phase ran the command'
+  const NOT_KEPT =
+    'the command ran in this Build phase, but the output kept from it (its last 64 KiB) does not contain the quoted failing line'
+  const LOAD_ONLY =
+    'the failing line shows only a load failure; a test is seen failing only once every file and name it imports has loaded, so stub the missing file or name, as your instructions say, and run the test again'
+  const NOT_BUILD = 'save_build_report belongs to a delivery run’s Build phase; nothing was saved.'
+
+  interface Event {
+    where: 'running' | 'other'
+    tool: string
+    command: string
+    output_tail: string
+  }
+  const CMD = 'npx vitest run tests/unit/x.test.ts'
+  const FAILING = 'AssertionError: expected 1 to be 2'
+  const ran = (output_tail: string, over: Partial<Event> = {}): Event => ({
+    where: 'running',
+    tool: 'Bash',
+    command: CMD,
+    output_tail,
+    ...over,
+  })
+  const failing = (over: Record<string, unknown> = {}) => ({
+    name: 'tests/unit/x.test.ts > adds',
+    command: CMD,
+    way: 'before_code',
+    failing_line: FAILING,
+    ...over,
+  })
+  const reason = {
+    name: 'tests/unit/y.test.ts > guards',
+    reason: 'guards_base',
+    why: 'the base has it',
+  }
+
+  /** A delivery run with a running Build phase, and a finished Build of an earlier attempt. */
+  async function buildSession(phaseName = 'build') {
+    const s = await session()
+    const db = getTestDb()
+    await db
+      .updateTable('phases')
+      .set({ name: phaseName as 'build', agent: 'builder' })
+      .where('id', '=', s.phaseId)
+      .execute()
+    const otherId = crypto.randomUUID()
+    await db
+      .insertInto('phases')
+      .values({
+        id: otherId,
+        run_id: s.runId,
+        name: 'build',
+        attempt: 0,
+        agent: 'builder',
+        model: 'm',
+        status: 'succeeded',
+        started_at: new Date(Date.now() - 60_000),
+      })
+      .execute()
+    const give = async (event: Event) => {
+      await db
+        .insertInto('events')
+        .values({
+          id: crypto.randomUUID(),
+          run_id: s.runId,
+          phase_id: event.where === 'running' ? s.phaseId : otherId,
+          ts: new Date(),
+          type: 'tool_call',
+          agent: 'builder',
+          model: null,
+          tool: event.tool,
+          target: event.command.slice(0, 200),
+          status: 'ok',
+          duration_ms: 1,
+          input: 0,
+          output: 0,
+          cache_read: 0,
+          cache_write: 0,
+          payload: JSON.stringify({
+            tool_use_id: 'u',
+            input: { command: event.command },
+            output_tail: event.output_tail,
+          }),
+        } as never)
+        .execute()
+    }
+    return { ...s, give }
+  }
+  const saved = (runId: string) =>
+    getTestDb()
+      .selectFrom('artifacts')
+      .selectAll()
+      .where('run_id', '=', runId)
+      .where('kind', '=', 'build_report')
+      .execute()
+
+  interface Row {
+    name: string
+    events: Event[]
+    tests: unknown[]
+    result: { saved: number } | { refused: [string, string][] }
+  }
+  const ROWS: Row[] = [
+    {
+      name: 'a failing run its Bash event backs',
+      events: [ran(`x\n${FAILING}\ny`)],
+      tests: [failing()],
+      result: { saved: 1 },
+    },
+    {
+      name: 'a failing run with stubs and changed assertions',
+      events: [ran(FAILING)],
+      tests: [
+        failing({
+          stubs: [{ file: 'src/x.ts', name: 'add', kept: 'stubbed' }],
+          changed_assertions: true,
+        }),
+      ],
+      result: { saved: 1 },
+    },
+    { name: 'a reason with no Bash event', events: [], tests: [reason], result: { saved: 1 } },
+    {
+      name: 'a command no Bash event ran',
+      events: [ran(FAILING, { command: 'ls' })],
+      tests: [failing()],
+      result: { refused: [[failing().name, NO_CALL]] },
+    },
+    {
+      name: 'a command that ran without the line in its output',
+      events: [ran('all passed')],
+      tests: [failing()],
+      result: { refused: [[failing().name, NOT_KEPT]] },
+    },
+    {
+      name: 'a line present only once ANSI escapes are removed',
+      events: [ran('\u001b[31mAssertionError: expected\u001b[0m 1 to be 2')],
+      tests: [failing()],
+      result: { saved: 1 },
+    },
+    {
+      name: 'a command and line that differ by space',
+      events: [ran(FAILING)],
+      tests: [failing({ command: `  ${CMD}\n`, failing_line: ` ${FAILING}  ` })],
+      result: { saved: 1 },
+    },
+    {
+      name: 'a matching Bash event of another phase',
+      events: [ran(FAILING, { where: 'other' })],
+      tests: [failing()],
+      result: { refused: [[failing().name, NO_CALL]] },
+    },
+    {
+      name: 'a matching command run by another tool',
+      events: [ran(FAILING, { tool: 'Read' })],
+      tests: [failing()],
+      result: { refused: [[failing().name, NO_CALL]] },
+    },
+    {
+      name: 'a load failure its event backs',
+      events: [ran("Error: Cannot find module '../../src/x.js'")],
+      tests: [failing({ failing_line: "Error: Cannot find module '../../src/x.js'" })],
+      result: { refused: [[failing().name, LOAD_ONLY]] },
+    },
+    {
+      name: 'one valid and one refused entry',
+      events: [ran(FAILING)],
+      tests: [failing(), failing({ name: 'tests/unit/z.test.ts > other', command: 'nope' })],
+      result: { refused: [['tests/unit/z.test.ts > other', NO_CALL]] },
+    },
+  ]
+
+  it.each(ROWS)('$name', async ({ events, tests, result }) => {
+    const { client, runId, phaseId, give } = await buildSession()
+    for (const event of events) await give(event)
+    const answer = await client.callTool({ name: 'save_build_report', arguments: { tests } })
+    const rows = await saved(runId)
+    if ('saved' in result) {
+      expect(answer.isError).toBeFalsy()
+      expect(text(answer)).toBe(`Build report saved: ${result.saved} tests.`)
+      expect(rows).toHaveLength(1)
+      expect(rows[0]).toMatchObject({ phase_id: phaseId, kind: 'build_report' })
+      expect((rows[0]?.data as { tests: unknown[] }).tests).toHaveLength(result.saved)
+      expect(rows[0]?.body_md).toContain(
+        tests.length > 0 ? (tests[0] as { name: string }).name : '',
+      )
+    } else {
+      expect(answer.isError).toBe(true)
+      const lines = text(answer).split('\n')
+      expect(lines[0]).toBe('The build report was not saved:')
+      expect(lines.slice(1)).toEqual(result.refused.map(([n, r]) => `- ${n}: ${r}`))
+      expect(rows).toEqual([])
+    }
+  })
+
+  it('saves nothing outside a delivery run’s Build phase', async () => {
+    const { client, runId } = await buildSession('plan')
+    const answer = await client.callTool({
+      name: 'save_build_report',
+      arguments: { tests: [reason] },
+    })
+    expect(answer.isError).toBe(true)
+    expect(text(answer)).toBe(NOT_BUILD)
+    expect(await saved(runId)).toEqual([])
+  })
+
+  it('rejects an unknown field in an entry', async () => {
+    const { client, runId } = await buildSession()
+    const answer = await client.callTool({
+      name: 'save_build_report',
+      arguments: { tests: [{ ...reason, extra: 1 }] },
+    })
+    expect(answer.isError).toBe(true)
+    expect(await saved(runId)).toEqual([])
   })
 })
