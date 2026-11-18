@@ -211,7 +211,7 @@ export interface ReportData {
 
 export interface ArtifactView {
   id: string
-  kind: 'plan' | 'verify_report' | 'pr' | 'title'
+  kind: 'plan' | 'verify_report' | 'pr' | 'title' | 'build_report'
   phase_id: string | null
   body_md: string
   uri: string | null

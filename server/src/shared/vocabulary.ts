@@ -268,7 +268,7 @@ export const EVENT_TYPES = [
 ] as const
 export type EventType = (typeof EVENT_TYPES)[number]
 
-export const ARTIFACT_KINDS = ['plan', 'verify_report', 'pr', 'title'] as const
+export const ARTIFACT_KINDS = ['plan', 'verify_report', 'pr', 'title', 'build_report'] as const
 export type ArtifactKind = (typeof ARTIFACT_KINDS)[number]
 
 /** One acceptance criterion as the spec parser reads it and approval freezes it. */
