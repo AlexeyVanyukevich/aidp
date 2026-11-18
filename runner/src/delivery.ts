@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import type { PlanData, ReportData, RunView, Work } from './contract.js'
+import type { PlanData, ReportData, Work } from './contract.js'
 import type { RunnerConfig } from './config.js'
 import type { Git } from './git.js'
 import { buildHandoff, DIFF_MAX, type HandoffInput } from './phases/handoff.js'
@@ -126,9 +126,8 @@ export async function carryOut(
   /** A plan a Re-run copied into this run: no planner starts, and Build works from it. */
   const kept = run.kept_plan ?? null
   let testOutput: string | undefined
-  let latestRun: RunView | undefined
 
-  const getRun = async () => (latestRun = await deps.api.getRun(run.id))
+  const getRun = async () => await deps.api.getRun(run.id)
   const artifact = async (kind: 'plan' | 'verify_report', by: { phaseId?: string; id?: string }) =>
     (await getRun()).artifacts
       .filter((a) => a.kind === kind)
@@ -137,7 +136,7 @@ export async function carryOut(
       .at(-1)
 
   const summaries = async (): Promise<HandoffInput['summaries']> =>
-    (latestRun ?? (await getRun())).phases
+    (await getRun()).phases
       .filter((p) => p.name !== 'help' && p.status === 'succeeded' && p.summary_md !== null)
       .map((p) => ({ phase: p.name, attempt: p.attempt, text: p.summary_md ?? '' }))
 
