@@ -658,6 +658,10 @@ that does not ask for a test and is about the diff's own content, such as a file
 text or a line staying unchanged, may still pass on a line of the diff, never with that test as
 its evidence.
 
+Each Plan, Build and Verify handoff of a delivery run carries in `<context>` the summary of every
+phase of the run that succeeded with a summary, Help's excepted; the runner reads them fresh from
+the board each time it builds a handoff.
+
 **What the verifier counts as a test seen failing.** The builder writes and runs each test it adds
 or changes before the code it tests, and sees it fail. It may instead see it fail once the code
 exists: only after the code is committed, it puts back the base's version of the plan's code files
