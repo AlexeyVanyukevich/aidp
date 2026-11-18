@@ -15,6 +15,7 @@ import * as pullRequestReview from './013_pull_request_review.js'
 import * as batchSuggest from './014_batch_suggest.js'
 import * as reviewShape from './015_review_shape.js'
 import * as approvalNote from './016_approval_note.js'
+import * as buildReports from './017_build_reports.js'
 
 /**
  * Listed rather than discovered from disk: a file provider imports at runtime, which fails
@@ -38,4 +39,5 @@ export const migrations: Record<string, Migration> = {
   '014_batch_suggest': batchSuggest,
   '015_review_shape': reviewShape,
   '016_approval_note': approvalNote,
+  '017_build_reports': buildReports,
 }
