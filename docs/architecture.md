@@ -141,7 +141,7 @@ not have them. The tool lists, besides Read, Grep, Glob and (planner, verifier) 
   `propose_task`, `list_proposals`, `save_spec`, `log_step`, `request_approval`;
 - planner: the same with `save_plan` for `save_spec`;
 - builder (with Edit, Write, Bash): `get_task`, `get_spec`, `list_tasks`, `read_task`,
-  `propose_task`, `list_proposals`, `log_step`, `request_approval`;
+  `propose_task`, `list_proposals`, `log_step`, `request_approval`, `save_build_report`;
 - verifier (with Bash): `get_task`, `get_spec`, `list_tasks`, `read_task`, `propose_task`,
   `list_proposals`, `save_report`, `log_step`, `request_approval`.
 
@@ -156,6 +156,34 @@ not have them. The tool lists, besides Read, Grep, Glob and (planner, verifier) 
   upper-cased. It returns `key`, `title`, `state`, `description_md` and `spec`: the task's
   highest spec version as `{ version, status, body_md }`, with the stored status (`draft`,
   `approved` or `superseded`), or `null` when it has no spec.
+
+- `save_build_report` takes `tests`, 1 to 100 entries, each one of two kinds. A failing run is
+  `{ name, command, way, failing_line, stubs?, changed_assertions? }`: `name` is the test's file
+  and title (1 to 500 characters), `command` 1 to 4,000, `way` is `before_code` or `against_base`,
+  `failing_line` 1 to 2,000, and each stub is `{ file, name?, kept }` with `kept` `stubbed` or
+  `whole`. A reason is `{ name, reason, why, changed_assertions? }`, with `reason` `guards_base`,
+  `refactor` or `cannot_run` and `why` 1 to 2,000 characters. Unknown fields are rejected. Outside
+  the running Build phase of a delivery run it saves nothing and answers `save_build_report belongs
+to a delivery run’s Build phase; nothing was saved.`. Each failing run is checked against the
+  running phase's own `Bash` `tool_call` events, ignoring ANSI escape sequences and the space at the
+  ends of `command` and `failing_line`: a line that shows only a load failure (after at most one
+  runner marker among `FAIL`, `×`, `✗` and `❯`, it begins `Error: Cannot find module`, or begins
+  `SyntaxError: The requested module` and contains `does not provide an export named`) is refused
+  first, with "the failing line shows only a load failure; a test is seen failing only once every
+  file and name it imports has loaded, so stub the missing file or name, as your instructions say,
+  and run the test again"; then a command no event ran is refused with "no Bash call in this Build
+  phase ran the command", and a command that ran, but none of whose kept output holds the line, with
+  "the command ran in this Build phase, but the output kept from it (its last 64 KiB) does not
+  contain the quoted failing line". A reason is not checked against events. When any entry is
+  refused nothing is saved, and the error reply starts `The build report was not saved:`, with one
+  line `- <name>: <reason>` per refused entry. A save that is not refused stores one `build_report`
+  artifact on the phase, with the entries as its `data` and a Markdown rendering as its `body_md`,
+  and answers `Build report saved: <n> tests.`. Storage is append-only; the runner folds a run's
+  `build_report` artifacts: by Build phase in save order, a later entry with the same `name` in
+  the same phase replacing the earlier, Builds that share an attempt folded together, groups ordered
+  by attempt. A command longer than the hook's 4,096-character cut cannot be proved, and an event
+  still buffered by the runner can cause a `no Bash call` refusal that a retry after another tool
+  call clears. Nothing on the card shows the report.
 
 The tools fold case: `project` and `key` are upper-cased before they are checked, so `zlr` finds
 ZLR, and every key in a reply is upper case. The HTTP routes do not fold case: `GET
@@ -674,27 +702,30 @@ way. So the builder stubs a file the test imports that does not exist yet or tha
 and a name the test imports that its file does not export: the stub exports the same names and does
 not do the work, and is never committed. It keeps a file or name whole only when the test does not
 test it, such as a new fixture or helper. It restores every file it put back or removed with `git checkout HEAD --
-<file>` at once, before any further edit or commit. Its closing paragraph then gives, for each test
-the branch adds or changes that no summary in `<context>` already proves, the test's name, the
-command, which way the run was made (before the code, or against the base's code) and the quoted
-line where it failed, and names each file or name it kept whole or stubbed, with the test it
-served. A test an attempt changes is proved again in that attempt. A later attempt proves every such test of the branch, not only those it
-touches, since an earlier attempt's summary may have left one out. Before it ends any attempt, the
-builder runs the against-the-base way for each test that still has no proof, and says a test was
-never seen failing only when that run cannot be made, in plain words, with the reason. A test that cannot fail on the base carries one of two reasons: "guards behaviour the base
-already has" or "changed only by a refactor". For each test written for a criterion that the
-branch's diff adds or changes, the verifier looks for that proof in the build summaries, and any
-build summary may prove it, but a proof counts only for the test as that attempt left it, and the
-verifier names the build attempt whose proof it used. A summary that only says a test was seen
-failing, never mentions it, shows only a load failure, or kept whole the code under test is no
-proof. With no proof and no
+<file>` at once, before any further edit or commit. It then saves, with `save_build_report`, for each
+test the branch adds or changes that no entry in `<build_reports>` already proves, the test's name,
+the command, which way the run was made (`before_code` or `against_base`) and the line where it
+failed, with the `stubs` it kept whole or stubbed. A test an attempt changes is proved again in that
+attempt, with `changed_assertions` set when the change touched its assertions. A later attempt
+proves every such test of the branch, not only those it touches. Before it ends any attempt, the
+builder runs the against-the-base way for each test that still has no proof, and saves the test with
+reason `cannot_run` and why only when that run cannot be made. A test that cannot fail on the base
+is saved with reason `guards_base` or `refactor` and why it holds. Only saved entries count as
+proof: prose in the closing paragraph or in a summary no longer does, reasons included. A delivery
+run under way when this shipped has no entries for its earlier Builds, so its next Build proves its
+tests again through the tool. For each test written for a criterion that the branch's diff adds or
+changes, the verifier looks for that proof in `<build_reports>`, and any Build's entry may prove it,
+but a proof counts only for the test as that attempt left it (a later entry that sets
+`changed_assertions` limits proof to that attempt or later), and the verifier names the build
+attempt whose entry it used. An entry that shows only a load failure, or whose stubs list kept whole
+the code under test, is no proof, and neither is a test no entry names. With no proof and no
 accepted reason the criterion fails, with evidence starting `never seen failing:`, naming the test
-and what the summaries lack. A guard reason is accepted only when the base's code already shows the
-behaviour, judged from the branch's files the diff leaves unchanged and the lines it removes; a
-refactor reason only when the test's assertions are unchanged; a reason that does not hold is no
-proof. The fail covers only tests written for a criterion that the diff adds or changes: such a
-test the diff leaves untouched needs no proof, and a test written for no criterion without proof is
-only named in the report's summary.
+and what the saved entries lack. `guards_base` is accepted only when the base's code already shows
+the behaviour, judged from the branch's files the diff leaves unchanged and the lines it removes;
+`refactor` only when the test's assertions are unchanged; `cannot_run` is no proof; a reason that
+does not hold is no proof. The fail covers only tests written for a criterion that the diff adds or
+changes: such a test the diff leaves untouched needs no proof, and a test written for no criterion
+without proof is only named in the report's summary.
 
 **What the verifier counts as a run on the base.** A criterion may ask for a run on the base's
 code or on the base commit. Once the code is committed, the builder makes that run by the
@@ -1459,7 +1490,7 @@ _Handoff._ Every Build handoff, whatever the attempt and whatever started the se
 a restarted phase), carries one `<approved_migration path="…">` element per approved migration,
 in path order. Its text is not HTML-escaped: it holds the content in a fence one backtick longer
 than the longest run of backticks in it (at least three), never cut, so a closing tag inside the
-content is harmless. Plan and Verify handoffs do not carry it. When the runner, not Verify, started the round (the failing report is `test_command`, `files_gate`, `base_conflict` or `no_commit`), the handoff's `<verify_report>` text ends with a reminder paragraph, after the undone-paths paragraph when there is one: no Verify has checked the latest Build's proof that each test was seen failing, so the builder gives that proof in its closing paragraph, running each test against the base's code. A round started by a failed Verify, and attempt 1, carry no reminder. Every Build handoff also carries `<base branch="…"/>`, the project's base branch, whose merge-base Verify's diff is taken against; Plan and Verify handoffs do not. The runner and the server each
+content is harmless. Plan and Verify handoffs do not carry it. When the runner, not Verify, started the round (the failing report is `test_command`, `files_gate`, `base_conflict` or `no_commit`), the handoff's `<verify_report>` text ends with a reminder paragraph, after the undone-paths paragraph when there is one: no Verify has checked the latest Build's proof that each test was seen failing, so the builder saves that proof with `save_build_report` for every such test that no entry in the build reports proves, running each test against the base's code. A round started by a failed Verify, and attempt 1, carry no reminder. Once any Build of the run has saved entries, the Build and Verify handoffs carry a `<build_reports>` element after `<context>`, with one `<build_report attempt="n">` per attempt with entries: each failing run is `<test name command way failing_line changed_assertions>` with a `<stub file name kept/>` child per stub (`name` left out when it has none), each reason `<test name reason why changed_assertions/>`, every attribute value escaped. No other phase's handoff carries it. The Build handoff's return format is: call `save_build_report` for every test that no entry proves, then reply with one paragraph; a blocked Build is left to AIDP-181. Every Build handoff also carries `<base branch="…"/>`, the project's base branch, whose merge-base Verify's diff is taken against; Plan and Verify handoffs do not. The runner and the server each
 hold a fencing function, tested against the shared table `tests/fixtures/migration-fence.json`.
 
 The files gate holds a migration the owner has not approved to the same rule for
@@ -1581,7 +1612,7 @@ result; the remainder of each process's `modelUsage`, beyond the session's previ
 `claude-code` event. While the board is unreachable, events wait in the run directory's
 `events.ndjson` and replay in order. The runner's own events travel with the token the runner
 issues at the start of its carry (12 hours), never a phase's token; a phase's process gets its
-own, retired when it ends. Every request the runner makes times out — a claim's wait
+own, retired when it ends. A Build's `Bash` `tool_call` events carry `output_tail` in their payload: the call's stdout, then a newline and stderr when it has any, cut to its last 65,536 characters (no other tool or phase gets it). The Timeline prints a step's whole payload in the step's collapsed details, so a Build `Bash` step there shows its `output_tail` too. The runner's `tool_call` payload otherwise holds the tool use id and the input, cut at 4,096 characters. Every request the runner makes times out — a claim's wait
 plus 10 seconds, 30 seconds otherwise — and is retried.
 
 ## Costs
