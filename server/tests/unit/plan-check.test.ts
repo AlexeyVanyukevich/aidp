@@ -123,7 +123,7 @@ describe('checkReport on owner checks', () => {
     summary: 's',
     criteria: [
       { id: 'AC1', status: a, evidence },
-      { id: 'AC2', status: b, evidence: 'e' },
+      { id: 'AC2', status: b, evidence },
     ],
   })
   it.each([
