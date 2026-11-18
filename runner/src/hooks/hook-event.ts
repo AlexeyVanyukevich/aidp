@@ -2,6 +2,8 @@ import type { RunnerEvent } from '../contract.js'
 import { newEvent } from '../sink.js'
 
 const MAX_INPUT = 4_096
+/** The most of a Build's Bash output an event keeps: its end, where a test run says what failed. */
+const MAX_OUTPUT_TAIL = 65_536
 
 function target(input: Record<string, unknown>): string | null {
   for (const key of [
@@ -25,10 +27,20 @@ function failed(response: unknown): boolean {
   return r.is_error === true || r.success === false || r.interrupted === true
 }
 
+/** A Bash call's stdout, then a newline and stderr when it has any, cut to its last characters. */
+function outputTail(response: unknown): string | null {
+  if (typeof response !== 'object' || response === null) return null
+  const { stdout, stderr } = response as { stdout?: unknown; stderr?: unknown }
+  const out = typeof stdout === 'string' ? stdout : ''
+  const err = typeof stderr === 'string' ? stderr : ''
+  const text = err === '' ? out : `${out}\n${err}`
+  return text.length > MAX_OUTPUT_TAIL ? text.slice(-MAX_OUTPUT_TAIL) : text
+}
+
 export function hookToEvent(
   name: 'PostToolUse' | 'SubagentStart' | 'SubagentStop',
   input: Record<string, unknown>,
-  ctx: { runId: string; phaseId: string; agent: string },
+  ctx: { runId: string; phaseId: string; agent: string; phase?: string },
 ): RunnerEvent {
   const base = { runId: ctx.runId, phaseId: ctx.phaseId }
   if (name === 'PostToolUse') {
@@ -37,6 +49,9 @@ export function hookToEvent(
         ? (input.tool_input as Record<string, unknown>)
         : {}
     const serialized = JSON.stringify(toolInput)
+    const phase = ctx.phase ?? process.env.BOARD_PHASE
+    const tail =
+      input.tool_name === 'Bash' && phase === 'build' ? outputTail(input.tool_response) : null
     return newEvent(
       {
         ...base,
@@ -50,6 +65,7 @@ export function hookToEvent(
         payload: {
           tool_use_id: input.tool_use_id ?? null,
           input: serialized.length > MAX_INPUT ? `${serialized.slice(0, MAX_INPUT)}…` : toolInput,
+          ...(tail === null ? {} : { output_tail: tail }),
         },
       },
     )

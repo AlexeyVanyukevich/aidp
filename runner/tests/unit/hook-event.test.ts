@@ -43,6 +43,30 @@ describe('hookToEvent', () => {
     })
   })
 
+  const bash = (tool_response: Record<string, unknown>, tool_name = 'Bash') => ({
+    tool_name,
+    tool_input: { command: 'npm test' },
+    tool_response,
+  })
+  const LONG = `${'a'.repeat(4_464)}${'b'.repeat(65_536)}`
+  it.each([
+    ['stdout and stderr in a Build', 'build', bash({ stdout: 'out', stderr: 'err' }), 'out\nerr'],
+    ['empty stderr', 'build', bash({ stdout: 'out', stderr: '' }), 'out'],
+    ['no stderr', 'build', bash({ stdout: 'out' }), 'out'],
+    [
+      '70,000 characters of output',
+      'build',
+      bash({ stdout: LONG, stderr: '' }),
+      'b'.repeat(65_536),
+    ],
+    ['a Bash call in Verify', 'verify', bash({ stdout: 'out' }), undefined],
+    ['an Edit call in Build', 'build', bash({ stdout: 'out' }, 'Edit'), undefined],
+  ])('gives %s the output tail %j', (_name, phase, input, tail) => {
+    const payload = hookToEvent('PostToolUse', input, { ...ctx, phase }).payload
+    if (tail === undefined) expect(payload).not.toHaveProperty('output_tail')
+    else expect(payload).toMatchObject({ output_tail: tail, tool_use_id: null })
+  })
+
   it('records a subagent under its own type', () => {
     expect(
       hookToEvent('SubagentStart', { agent_id: 'a1', agent_type: 'explorer' }, ctx),
