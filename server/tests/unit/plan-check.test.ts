@@ -115,22 +115,47 @@ describe('checkReport on owner checks', () => {
     { id: 'AC1', requirements: ['R1'], text: 'a' },
     { id: 'AC2', requirements: ['R2'], text: 'b', owner: true },
   ]
-  const verdicts = (a: 'pass' | 'fail' | 'owner', b: 'pass' | 'fail' | 'owner') => ({
+  const verdicts = (
+    a: 'pass' | 'fail' | 'owner',
+    b: 'pass' | 'fail' | 'owner',
+    evidence: string,
+  ) => ({
     summary: 's',
     criteria: [
-      { id: 'AC1', status: a, evidence: 'e' },
+      { id: 'AC1', status: a, evidence },
       { id: 'AC2', status: b, evidence: 'e' },
     ],
   })
   it.each([
-    ['pass', 'owner', []],
-    ['fail', 'owner', []],
-    ['pass', 'fail', []],
-    ['fail', 'fail', []],
-    ['owner', 'owner', [{ code: 'owner_on_unmarked_criterion', id: 'AC1' }]],
-    ['pass', 'pass', [{ code: 'pass_on_owner_check', id: 'AC2' }]],
-  ] as const)('AC1 %s, AC2 %s', (a, b, findings) => {
-    expect(checkReport(verdicts(a, b), marked)).toEqual(findings)
+    ['pass', 'owner', [], 'e'],
+    ['fail', 'owner', [], 'e'],
+    ['pass', 'fail', [], 'e'],
+    ['fail', 'fail', [], 'e'],
+    ['owner', 'owner', [{ code: 'owner_on_unmarked_criterion', id: 'AC1' }], 'e'],
+    ['pass', 'pass', [{ code: 'pass_on_owner_check', id: 'AC2' }], 'e'],
+    ['owner', 'owner', [], 'not checkable in a run: needs a device'],
+    ['owner', 'owner', [], '  not checkable in a run: needs a device'],
+    [
+      'owner',
+      'owner',
+      [{ code: 'owner_on_unmarked_criterion', id: 'AC1' }],
+      'Not checkable in a run: needs a device',
+    ],
+    [
+      'owner',
+      'owner',
+      [{ code: 'owner_on_unmarked_criterion', id: 'AC1' }],
+      'see not checkable in a run: needs a device',
+    ],
+    ['owner', 'owner', [{ code: 'owner_on_unmarked_criterion', id: 'AC1' }], 'needs a device'],
+    [
+      'pass',
+      'pass',
+      [{ code: 'pass_on_owner_check', id: 'AC2' }],
+      'not checkable in a run: needs a device',
+    ],
+  ] as const)('AC1 %s, AC2 %s, evidence %#', (a, b, findings, evidence) => {
+    expect(checkReport(verdicts(a, b, evidence), marked)).toEqual(findings)
   })
 })
 
