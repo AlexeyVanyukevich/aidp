@@ -41,6 +41,13 @@ import {
 } from '../proposals/proposal.rules.js'
 import { checkSuggestion, suggestionRefusal } from './title-rules.js'
 import {
+  refusalOf,
+  refusalText,
+  renderBuildReport,
+  type BashCall,
+  type BuildEntry,
+} from './build-report.js'
+import {
   checkPlan,
   checkReport,
   renderPlan,
@@ -113,7 +120,7 @@ async function frozenSpec(ctx: ToolContext) {
 
 async function attach(
   ctx: ToolContext,
-  kind: 'plan' | 'verify_report',
+  kind: 'plan' | 'verify_report' | 'build_report',
   body: string,
   data: unknown,
 ) {
@@ -132,6 +139,48 @@ async function attach(
     .execute()
   await publish(ctx.db, { topic: 'run.event', runId: ctx.runId, taskId: ctx.taskId })
   return undefined
+}
+
+const STUB = z
+  .object({ file: z.string(), name: z.string().optional(), kept: z.enum(['stubbed', 'whole']) })
+  .strict()
+const FAILING_RUN = z
+  .object({
+    name: z.string().min(1).max(500),
+    command: z.string().min(1).max(4000),
+    way: z.enum(['before_code', 'against_base']),
+    failing_line: z.string().min(1).max(2000),
+    stubs: z.array(STUB).optional(),
+    changed_assertions: z.boolean().optional(),
+  })
+  .strict()
+const REASON_ENTRY = z
+  .object({
+    name: z.string().min(1).max(500),
+    reason: z.enum(['guards_base', 'refactor', 'cannot_run']),
+    why: z.string().min(1).max(2000),
+    changed_assertions: z.boolean().optional(),
+  })
+  .strict()
+
+/** The Bash calls the running phase made, with the output tail the hook kept for each. */
+async function bashCalls(ctx: ToolContext, phaseId: string): Promise<BashCall[]> {
+  const rows = await ctx.db
+    .selectFrom('events')
+    .select('payload')
+    .where('run_id', '=', ctx.runId)
+    .where('phase_id', '=', phaseId)
+    .where('type', '=', 'tool_call')
+    .where('tool', '=', 'Bash')
+    .execute()
+  return rows.flatMap((row) => {
+    const payload = row.payload as { input?: unknown; output_tail?: unknown }
+    const input = payload.input
+    const command =
+      typeof input === 'object' && input !== null ? (input as { command?: unknown }).command : null
+    if (typeof command !== 'string') return []
+    return [{ command, output: typeof payload.output_tail === 'string' ? payload.output_tail : '' }]
+  })
 }
 
 const findingsText = (title: string, findings: { code: string; id: string; step?: number }[]) =>
@@ -1077,6 +1126,39 @@ function registerRunTools(server: McpServer, ctx: ToolContext): void {
       }
       return (
         (await attach(ctx, 'verify_report', renderReport(report), report)) ?? reply('Report saved.')
+      )
+    },
+  )
+
+  server.registerTool(
+    'save_build_report',
+    {
+      description:
+        'Save the proof that each test the branch adds or changes was seen failing. `tests` holds 1 to 100 entries, each one of two kinds. A failing run: name (the test’s file and title), command (exactly the Bash command you ran in this Build), way (before_code or against_base), failing_line (copied from that command’s output), and optionally stubs (each { file, name, kept: stubbed or whole }) and changed_assertions. A reason: name, reason (guards_base, refactor or cannot_run), why, and optionally changed_assertions. The board saves nothing unless every entry holds: a failing run is refused when no Bash call of this Build ran the command, when the output kept from it lacks the line, or when the line shows only that a file or name failed to load. A later save for the same test name replaces the earlier one.',
+      inputSchema: {
+        tests: z
+          .array(z.union([FAILING_RUN, REASON_ENTRY]))
+          .min(1)
+          .max(100),
+      },
+    },
+    async (input) => {
+      const phase = await runningPhase(ctx)
+      if ((await runKind(ctx)) !== 'delivery' || phase?.name !== 'build')
+        return reply(
+          'save_build_report belongs to a delivery run’s Build phase; nothing was saved.',
+          true,
+        )
+      const tests = input.tests as BuildEntry[]
+      const calls = await bashCalls(ctx, phase.id)
+      const refused = tests.flatMap((entry) => {
+        const reason = refusalOf(entry, calls)
+        return reason === null ? [] : [{ name: entry.name, reason }]
+      })
+      if (refused.length > 0) return reply(refusalText(refused), true)
+      return (
+        (await attach(ctx, 'build_report', renderBuildReport(tests), { tests })) ??
+        reply(`Build report saved: ${tests.length} tests.`)
       )
     },
   )
