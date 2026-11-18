@@ -2,7 +2,14 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ApiError, type BoardApi } from '../../src/api.js'
-import type { ArtifactView, Checkpoint, RunnerEvent, RunWork, Work } from '../../src/contract.js'
+import type {
+  ArtifactView,
+  Checkpoint,
+  RunnerEvent,
+  RunView,
+  RunWork,
+  Work,
+} from '../../src/contract.js'
 import type { DeliveryDeps, Phases } from '../../src/delivery.js'
 import { Git, GitError } from '../../src/git.js'
 import type { PhaseRecord, StepResult } from '../../src/phases/phase.js'
@@ -169,6 +176,8 @@ export function harness(script: Script) {
     uncommitted: [...(script.initial?.uncommitted ?? [])],
   }
 
+  const ended: RunView['phases'] = []
+
   const api = {
     issueToken: async () => 'token',
     retire: async () => undefined,
@@ -181,7 +190,12 @@ export function harness(script: Script) {
       sent.push(...events)
       return events.length
     },
-    getRun: async () => ({ id: RUN.id, status: 'running', phases: [], artifacts }),
+    getRun: async () => ({
+      id: RUN.id,
+      status: 'running',
+      phases: ended.map((p) => ({ ...p })),
+      artifacts,
+    }),
     phaseHasMessages: async () => script.hasMessages ?? false,
   } as unknown as BoardApi
 
@@ -298,6 +312,13 @@ export function harness(script: Script) {
     },
     end: async (record, ok) => {
       calls.push(`end ${record.phase}-${record.attempt} ${ok ? 'ok' : 'failed'}`)
+      ended.push({
+        id: record.phaseId,
+        name: record.phase,
+        attempt: record.attempt,
+        status: ok ? 'succeeded' : 'failed',
+        summary_md: record.summary,
+      })
     },
   }
 

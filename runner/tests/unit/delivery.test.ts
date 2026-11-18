@@ -89,6 +89,44 @@ describe('a run carried out from the start, as slice 1 did', () => {
     expect(h.handoffs['verify-1']).not.toContain('<base ')
   })
 
+  it.each([
+    { key: 'build-1', tags: [['plan', 1]] },
+    {
+      key: 'verify-1',
+      tags: [
+        ['plan', 1],
+        ['build', 1],
+      ],
+    },
+    {
+      key: 'build-2',
+      tags: [
+        ['plan', 1],
+        ['build', 1],
+        ['verify', 1],
+      ],
+    },
+    {
+      key: 'verify-2',
+      tags: [
+        ['plan', 1],
+        ['build', 1],
+        ['verify', 1],
+        ['build', 2],
+      ],
+    },
+  ] as { key: string; tags: [string, number][] }[])(
+    'hands $key the summary of every phase that succeeded before it',
+    async ({ key, tags }) => {
+      const h = harness({ verdicts: ['fail', 'pass'] })
+      await carryOut(START as Extract<Work, { kind: 'start' }>, h.deps)
+      for (const [phase, attempt] of tags)
+        expect(h.handoffs[key]).toContain(
+          `<summary phase="${phase}" attempt="${attempt}">${phase}-${attempt} done</summary>`,
+        )
+    },
+  )
+
   it('opens the pull request when the report holds pass and owner and no fail', async () => {
     const h = harness({ verdicts: ['owner-pass'] })
     expect(await carryOut(START as Extract<Work, { kind: 'start' }>, h.deps)).toBe('review')
