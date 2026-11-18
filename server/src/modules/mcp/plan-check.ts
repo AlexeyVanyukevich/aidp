@@ -46,6 +46,8 @@ export interface ReportFinding {
   id: string
 }
 
+export const NOT_CHECKABLE = 'not checkable in a run:'
+
 const collapse = (text: string) => text.replace(/\s+/g, ' ').trim()
 
 /**
@@ -105,7 +107,11 @@ export function checkReport(
     else if (seen.has(verdict.id)) findings.push({ code: 'duplicate_criterion', id: verdict.id })
     else {
       const marked = criteria.find((c) => c.id === verdict.id)?.owner === true
-      if (verdict.status === 'owner' && !marked)
+      if (
+        verdict.status === 'owner' &&
+        !marked &&
+        !verdict.evidence.trimStart().startsWith(NOT_CHECKABLE)
+      )
         findings.push({ code: 'owner_on_unmarked_criterion', id: verdict.id })
       if (verdict.status === 'pass' && marked)
         findings.push({ code: 'pass_on_owner_check', id: verdict.id })

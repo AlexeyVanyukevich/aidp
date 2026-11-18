@@ -245,6 +245,7 @@ describe('the board MCP server', () => {
     expect(description).toContain('owner')
     expect(description).toContain('fail when you can see the work is wrong')
     expect(description).toContain('never gets pass')
+    expect(description).toContain('not checkable in a run:')
   })
 
   it('reads a stored criterion without an owner field as not an owner check', async () => {
@@ -256,13 +257,14 @@ describe('the board MCP server', () => {
   })
 
   it.each([
-    ['pass', 'owner', undefined],
-    ['fail', 'owner', undefined],
-    ['pass', 'fail', undefined],
-    ['fail', 'fail', undefined],
-    ['owner', 'owner', '- owner_on_unmarked_criterion AC1'],
-    ['pass', 'pass', '- pass_on_owner_check AC2'],
-  ] as const)('save_report with AC1 %s and AC2 %s', async (a, b, refusal) => {
+    ['pass', 'owner', 'x', undefined],
+    ['fail', 'owner', 'x', undefined],
+    ['pass', 'fail', 'x', undefined],
+    ['fail', 'fail', 'x', undefined],
+    ['owner', 'owner', 'x', '- owner_on_unmarked_criterion AC1'],
+    ['owner', 'owner', 'not checkable in a run: needs a device', undefined],
+    ['pass', 'pass', 'x', '- pass_on_owner_check AC2'],
+  ] as const)('save_report with AC1 %s, AC2 %s, evidence %s', async (a, b, evidence, refusal) => {
     const { client, runId, taskId } = await session()
     await getTestDb()
       .updateTable('specs')
@@ -277,7 +279,7 @@ describe('the board MCP server', () => {
     const report = {
       summary: 's',
       criteria: [
-        { id: 'AC1', status: a, evidence: 'x' },
+        { id: 'AC1', status: a, evidence },
         { id: 'AC2', status: b, evidence: 'x' },
       ],
     }
