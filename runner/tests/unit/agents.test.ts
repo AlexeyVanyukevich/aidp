@@ -206,6 +206,21 @@ const VERIFIER_TEST_RULES: { rule: string; clause: string }[] = [
     clause: 'Your summary names every test the test output marks flaky',
   },
   {
+    rule: 'the quoted line must show a failure once everything the test imports has loaded',
+    clause:
+      'The quoted line must show the test failing once every file and name it imports has loaded: one of the test’s own assertions failing, such as an expect or assert message, Playwright’s expect timing out, or an error thrown by the code under test or by the test’s use of its result, such as `Cannot read properties of undefined`. A line that shows a file, module or export missing or failing to load, such as `Cannot find module`, `does not provide an export named` or `is not a function` for a name the base lacks or the code has not added yet, is no proof, whichever way the run was made. When such a line is all the summaries quote for a test, the `never seen failing:` evidence says the line shows only a load failure.',
+  },
+  {
+    rule: 'a proof that kept the tested file whole is no proof',
+    clause:
+      'A proof that says it kept whole a file or a name the test tests, rather than stubbing it, is no proof, since with it whole the failure cannot come from the missing code.',
+  },
+  {
+    rule: 'any build summary may prove a test, for the test as that attempt left it, and the attempt is named',
+    clause:
+      'A test has proof when any build summary in <context> gives proof that meets these rules. A proof counts only for the test as that build attempt left it: when a later build summary says it changed a test’s assertions, only proof from that attempt or a later one counts. Read every build summary before you rule that none does, and in the evidence for a criterion name, for each test it rests on, the build attempt whose summary holds the proof you used, as in `Build 3`.',
+  },
+  {
     rule: 'a test is evidence for a criterion only when it would fail if the Then did not hold',
     clause:
       'A test is evidence for a criterion only when it would fail if the criterion’s Then did not hold in the case the test sets up',
@@ -406,7 +421,28 @@ const BUILDER_TEST_RULES: { rule: string; clause: string }[] = [
   },
   {
     rule: 'a code file the base does not have is removed',
-    clause: 'A code file the base does not have is removed',
+    clause:
+      'A code file the base does not have is removed, unless the test imports it: then keep it whole or stub it, as below.',
+  },
+  {
+    rule: 'seeing a test fail means it failed once everything it imports has loaded',
+    clause:
+      'Seeing a test fail means seeing it fail once every file and name it imports has loaded: one of its own assertions failing, or an error thrown by the code under test or by the test’s use of its result. A failure because a file, module or export is missing or cannot load, such as `Cannot find module`, or `is not a function` for a name the file does not export, is not seeing it fail, whichever way the run is made.',
+  },
+  {
+    rule: 'a file or name the test imports is stubbed, or kept whole when the test does not test it',
+    clause:
+      'When a test imports a file that does not exist yet, before the code, or that the base does not have, against the base, give that file a stub so the test loads: a stub exports the same names as the file but does not do the work, for example a function that returns undefined. When a test imports a name that its file does not export, as the file stands before the code or as the base’s copy you put back, add a stub of that name to the file in the same way. Keep such a file or name whole instead only when the test does not test it, such as a new fixture or helper the test imports: keeping the code under test whole lets the test pass, which proves nothing. A stub is never committed: before the code, the code replaces it before you commit; against the base, you restore it with the other files.',
+  },
+  {
+    rule: 'the closing paragraph names each file or name kept whole or stubbed',
+    clause:
+      'When a run kept a file or name whole or stubbed it, name each such file, and each such name with its file, beside the test it served and that test’s quoted failing line, and say whether it was kept whole or stubbed.',
+  },
+  {
+    rule: 'a changed test is proved again in the attempt that changes it',
+    clause:
+      'A test this attempt changes is proved again in this attempt’s closing paragraph, even when an earlier summary proved it, and the paragraph says whether the change touched the test’s assertions.',
   },
   {
     rule: 'every file is restored before any further edit or commit',
