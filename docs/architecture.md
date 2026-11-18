@@ -666,18 +666,28 @@ the board each time it builds a handoff.
 or changes before the code it tests, and sees it fail. It may instead see it fail once the code
 exists: only after the code is committed, it puts back the base's version of the plan's code files
 the test exercises, keeping the new tests (the base is `git merge-base HEAD origin/<branch>`, the
-branch being the Build handoff's `<base>` element; a code file the base lacks is removed), runs the
-tests and sees them fail. It restores every file it put back or removed with `git checkout HEAD --
+branch being the Build handoff's `<base>` element; a code file the base lacks is removed unless the
+test imports it), runs the tests and sees them fail. Only a failure once every file and name the
+test imports has loaded counts: an assertion failing, or an error thrown by the code under test or
+by the test's use of its result. A load failure such as `Cannot find module` is not proof, in either
+way. So the builder stubs a file the test imports that does not exist yet or that the base lacks,
+and a name the test imports that its file does not export: the stub exports the same names and does
+not do the work, and is never committed. It keeps a file or name whole only when the test does not
+test it, such as a new fixture or helper. It restores every file it put back or removed with `git checkout HEAD --
 <file>` at once, before any further edit or commit. Its closing paragraph then gives, for each test
 the branch adds or changes that no summary in `<context>` already proves, the test's name, the
 command, which way the run was made (before the code, or against the base's code) and the quoted
-line where it failed. A later attempt proves every such test of the branch, not only those it
+line where it failed, and names each file or name it kept whole or stubbed, with the test it
+served. A test an attempt changes is proved again in that attempt. A later attempt proves every such test of the branch, not only those it
 touches, since an earlier attempt's summary may have left one out. Before it ends any attempt, the
 builder runs the against-the-base way for each test that still has no proof, and says a test was
 never seen failing only when that run cannot be made, in plain words, with the reason. A test that cannot fail on the base carries one of two reasons: "guards behaviour the base
 already has" or "changed only by a refactor". For each test written for a criterion that the
-branch's diff adds or changes, the verifier looks for that proof in the build summaries. A summary
-that only says a test was seen failing, or never mentions it, is no proof. With no proof and no
+branch's diff adds or changes, the verifier looks for that proof in the build summaries, and any
+build summary may prove it, but a proof counts only for the test as that attempt left it, and the
+verifier names the build attempt whose proof it used. A summary that only says a test was seen
+failing, never mentions it, shows only a load failure, or kept whole the code under test is no
+proof. With no proof and no
 accepted reason the criterion fails, with evidence starting `never seen failing:`, naming the test
 and what the summaries lack. A guard reason is accepted only when the base's code already shows the
 behaviour, judged from the branch's files the diff leaves unchanged and the lines it removes; a
