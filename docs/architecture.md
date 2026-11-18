@@ -530,8 +530,25 @@ spec parser stores `owner: true` on it (a criterion stored without the field rea
 tokens left by stray separators are ignored. The verifier gives every criterion one of
 three verdicts here (a fourth, `withdrawn`, is below) through `save_report`: `pass` or `fail` for an ordinary criterion, and for an owner check
 `fail` when it can see the work is wrong and otherwise `owner`, with the evidence of what it did
-check. `save_report` refuses `owner` on an unmarked criterion (`owner_on_unmarked_criterion`) and
-`pass` on an owner check (`pass_on_owner_check`), saving nothing. A report with no `fail` opens the
+check. `save_report` refuses `owner` on an unmarked criterion (`owner_on_unmarked_criterion`)
+unless its evidence, with leading whitespace removed, starts with `not checkable in a run:`
+(matched exactly, in lower case), and refuses `pass` on an owner check (`pass_on_owner_check`),
+saving nothing. The verifier gives that prefix, then the reason, in exactly two cases: (a) the
+criterion needs something that none of these routes holds: the branch's files and diff, the test
+output, a command run on the branch's tree, the build summaries, or the board through `list_tasks`
+and `list_proposals` (work it can see is wrong still fails); (b) its Then depends on an outcome no
+run can force, such as a flake showing, and a base-run report shows that the runs the criterion
+asks for were made, with counts at least the number it asks for. A case (b) criterion whose report
+is missing, or shows fewer runs than asked for, fails, with evidence starting `no base-run
+report:`. The spec-writer is told four things about evidence: a criterion's evidence is something a
+run holds while Verify runs (the branch's files and diff, the test command's output, a command run
+on the branch's tree, the build's closing paragraph, or the board); a criterion that needs a run on
+the base's code or the base commit says that the builder makes the run and reports it in its
+closing paragraph, with the criterion id, the command, the base commit, the counts and the quoted
+result lines; it never writes a criterion whose Then holds only by chance, an attempt to reproduce
+one being a requirement the builder reports on, with no criterion, and the criterion going on a
+deterministic proof; and it never writes a criterion on the session's review, which no run writes,
+but asks for the build's closing paragraph instead. A report with no `fail` opens the
 pull request whether the rest are `pass` or `owner`; one `fail` starts the next Build round, and
 a failed Verify on attempt 3 starts one more Build, attempt 4, when the Build it judged was started
 by the runner (the failing report is `test_command`, `files_gate`, `base_conflict` or `no_commit`);
@@ -664,6 +681,23 @@ refactor reason only when the test's assertions are unchanged; a reason that doe
 proof. The fail covers only tests written for a criterion that the diff adds or changes: such a
 test the diff leaves untouched needs no proof, and a test written for no criterion without proof is
 only named in the report's summary.
+
+**What the verifier counts as a run on the base.** A criterion may ask for a run on the base's
+code or on the base commit. Once the code is committed, the builder makes that run by the
+against-the-base procedure above: it puts back the base's version of the files the criterion puts
+at the base or, for a run on the base commit, of every file the branch changes (a file the base
+lacks is removed), runs the command the criterion names as many times as it asks, and restores
+every file with `git checkout HEAD -- <file>` at once, before any further edit or commit. Its
+closing paragraph reports each such run: the criterion's id, the command, the base commit's hash,
+the counts (runs made, passed and failed) and the quoted output lines that show the result; a later
+attempt reports every such criterion that no summary in `<context>` already reports. The same
+paragraph gives anything a criterion asks of the build's closing paragraph or of "the session's
+review". The verifier's evidence for such a criterion is that report in the build summaries; it
+judges the Then from the counts and quoted lines and never makes the run itself. When no summary has
+the report, or the report leaves out the id, the command, the base commit, the counts or the quoted
+lines, the criterion fails, with evidence starting `no base-run report:` that says what is missing.
+A criterion on the build's closing paragraph or on "the session's review" is judged from the build
+summaries.
 
 **The environment of commands and sessions.** The setup command, the test command and the agents'
 `claude` sessions do not receive `RUNNER_KEY`, `DATABASE_URL`, `PORT` or any variable starting
