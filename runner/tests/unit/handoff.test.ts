@@ -14,6 +14,81 @@ const BASE = {
   summaries: [{ phase: 'plan', attempt: 1, text: 'Planned two steps' }],
 }
 
+const REPORTS = [
+  {
+    attempt: 1,
+    tests: [
+      {
+        name: 'tests/unit/a.test.ts > adds "two" <numbers>',
+        command: 'npx vitest run a',
+        way: 'before_code' as const,
+        failing_line: 'AssertionError: expected "a" to be <b>',
+        stubs: [
+          { file: 'src/a.ts', name: 'add', kept: 'stubbed' as const },
+          { file: 'src/b.ts', kept: 'whole' as const },
+        ],
+        changed_assertions: true,
+      },
+      {
+        name: 'tests/unit/b.test.ts > guards',
+        reason: 'guards_base' as const,
+        why: 'the base has it',
+      },
+    ],
+  },
+  {
+    attempt: 2,
+    tests: [
+      {
+        name: 'c',
+        command: 'k',
+        way: 'against_base' as const,
+        failing_line: 'l',
+      },
+    ],
+  },
+]
+
+describe('the build reports element', () => {
+  const ATTEMPT_ONE = [
+    '<build_report attempt="1">',
+    '<test name="tests/unit/a.test.ts &gt; adds &quot;two&quot; &lt;numbers&gt;" command="npx vitest run a" way="before_code" failing_line="AssertionError: expected &quot;a&quot; to be &lt;b&gt;" changed_assertions="yes">',
+    '<stub file="src/a.ts" name="add" kept="stubbed"/>',
+    '<stub file="src/b.ts" kept="whole"/>',
+    '</test>',
+    '<test name="tests/unit/b.test.ts &gt; guards" reason="guards_base" why="the base has it" changed_assertions="no"/>',
+    '</build_report>',
+  ].join('\n')
+
+  it.each(['build', 'verify'] as const)('is carried after the context in a %s handoff', (phase) => {
+    const text = buildHandoff({ ...BASE, phase, buildReports: REPORTS })
+    expect(text).toContain(`<build_reports>\n${ATTEMPT_ONE}\n`)
+    expect(text).toContain(
+      '<test name="c" command="k" way="against_base" failing_line="l" changed_assertions="no"></test>',
+    )
+    expect(text.indexOf('<build_reports>')).toBeGreaterThan(text.indexOf('</context>'))
+    expect(text.indexOf('<build_reports>')).toBeLessThan(text.indexOf('<return_format>'))
+  })
+
+  it.each([
+    ['a plan handoff with reports', { phase: 'plan' as const, buildReports: REPORTS }],
+    ['a build handoff with none', { phase: 'build' as const, buildReports: [] }],
+    ['a build handoff without the field', { phase: 'build' as const }],
+  ])('is left out of %s', (_name, over) => {
+    expect(buildHandoff({ ...BASE, ...over })).not.toContain('<build_reports>')
+  })
+
+  it('has the build return format, and no handoff names the old tag', () => {
+    expect(buildHandoff(BASE)).toContain(
+      '<return_format>Call save_build_report for every test the branch adds or changes that no entry in &lt;build_reports&gt; proves, then reply with one paragraph.</return_format>',
+    )
+    for (const phase of ['spec', 'plan', 'build', 'verify', 'title', 'rephrase', 'help'] as const)
+      expect(buildHandoff({ ...BASE, phase, buildReports: REPORTS })).not.toContain(
+        'build_report status=',
+      )
+  })
+})
+
 describe('buildHandoff', () => {
   it('follows the platform design’s handoff contract, escaping text', () => {
     const text = buildHandoff({ ...BASE, plan: '1. Backoff', verifyReport: '| AC1 | ✘ fail |' })
