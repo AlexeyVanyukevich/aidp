@@ -208,17 +208,17 @@ const VERIFIER_TEST_RULES: { rule: string; clause: string }[] = [
   {
     rule: 'the quoted line must show a failure once everything the test imports has loaded',
     clause:
-      'The quoted line must show the test failing once every file and name it imports has loaded: one of the test’s own assertions failing, such as an expect or assert message, Playwright’s expect timing out, or an error thrown by the code under test or by the test’s use of its result, such as `Cannot read properties of undefined`. A line that shows a file, module or export missing or failing to load, such as `Cannot find module`, `does not provide an export named` or `is not a function` for a name the base lacks or the code has not added yet, is no proof, whichever way the run was made. When such a line is all the summaries quote for a test, the `never seen failing:` evidence says the line shows only a load failure.',
+      'The quoted line must show the test failing once every file and name it imports has loaded: one of the test’s own assertions failing, such as an expect or assert message, Playwright’s expect timing out, or an error thrown by the code under test or by the test’s use of its result, such as `Cannot read properties of undefined`. A line that shows a file, module or export missing or failing to load, such as `Cannot find module`, `does not provide an export named` or `is not a function` for a name the base lacks or the code has not added yet, is no proof, whichever way the run was made. When such a line is all the entries give for a test, the `never seen failing:` evidence says the line shows only a load failure.',
   },
   {
     rule: 'a proof that kept the tested file whole is no proof',
     clause:
-      'A proof that says it kept whole a file or a name the test tests, rather than stubbing it, is no proof, since with it whole the failure cannot come from the missing code.',
+      'An entry whose stubs list kept whole a file or a name the test tests, rather than stubbing it, is no proof, since with it whole the failure cannot come from the missing code.',
   },
   {
-    rule: 'any build summary may prove a test, for the test as that attempt left it, and the attempt is named',
+    rule: 'any Build’s entry may prove a test, for the test as that attempt left it, and the attempt is named',
     clause:
-      'A test has proof when any build summary in <context> gives proof that meets these rules. A proof counts only for the test as that build attempt left it: when a later build summary says it changed a test’s assertions, only proof from that attempt or a later one counts. Read every build summary before you rule that none does, and in the evidence for a criterion name, for each test it rests on, the build attempt whose summary holds the proof you used, as in `Build 3`.',
+      'A test has proof when any Build’s entry gives proof that meets these rules. A proof counts only for the test as that build attempt left it: when a later Build’s entry for the test sets changed_assertions to yes, only proof from that attempt or a later one counts. Read every Build’s entries before you rule that none does, and in the evidence for a criterion name, for each test it rests on, the build attempt whose entry you used, as in `Build 3`.',
   },
   {
     rule: 'a test is evidence for a criterion only when it would fail if the Then did not hold',
@@ -304,24 +304,14 @@ const VERIFIER_TEST_RULES: { rule: string; clause: string }[] = [
     clause: 'such as a file holding a given text or a line staying unchanged',
   },
   {
-    rule: 'the verifier looks for the proof in the build summaries',
+    rule: 'the verifier looks for the proof in the saved build reports',
     clause:
-      'For each test written for a criterion that the branch’s diff adds or changes, look for its proof in the build summaries in <context>',
-  },
-  {
-    rule: 'the proof is name, command, way of the run and the quoted failing line',
-    clause:
-      'The proof is the test’s name, the command, which way the run was made, and the quoted line where it failed',
-  },
-  {
-    rule: 'a bare seen failing, or no mention, is no proof',
-    clause:
-      'A summary that only says a test was seen failing, without the command and the failing line, is no proof, and neither is a test the summaries never mention',
+      'For each test written for a criterion that the branch’s diff adds or changes, look for its proof in <build_reports>, the entries each Build saved with save_build_report. The proof is an entry with the test’s name, the command, which way the run was made, and the quoted failing line. The board saved it only once it found that command among the Build’s own Bash calls and that line in their output. A build summary is never proof, whatever it says, and neither is a test no entry names.',
   },
   {
     rule: 'a test with no proof fails the criterion with never seen failing',
     clause:
-      'the criterion fails, and its evidence starts with `never seen failing:`, names the test and says what the summaries lack',
+      'the criterion fails, and its evidence starts with `never seen failing:`, names the test and says what the saved entries lack',
   },
   {
     rule: 'an untouched test needs no proof',
@@ -331,16 +321,20 @@ const VERIFIER_TEST_RULES: { rule: string; clause: string }[] = [
   {
     rule: 'a guard reason holds only when the base’s code shows the behaviour',
     clause:
-      'Accept “guards behaviour the base already has” only when the base’s code already shows the behaviour, which you judge from the branch’s files the diff leaves unchanged and the lines the diff removes',
+      'Accept guards_base only when the base’s code already shows the behaviour, which you judge from the branch’s files the diff leaves unchanged and the lines the diff removes',
   },
   {
     rule: 'a refactor reason holds only when the assertions are unchanged',
-    clause:
-      'Accept “changed only by a refactor” only when the diff leaves the test’s assertions the same as before',
+    clause: 'Accept refactor only when the diff leaves the test’s assertions the same as before',
+  },
+  {
+    rule: 'a cannot_run entry is no proof',
+    clause: 'An entry with reason cannot_run is no proof.',
   },
   {
     rule: 'a reason that does not hold is no proof',
-    clause: 'A reason that does not hold is no proof',
+    clause:
+      'A reason given only in a build summary is no proof, and neither is a reason that does not hold.',
   },
   {
     rule: 'the never seen failing fail covers only tests written for a criterion',
@@ -396,9 +390,24 @@ const VERIFIER_TEST_RULES: { rule: string; clause: string }[] = [
 
 const BUILDER_TEST_RULES: { rule: string; clause: string }[] = [
   {
-    rule: 'every test without proof is run against the base before an attempt ends',
+    rule: 'each test without an entry is proved through save_build_report, and only saved entries count',
     clause:
-      'Before you end any attempt, run against the base’s code, as above, each test the branch adds or changes that you have not seen failing and that no summary in <context> proves. Say that a test was never seen failing only when that run cannot be made, in plain words, with the reason it cannot.',
+      'For each test the branch adds or changes that no entry in <build_reports> already proves, save its proof with save_build_report: the test’s name, as its file and its title, the command you ran, which way the run was made, before_code or against_base, and the line of output where the test failed. The command must be exactly the Bash command you ran in this Build, and the line must be copied from that command’s output: save_build_report refuses an entry otherwise and says why. Save each proof as soon as you see the test fail; a later save for the same test replaces the earlier one. On a later attempt this covers every such test of the branch, not only the tests that attempt adds or changes. Before you end any attempt, run against the base’s code, as above, each test the branch adds or changes that you have not seen failing and that no entry proves. When that run cannot be made, save the test with reason cannot_run and say why. Only saved entries count as proof: a proof written only in your closing paragraph does not.',
+  },
+  {
+    rule: 'stubs are listed in the entry, and a changed test is proved again',
+    clause:
+      'When a run kept a file or name whole or stubbed it, list each in the entry’s stubs, with its file, its name when it is one name, and whether it was kept whole or stubbed. A test this attempt changes is proved again in this attempt, even when an earlier entry proved it, and its entry sets changed_assertions to true when the change touched the test’s assertions.',
+  },
+  {
+    rule: 'a test that cannot fail on the base is saved with a reason',
+    clause:
+      'A test that cannot fail on the base is saved with a reason instead of a failing run: guards_base, for guards behaviour the base already has, or refactor, for changed only by a refactor, with why it holds.',
+  },
+  {
+    rule: 'the builder ends by saving every proof not yet saved',
+    clause:
+      'Finish by saving with save_build_report every proof not yet saved, then reply with one paragraph.',
   },
   {
     rule: 'each test is written and run before the code, and seen failing',
@@ -435,29 +444,9 @@ const BUILDER_TEST_RULES: { rule: string; clause: string }[] = [
       'When a test imports a file that does not exist yet, before the code, or that the base does not have, against the base, give that file a stub so the test loads: a stub exports the same names as the file but does not do the work, for example a function that returns undefined. When a test imports a name that its file does not export, as the file stands before the code or as the base’s copy you put back, add a stub of that name to the file in the same way. Keep such a file or name whole instead only when the test does not test it, such as a new fixture or helper the test imports: keeping the code under test whole lets the test pass, which proves nothing. A stub is never committed: before the code, the code replaces it before you commit; against the base, you restore it with the other files.',
   },
   {
-    rule: 'the closing paragraph names each file or name kept whole or stubbed',
-    clause:
-      'When a run kept a file or name whole or stubbed it, name each such file, and each such name with its file, beside the test it served and that test’s quoted failing line, and say whether it was kept whole or stubbed.',
-  },
-  {
-    rule: 'a changed test is proved again in the attempt that changes it',
-    clause:
-      'A test this attempt changes is proved again in this attempt’s closing paragraph, even when an earlier summary proved it, and the paragraph says whether the change touched the test’s assertions.',
-  },
-  {
     rule: 'every file is restored before any further edit or commit',
     clause:
       'restore every file you put back or removed with `git checkout HEAD -- <file>`, at once, before any further edit or commit',
-  },
-  {
-    rule: 'the closing paragraph gives name, command, way and quoted line',
-    clause:
-      'give the test’s name, the command you ran, which way the run was made, before the code or against the base’s code, and the line of output where the test failed, quoted',
-  },
-  {
-    rule: 'a later attempt proves every test no summary proves',
-    clause:
-      'On a later attempt this covers every such test of the branch, not only the tests that attempt adds or changes, since an earlier attempt’s summary may have left a test out',
   },
   {
     rule: 'the guard reason',
@@ -508,6 +497,11 @@ describe('the builder’s rules for seeing a test fail', () => {
     expect(AGENTS.builder!.prompt).toContain(clause)
   })
 
+  it('names no build_report tag and offers the tool', () => {
+    expect(AGENTS.builder!.prompt).not.toMatch(/<build_report[ />]/)
+    expect(PHASES.build.tools).toContain('mcp__board__save_build_report')
+  })
+
   it('no longer lets a builder admit a missing run without trying', () => {
     expect(AGENTS.builder!.prompt).not.toContain(
       'A test you never saw failing, say so in plain words',
@@ -516,6 +510,14 @@ describe('the builder’s rules for seeing a test fail', () => {
 })
 
 describe('the verifier’s rules for tests', () => {
+  it('no longer reads proof from the build summaries', () => {
+    for (const phrase of [
+      'look for its proof in the build summaries',
+      'says what the summaries lack',
+    ])
+      expect(AGENTS.verifier!.prompt).not.toContain(phrase)
+  })
+
   it('no longer says every other criterion never gets owner without exception', () => {
     expect(AGENTS.verifier!.prompt).not.toContain(
       'Every other criterion gets pass or fail, never owner.',
@@ -686,6 +688,7 @@ describe('the board-reading tools', () => {
       'mcp__board__list_proposals',
       'mcp__board__log_step',
       'mcp__board__request_approval',
+      'mcp__board__save_build_report',
     ],
     verify: [
       'Read',
@@ -781,7 +784,7 @@ describe('proposing a finding', () => {
   const rows: Row[] = [
     { agent: 'spec-writer', ends: 'the closing paragraph', unrelated: false },
     { agent: 'planner', ends: 'the plan summary', unrelated: false },
-    { agent: 'builder', ends: 'the build report’s paragraph', unrelated: true },
+    { agent: 'builder', ends: 'your closing paragraph', unrelated: true },
     { agent: 'verifier', ends: 'the verify report’s summary', unrelated: true },
   ]
   describe.each(rows)('the $agent’s prompt', ({ agent, ends, unrelated }) => {
