@@ -1,5 +1,6 @@
 import type { PhaseName } from '../contract.js'
 import { fenceMigration } from '../migration-content.js'
+import type { BuildReportGroup } from '../build-reports.js'
 
 export interface HandoffInput {
   taskKey: string
@@ -33,6 +34,8 @@ export interface HandoffInput {
   testOutput?: { text: string; path: string }
   /** Verify only: the diff and the absolute path of the file that holds all of it. */
   diff?: { text: string; path: string }
+  /** Build and Verify: the entries each Build saved, by attempt. */
+  buildReports?: BuildReportGroup[] | undefined
   /** The read-only checkouts of the projects this one links to. */
   linked?: LinkedElement[]
 }
@@ -160,11 +163,27 @@ function planAnswerTags(answers: { run: number; approved: boolean; text: string 
   return tags
 }
 
+const yesNo = (flag: boolean | undefined) => (flag === true ? 'yes' : 'no')
+
+/** One `<test>` element of a saved build report. */
+function testTag(entry: BuildEntry): string {
+  const head = `<test name="${attr(entry.name)}"`
+  const tail = `changed_assertions="${yesNo(entry.changed_assertions)}"`
+  if ('reason' in entry)
+    return `${head} reason="${attr(entry.reason)}" why="${attr(entry.why)}" ${tail}/>`
+  const open = `${head} command="${attr(entry.command)}" way="${attr(entry.way)}" failing_line="${attr(entry.failing_line)}" ${tail}>`
+  const stubs = (entry.stubs ?? []).map(
+    (s) =>
+      `<stub file="${attr(s.file)}"${s.name === undefined ? '' : ` name="${attr(s.name)}"`} kept="${attr(s.kept)}"/>`,
+  )
+  return stubs.length === 0 ? `${open}</test>` : `${open}\n${stubs.join('\n')}\n</test>`
+}
+
 const RETURNS: Record<HandoffInput['phase'], string> = {
   spec: 'Call save_spec until the lint is clean, then reply with one paragraph.',
   plan: 'Call save_plan, then reply with one paragraph.',
   build:
-    '<build_report status="done|blocked" files="…" tests="…" confidence="high|medium|low"/> and one paragraph.',
+    'Call save_build_report for every test the branch adds or changes that no entry in <build_reports> proves, then reply with one paragraph.',
   verify: 'Call save_report with a verdict on every criterion, then reply with one paragraph.',
   title: 'Call suggest_title, then reply with one sentence.',
   rephrase: 'Call save_suggestion, then reply with one sentence.',
@@ -195,6 +214,16 @@ export function buildHandoff(input: HandoffInput): string {
       `<context>\n${summaries.map((s) => `<summary phase="${s.phase}" attempt="${s.attempt}">${escape(s.text)}</summary>`).join('\n')}\n</context>`,
     )
   }
+  const reports = (input.buildReports ?? []).filter((g) => g.tests.length > 0)
+  if ((input.phase === 'build' || input.phase === 'verify') && reports.length > 0)
+    parts.push(
+      `<build_reports>\n${reports
+        .map(
+          (g) =>
+            `<build_report attempt="${g.attempt}">\n${g.tests.map(testTag).join('\n')}\n</build_report>`,
+        )
+        .join('\n')}\n</build_reports>`,
+    )
   for (const previous of input.previousPlans ?? [])
     parts.push(
       `<previous_plan run="${previous.run}" accepted="${previous.accepted ? 'yes' : 'no'}">\n${escape(cut('previous plan', previous.text, 20_000))}\n</previous_plan>`,

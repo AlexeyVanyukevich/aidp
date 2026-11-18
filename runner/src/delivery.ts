@@ -4,7 +4,8 @@ import { join, resolve } from 'node:path'
 import type { PlanData, ReportData, Work } from './contract.js'
 import type { RunnerConfig } from './config.js'
 import type { Git } from './git.js'
-import { buildHandoff, DIFF_MAX, type HandoffInput } from './phases/handoff.js'
+import { foldBuildReports } from './build-reports.js'
+import { buildHandoff, DIFF_MAX, type BuildEntry, type HandoffInput } from './phases/handoff.js'
 import { diffSections, type DiffSection } from './pr-diff.js'
 import { cutLines } from './verify-cuts.js'
 import { formatViolations, newlyChanged, readApprovedCopies, violationsOf } from './files-gate.js'
@@ -140,6 +141,21 @@ export async function carryOut(
       .filter((p) => p.name !== 'help' && p.status === 'succeeded' && p.summary_md !== null)
       .map((p) => ({ phase: p.name, attempt: p.attempt, text: p.summary_md ?? '' }))
 
+  /** The entries each Build saved, folded by attempt; the Build and Verify handoffs carry them. */
+  const buildReports = async () => {
+    const view = await getRun()
+    const attempts = new Map(view.phases.map((p) => [p.id, p.attempt]))
+    return foldBuildReports(
+      view.artifacts.flatMap((a) => {
+        const attempt = a.phase_id === null ? undefined : attempts.get(a.phase_id)
+        const tests = (a.data as { tests?: BuildEntry[] } | null)?.tests
+        return a.kind === 'build_report' && a.phase_id !== null && attempt !== undefined && tests
+          ? [{ phaseId: a.phase_id, attempt, tests }]
+          : []
+      }),
+    )
+  }
+
   const uncommitted = async () =>
     (await deps.git.changedPaths(worktree, project.base_branch)).uncommitted
 
@@ -226,6 +242,7 @@ export async function carryOut(
       phase: name,
       attempt: state.attempt,
       summaries: await summaries(),
+      buildReports: await buildReports(),
       linked: linkedForHandoff(runDir),
     }
     if (name === 'plan')

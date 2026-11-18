@@ -2870,6 +2870,41 @@ describe('the fourth attempt, and the reasons a run ends with', () => {
     expect(h.handoffs['build-2']).toContain(`${paragraph}\n\n${REMINDER}`)
   })
 
+  it('AC9: a Verify 1 handoff holds the entry Build 1 saved under attempt 1', async () => {
+    const h = harness({})
+    const end = h.deps.phases.end
+    h.deps.phases.end = async (record, ok, ...rest) => {
+      if (record.phase === 'build')
+        h.artifacts.push({
+          id: 'br-1',
+          kind: 'build_report',
+          phase_id: record.phaseId,
+          body_md: '-',
+          uri: null,
+          data: {
+            tests: [
+              { name: 'a > b', reason: 'refactor', why: 'only moved', changed_assertions: false },
+            ],
+          },
+        })
+      return end(record, ok, ...rest)
+    }
+    await carryOut(START as Extract<Work, { kind: 'start' }>, h.deps)
+    expect(h.handoffs['verify-1']).toContain(
+      '<build_reports>\n<build_report attempt="1">\n<test name="a &gt; b" reason="refactor" why="only moved" changed_assertions="no"/>\n</build_report>\n</build_reports>',
+    )
+    expect(h.handoffs['plan-1']).not.toContain('<build_reports>')
+    expect(h.handoffs['build-1']).not.toContain('<build_reports>')
+  })
+
+  it('AC14: the reminder asks for the proof through the tool', () => {
+    expect(REMINDER).not.toContain('closing paragraph')
+    expect(REMINDER).not.toMatch(/[<>]/)
+    expect(REMINDER).toBe(
+      'This round was started by the runner, not by Verify, so no Verify has checked the latest Build’s proof that each test the branch adds or changes was seen failing. Besides fixing what this report names, save that proof with save_build_report for every such test that no entry in the build reports proves, running it against the base’s code as your instructions say.',
+    )
+  })
+
   it('AC11: a Build after a failed Verify, and the first Build, carry no reminder', async () => {
     const { h, done } = go({ verdicts: ['fail', 'pass'] })
     await done
