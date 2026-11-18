@@ -37,6 +37,30 @@ export interface HandoffInput {
   linked?: LinkedElement[]
 }
 
+/** A kept or stubbed file or name in a failing run's proof. */
+export interface BuildStub {
+  file: string
+  name?: string
+  kept: 'stubbed' | 'whole'
+}
+
+/** One entry of a saved build report: a failing run, or a reason a test cannot fail. */
+export type BuildEntry =
+  | {
+      name: string
+      command: string
+      way: 'before_code' | 'against_base'
+      failing_line: string
+      stubs?: BuildStub[]
+      changed_assertions?: boolean
+    }
+  | {
+      name: string
+      reason: 'guards_base' | 'refactor' | 'cannot_run'
+      why: string
+      changed_assertions?: boolean
+    }
+
 /** What a `<project>` element of `<linked_projects>` says about one linked checkout. */
 interface LinkedElement {
   key: string
