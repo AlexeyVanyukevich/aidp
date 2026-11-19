@@ -878,6 +878,16 @@ owner sends. Each help is a phase named `help` on the asking run: its usage is p
 task's cost, and it is never the run's current phase, a checkpoint's phase, or in a handoff's
 summaries. Approving a plan with words is refused, naming `text`.
 
+**What `get_question` withholds.** In `suggest` and `suggest_all` mode `get_question` returns no
+`recommendation`, at the top level or on a batch question: in an audit of 159 suggestions on
+questions that carried one, the helper picked the asking agent's recommendation in 150, so the
+helper now forms its view from the code, and its prompt says the question and its context are the
+asking agent's and may argue for one option. In `explain` and `review_plan` mode it still returns
+`recommendation`. For a request of kind `questions`, in every mode, it also returns
+`batch_context_md`: the request's own `context_md`, the context the owner sees above the batch, or
+null; a request of any other kind has no such field. The owner still sees the recommendation on
+the card.
+
 **The whole-batch suggestion.** The `question` decision has a third mode, `suggest_all`
 (`helps_mode_known` and `helps_mode_of_decision` allow it; migration 014, whose `down` refuses
 while such a help exists). A client cannot ask for it: `POST /api/approvals/:id/helps` keeps the
@@ -888,7 +898,8 @@ Otherwise, with the project's `batch_suggest` `whole`, it records one `suggest_a
 null `question_index`; with `one` it records a `suggest` help for that question. Any other kind
 of request, and every `explain` press, behave as before. For a `suggest_all` help `get_question`
 returns `kind`, `batch_lead` and `questions`, the batch's questions in order, each with `id`,
-`question`, `context_md`, `options` and `recommendation`. `save_help_result` takes `answers`, a
+`question`, `context_md` and `options`, and the request's own `context_md` as `batch_context_md`
+(null when it has none). `save_help_result` takes `answers`, a
 list of `{ question_id, option_id?, text?, reasoning, unsure }`, and refuses, naming the field:
 `answers: required` (a question missing), `answers: unknown question`, `answers: duplicate`, an
 answer that fails a suggestion's check as `answers[<i>].<field>` (for example
