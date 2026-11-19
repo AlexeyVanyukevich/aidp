@@ -773,7 +773,7 @@ function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string):
     'get_question',
     {
       description:
-        'Read the question you were asked to help with: the question, its context, its options (for a whole-batch suggestion: kind, batch_lead, batch_context_md and every question of the batch in order, each with its id, question, context_md and options), for a batch of questions batch_context_md, the context the owner sees above the batch (or null), and for a request to change files the files, for a migration request the path and the whole file, and for a plan the plan. For a plan review it also returns previous and approval_note: the owner’s note for the planner, given at the spec gate, or null. In explain and plan review mode it also returns the asking agent’s recommendation; in suggest and suggest_all mode it does not.',
+        'Read the question you were asked to help with: the question, its context, its options (for a whole-batch suggestion: kind, batch_lead, batch_context_md and every question of the batch in order, each with its id, question, context_md and options), for a batch of questions batch_context_md, the context the owner sees above the batch (or null), and for a request to change files the files, for a migration request the path and the whole file, and for a plan the plan. For a plan review it also returns previous and approval_note: the owner’s note for the planner, given at the spec gate, or null.',
     },
     async () => {
       const head = await helpHead(ctx, helpId)
