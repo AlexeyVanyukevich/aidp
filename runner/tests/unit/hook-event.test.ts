@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { hookToEvent, pausedBy } from '../../src/hooks/hook-event.js'
+import { hookToEvent, pausedBy, savedBy } from '../../src/hooks/hook-event.js'
 
 const ctx = { runId: 'r', phaseId: 'p', agent: 'builder' }
 
@@ -122,5 +122,40 @@ describe('pausedBy', () => {
     ['a built-in tool', call('Read', 'Paused: no'), false],
   ])('%s', (_name, input, paused) => {
     expect(pausedBy(input)).toBe(paused)
+  })
+})
+
+describe('savedBy', () => {
+  const call = (tool_name: string, tool_response: unknown) => ({
+    hook_event_name: 'PostToolUse',
+    tool_name,
+    tool_input: { option_id: 'b' },
+    tool_response,
+  })
+  const text = (value: string) => [{ type: 'text', text: value }]
+  it.each([
+    [
+      'the board’s success answer to save_help_result',
+      call('mcp__board__save_help_result', text('Saved. End your turn now.')),
+      true,
+    ],
+    [
+      'a refused save',
+      call('mcp__board__save_help_result', [
+        { type: 'text', text: 'option_id: not one of the options. Fix it and save again.' },
+      ]),
+      false,
+    ],
+    [
+      'a stale save',
+      call(
+        'mcp__board__save_help_result',
+        text('This decision is no longer offered; nothing was saved. End your turn now.'),
+      ),
+      false,
+    ],
+    ['another board tool answering Saved.', call('mcp__board__save_plan', text('Saved.')), false],
+  ])('%s', (_name, input, saved) => {
+    expect(savedBy(input)).toBe(saved)
   })
 })
