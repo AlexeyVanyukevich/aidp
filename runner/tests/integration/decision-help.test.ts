@@ -2,13 +2,17 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { beforeAll, describe, expect, it } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BoardApi } from '../../src/api.js'
 import type { HelpWork } from '../../src/contract.js'
 import { realExec } from '../../src/exec.js'
 import { Git } from '../../src/git.js'
+import type { ProcessInput, ProcessResult } from '../../src/phases/process.js'
+import type { RunnerEvent } from '../../src/contract.js'
 import {
   HELP_FILE,
+  RESTART_REASON,
+  carryHelp,
   checkoutPayload,
   cleanUpHelp,
   clearEndedHelps,
@@ -19,6 +23,24 @@ import { readLinked } from '../../src/linked.js'
 import { runPaths } from '../../src/run-steps.js'
 import { LOG_FILE, type LogContext, type LogLine } from '../../src/worktree-log.js'
 import { targetRepository, useTestGitIdentity } from './target-repo.js'
+
+/** The processes `carryHelp` starts: each call is recorded, and a test scripts what it returns. */
+const processes = vi.hoisted(() => ({
+  calls: [] as { input: ProcessInput }[],
+  script: null as null | ((input: ProcessInput, call: number) => Promise<unknown> | unknown),
+}))
+vi.mock('../../src/phases/process.js', async (importActual) => {
+  const actual = await importActual<typeof import('../../src/phases/process.js')>()
+  return {
+    ...actual,
+    runProcess: (input: ProcessInput, deps: Parameters<typeof actual.runProcess>[1]) => {
+      processes.calls.push({ input })
+      return processes.script === null
+        ? actual.runProcess(input, deps)
+        : processes.script(input, processes.calls.length)
+    },
+  }
+})
 
 const sh = (args: string[], cwd?: string) => execFileSync('git', args, { cwd, encoding: 'utf8' })
 const git = new Git(realExec, 'gh')
@@ -359,5 +381,269 @@ describe('clearing leftovers at start', () => {
     expect(existsSync(made.worktree)).toBe(true)
     expect(existsSync(made.runDir)).toBe(true)
     expect(log(home).filter((line) => line.caller === 'help')).toEqual([])
+  })
+})
+
+// ── carryHelp's resume, with the process stubbed ─────────────────────────────────────────────
+
+interface Shape {
+  exit?: number
+  error?: boolean
+  text?: string
+  stopped?: ProcessResult['stopped']
+  interrupted?: boolean
+  /** The process writes the marker the event hook writes when a save is accepted. */
+  saves?: boolean
+  cost?: Record<string, number>
+  totals?: Record<string, unknown>
+}
+const NOT_SAVED = 'the helper ended without saving a result'
+const ASKED_TO_SAVE = `${NOT_SAVED}, even when asked to save`
+
+/** A question help carried with scripted processes, a stub board and the signals a row sets. */
+async function carried(
+  shapes: Shape[],
+  options: {
+    marker?: boolean
+    heartbeat?: 'ok' | 'stop' | 'reject'
+    signal?: { on: number; kind: 'restart' | 'shutdown' }
+  } = {},
+) {
+  const home = mkdtempSync(join(tmpdir(), 'carry-home-'))
+  mkdirSync(runPaths(home, 'run-1').worktree, { recursive: true })
+  const runDir = join(home, 'helps', 'help-1')
+  if (options.marker === true) {
+    mkdirSync(runDir, { recursive: true })
+    writeFileSync(join(runDir, 'help-saved'), '')
+  }
+  const restart = new AbortController()
+  const shutdown = new AbortController()
+  const sent: RunnerEvent[] = []
+  const failed: string[] = []
+  let heartbeats = 0
+  const api = {
+    helpHeartbeat: async () => {
+      heartbeats += 1
+      if (options.heartbeat === 'reject') throw new Error('unreachable')
+      return { stop: options.heartbeat === 'stop' ? ['help-1'] : [] }
+    },
+    issueHelpToken: async () => 'token',
+    sendEvents: async (_token: string, events: RunnerEvent[]) => {
+      sent.push(...events)
+      return events.length
+    },
+    failHelp: async (_id: string, reason: string) => void failed.push(reason),
+    retire: async () => undefined,
+  }
+  processes.calls = []
+  processes.script = (input, call) => {
+    const shape = shapes[call - 1] ?? {}
+    if (shape.saves === true) writeFileSync(join(input.runDir, 'help-saved'), '')
+    if (options.signal?.on === call)
+      (options.signal.kind === 'restart' ? restart : shutdown).abort()
+    const totals = shape.totals ?? { opus: { input: call * 10 } }
+    return {
+      exitCode: shape.exit ?? 0,
+      stopped: shape.stopped ?? 'no',
+      interrupted: shape.interrupted ?? false,
+      stderrTail: '',
+      normalizer: {
+        result: { isError: shape.error ?? false, text: shape.text ?? `text ${call}` },
+        sessionId: 'session-from-process',
+        totals: () => totals,
+        reportedCost: () => shape.cost ?? { opus: call },
+      },
+    }
+  }
+  await carryHelp(
+    {
+      id: 'help-1',
+      mode: 'suggest',
+      decision: 'question',
+      approval_id: null,
+      question_index: null,
+      phase_id: 'p',
+      attempt: 1,
+      run: {
+        id: 'run-1',
+        number: 1,
+        worktree_path: null,
+        task: { id: 't', key: 'PAY-1', title: 'T', budget_usd: null },
+      },
+    } as HelpWork,
+    {
+      api: api as unknown as BoardApi,
+      git,
+      config: {
+        runnerId: 'r',
+        heartbeatMs: 600_000,
+        home,
+        claudeBin: 'claude',
+        boardUrl: 'http://b',
+      } as never,
+      runnerCode: 'code',
+      shutdown: shutdown.signal,
+      restart: restart.signal,
+    },
+  )
+  processes.script = null
+  return { calls: processes.calls.map((c) => c.input), sent, failed, heartbeats }
+}
+
+describe('carryHelp asks a helper that did not save once', () => {
+  beforeEach(() => {
+    processes.calls = []
+  })
+  const rows: {
+    name: string
+    shapes: Shape[]
+    options?: Parameters<typeof carried>[1]
+    launches: number
+    heartbeats: number
+    reason: string
+  }[] = [
+    {
+      name: 'the first ends well without saving',
+      shapes: [{}, {}],
+      launches: 2,
+      heartbeats: 1,
+      reason: ASKED_TO_SAVE,
+    },
+    {
+      name: 'the first saved',
+      shapes: [{ saves: true }],
+      launches: 1,
+      heartbeats: 0,
+      reason: NOT_SAVED,
+    },
+    {
+      name: 'the resumed one saves',
+      shapes: [{}, { saves: true }],
+      launches: 2,
+      heartbeats: 1,
+      reason: NOT_SAVED,
+    },
+    {
+      name: 'a marker from before is in the run directory',
+      shapes: [{}, {}],
+      options: { marker: true },
+      launches: 2,
+      heartbeats: 1,
+      reason: ASKED_TO_SAVE,
+    },
+    {
+      name: 'the first ends with an error result',
+      shapes: [{ error: true }],
+      launches: 1,
+      heartbeats: 0,
+      reason: 'the helper ended with an error',
+    },
+    {
+      name: 'the first exits non-zero',
+      shapes: [{ exit: 1 }],
+      launches: 1,
+      heartbeats: 0,
+      reason: 'the helper ended with an error',
+    },
+    {
+      name: 'the first was interrupted',
+      shapes: [{ interrupted: true }],
+      launches: 1,
+      heartbeats: 0,
+      reason: NOT_SAVED,
+    },
+    {
+      name: 'the first was stopped by the board’s heartbeat',
+      shapes: [{ stopped: 'cancelled' }],
+      launches: 1,
+      heartbeats: 0,
+      reason: NOT_SAVED,
+    },
+    {
+      name: 'restart is signalled',
+      shapes: [{}],
+      options: { signal: { on: 1, kind: 'restart' } },
+      launches: 1,
+      heartbeats: 0,
+      reason: RESTART_REASON,
+    },
+    {
+      name: 'shutdown is signalled',
+      shapes: [{}],
+      options: { signal: { on: 1, kind: 'shutdown' } },
+      launches: 1,
+      heartbeats: 0,
+      reason: 'the runner stopped',
+    },
+    {
+      name: 'the stop check’s list holds the help',
+      shapes: [{}],
+      options: { heartbeat: 'stop' },
+      launches: 1,
+      heartbeats: 1,
+      reason: NOT_SAVED,
+    },
+    {
+      name: 'the stop check fails',
+      shapes: [{}],
+      options: { heartbeat: 'reject' },
+      launches: 1,
+      heartbeats: 1,
+      reason: NOT_SAVED,
+    },
+    {
+      name: 'the resumed one ends with an error',
+      shapes: [{}, { error: true }],
+      launches: 2,
+      heartbeats: 1,
+      reason: 'the helper ended with an error',
+    },
+    {
+      name: 'restart is signalled during the resumed one',
+      shapes: [{}, {}],
+      options: { signal: { on: 2, kind: 'restart' } },
+      launches: 2,
+      heartbeats: 1,
+      reason: RESTART_REASON,
+    },
+  ]
+  it.each(rows)('when $name', async ({ shapes, options, launches, heartbeats, reason }) => {
+    const done = await carried(shapes, options)
+    expect(done.calls).toHaveLength(launches)
+    expect(done.heartbeats).toBe(heartbeats)
+    expect(done.failed).toEqual([reason])
+  })
+
+  it('resumes the same session, with the first totals as its baseline and a message to save', async () => {
+    const done = await carried([{ totals: { opus: { input: 7 } } }, {}])
+    const [first, second] = done.calls
+    expect(first).toMatchObject({ resume: false, baseline: {} })
+    expect(second).toMatchObject({
+      resume: true,
+      sessionId: 'session-from-process',
+      baseline: { opus: { input: 7 } },
+      phase: 'help',
+    })
+    expect(second!.prompt).toContain('Nothing was saved')
+    expect(second!.prompt).toContain('save_help_result')
+  })
+
+  it('sends one phase start and one closing phase end that sums the shares', async () => {
+    const done = await carried([
+      { text: 'the advice', cost: { opus: 1.5, haiku: 0.25 } },
+      { text: '', cost: { opus: 0.5 }, interrupted: true },
+    ])
+    const types = done.sent.map((event) => event.type)
+    expect(types.filter((type) => type === 'phase_start')).toHaveLength(1)
+    expect(types.filter((type) => type === 'phase_end')).toHaveLength(1)
+    expect(types.at(-1)).toBe('phase_end')
+    expect(done.sent.at(-1)!.payload).toMatchObject({
+      status: 'succeeded',
+      // The resumed process wrote no text: the first one's stands.
+      summary_md: 'the advice',
+      reported_cost: { opus: 2, haiku: 0.25 },
+      session_id: 'session-from-process',
+      interrupted: true,
+    })
   })
 })
