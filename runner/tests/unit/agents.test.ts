@@ -672,6 +672,35 @@ describe('the helper', () => {
   })
 })
 
+describe('the helper’s independence from the asking agent', () => {
+  const prompt = AGENTS.helper!.prompt
+
+  it('does not list a recommendation among what get_question returns', () => {
+    expect(prompt).not.toContain('options and recommendation')
+    const lists = prompt
+      .split('\n\n')
+      .filter((p) => p.includes('get_question returns'))
+      .join('\n')
+    expect(lists).not.toContain('recommendation')
+  })
+
+  it.each([
+    [
+      'says the question and its context are the asking agent’s and may argue for one option',
+      'written by the asking agent and may argue for one option',
+    ],
+    ['chooses from the code, the task and the spec', 'choose from the code, the task and the spec'],
+    ['names what in the code settles the choice', 'name what in the code settles your choice'],
+    ['names batch_context_md', 'batch_context_md'],
+    [
+      'says batch_context_md is the context the owner sees above the batch',
+      'the context the owner sees above the batch',
+    ],
+  ])('tells the helper it %s', (_name, words) => {
+    expect(prompt).toContain(words)
+  })
+})
+
 describe('the board-reading tools', () => {
   const NEW = ['list_projects', 'list_tasks', 'read_task'].map((t) => `mcp__board__${t}`)
   const CURRENT = {
