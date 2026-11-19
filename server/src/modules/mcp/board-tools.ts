@@ -773,7 +773,7 @@ function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string):
     'get_question',
     {
       description:
-        'Read the question you were asked to help with: the question, its context, its options with the recommendation (for a whole-batch suggestion: kind, batch_lead and every question of the batch in order, each with its id, question, context_md, options and recommendation), and for a request to change files the files, for a migration request the path and the whole file, and for a plan the plan. For a plan review it also returns previous and approval_note: the owner’s note for the planner, given at the spec gate, or null.',
+        'Read the question you were asked to help with: the question, its context, its options (for a whole-batch suggestion: kind, batch_lead, batch_context_md and every question of the batch in order, each with its id, question, context_md and options), for a batch of questions batch_context_md, the context the owner sees above the batch (or null), and for a request to change files the files, for a migration request the path and the whole file, and for a plan the plan. For a plan review it also returns previous and approval_note: the owner’s note for the planner, given at the spec gate, or null. In explain and plan review mode it also returns the asking agent’s recommendation; in suggest and suggest_all mode it does not.',
     },
     async () => {
       const head = await helpHead(ctx, helpId)
@@ -784,12 +784,12 @@ function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string):
         return json({
           kind: row.kind,
           batch_lead: row.question,
+          batch_context_md: row.context_md ?? null,
           questions: ((row.questions ?? []) as BatchQuestion[]).map((q) => ({
             id: q.id,
             question: q.question,
             context_md: q.context_md,
             options: q.options,
-            recommendation: q.recommendation,
           })),
         })
       if (asked === null) return reply('This question is gone.', true)
@@ -799,7 +799,9 @@ function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string):
         question: asked.question,
         context_md: asked.context_md,
         options: asked.options,
-        recommendation: asked.recommendation,
+        ...(head.mode === 'explain' || head.mode === 'review_plan'
+          ? { recommendation: asked.recommendation }
+          : {}),
         ...(files === null ? {} : { files }),
         ...(row.kind === 'plan' ? { plan: row.context_md } : {}),
         ...(head.mode === 'review_plan'
@@ -808,7 +810,9 @@ function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string):
               approval_note: await approvalNoteFor(ctx, helpId),
             }
           : {}),
-        ...(row.kind === 'questions' ? { batch_lead: row.question } : {}),
+        ...(row.kind === 'questions'
+          ? { batch_lead: row.question, batch_context_md: row.context_md ?? null }
+          : {}),
       })
     },
   )
