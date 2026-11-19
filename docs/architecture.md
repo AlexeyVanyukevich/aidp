@@ -869,9 +869,23 @@ Glob, `get_task`, `get_spec`, `list_projects`, `list_tasks`, `read_task`, `get_q
 `get_decision`, `get_phase_record` and `save_help_result`. The guard
 refuses everything else. `save_help_result` refuses an option the question does not offer, a
 suggestion with neither option nor words, and an explanation carrying an option, naming the field;
-a saved result moves the help to `succeeded` and the card shows it without a reload. A help that
-ends without a result, or whose process sends no heartbeat for 90 seconds (the sweeper), is
-`failed`, and the sweeper also closes its Help phase. Answering, Cancel and withdrawal mark the
+a saved result moves the help to `succeeded` and the card shows it without a reload. A help whose
+process sends no heartbeat for 90 seconds (the sweeper) is `failed`, and the sweeper also closes
+its Help phase. The first message of every help ends with a line telling the helper to save its
+result with `save_help_result` and then end its turn, and the helper's prompt says that only the
+saved result reaches the owner, never its closing text. The PostToolUse hook writes a `help-saved`
+marker into the help's run directory when `save_help_result` is answered `Saved.`; a refused or
+stale save writes none. `carryHelp` removes any such marker before the first process starts. When
+that process ends well (exit 0 and a result that is not an error) with no marker, and was not
+interrupted, stopped, restarted or shut down, the runner makes one stop check, a `helpHeartbeat`
+call for the help. Only when that call succeeds and its stop list does not hold the help does it
+resume the same session once, in the same Help phase, with a message saying nothing was saved and
+to call `save_help_result` now with the advice already written. The resume takes the first
+process's session totals as its baseline, and the Help phase gets one `phase_start` and one
+`phase_end` whose reported cost sums both processes. A help whose resumed process also ends well
+without a marker is `failed` with the reason `the helper ended without saving a result, even when
+asked to save`; a help that is not resumed and ends without a result keeps the reason `the helper
+ended without saving a result`, which the board ignores for a help it has stopped. Answering, Cancel and withdrawal mark the
 request's queued and running helps `stopped`; the next heartbeat ends the process, and a save from
 it is refused. Nothing a help produced reaches the asking agent except through the answer the
 owner sends. Each help is a phase named `help` on the asking run: its usage is priced into the
@@ -1704,8 +1718,8 @@ worktree. The daemon computes it once at start and gives it to every phase proce
   `BOARD_RUNNER_CODE` is unset, empty or different, it denies the call: the runner's code changed
   since the runner started the phase, so no tool call is allowed, and the agent should end its turn
   and say so. A fingerprint that cannot be computed is a guard failure, refused as above. The
-  event hook is unchanged: it records events, writes the pause marker and gives the files
-  feedback whatever the value.
+  event hook is unchanged: it records events, writes the pause marker and, for a help's accepted
+  `save_help_result`, the `help-saved` marker, and gives the files feedback whatever the value.
 - **The `runner code check` block.** Before spawning a phase process, and again when one ends of
   its own accord (before its result is acted on), the daemon computes the fingerprint. When it
   differs from the start value, no process starts (before) or the result is dropped (after), a
