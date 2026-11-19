@@ -229,7 +229,8 @@ describe('a help through its life', () => {
     )
 
     const read = JSON.parse((await call('get_question')).content[0]!.text)
-    expect(read).toMatchObject({ question: 'Which colour?', options: [A, B], recommendation: 'b' })
+    expect(read).toMatchObject({ question: 'Which colour?', options: [A, B] })
+    expect(read).not.toHaveProperty('recommendation')
 
     const wrongOption = await call('save_help_result', {
       option_id: 'c',
@@ -559,11 +560,13 @@ describe('a whole-batch help through its life', () => {
       id: 'q1',
       question: 'One?',
       options: [A, B],
-      recommendation: 'a',
     })
-    expect(Object.keys(read.questions[0]).sort()).toEqual(
-      ['context_md', 'id', 'options', 'question', 'recommendation'].sort(),
-    )
+    expect(Object.keys(read.questions[0]).sort()).toEqual([
+      'context_md',
+      'id',
+      'options',
+      'question',
+    ])
   })
 
   const refusals: { name: string; save: () => Record<string, unknown>; field: string }[] = [
@@ -812,5 +815,113 @@ describe('get_question for a plan review: previous', () => {
     const after = Array.from({ length: 3_000 }, (_, i) => `new ${i}`).join('\n')
     const s = await seedPlanReview({ text: 'Redo it', context: before }, after)
     expect((await previous(s)).diff).toBe(before)
+  })
+})
+
+describe('get_question: the recommendation and the batch context, by mode', () => {
+  const CONTEXT = 'Deliveries go to a rate-limited partner API'
+  const questions = [
+    { question: 'One?', options: [A, B], recommendation: 'a' },
+    { question: 'Two?', options: [{ id: 'x', label: 'X' }], recommendation: 'x' },
+  ]
+  const batch = (context_md?: string) => ({
+    kind: 'questions' as const,
+    question: 'lead',
+    options: [],
+    questions,
+    ...(context_md === undefined ? {} : { context_md }),
+  })
+
+  interface Row {
+    name: string
+    request: Partial<OpenRequest>
+    mode: 'suggest' | 'suggest_all' | 'explain' | 'review_plan'
+    index: number | null
+    recommendation: 'absent' | 'a' | 'b'
+    batchContext: 'absent' | 'null' | typeof CONTEXT
+  }
+  const rows: Row[] = [
+    {
+      name: 'suggest on a lone request',
+      request: {},
+      mode: 'suggest',
+      index: null,
+      recommendation: 'absent',
+      batchContext: 'absent',
+    },
+    {
+      name: 'suggest on a batch question',
+      request: batch(CONTEXT),
+      mode: 'suggest',
+      index: 0,
+      recommendation: 'absent',
+      batchContext: CONTEXT,
+    },
+    {
+      name: 'suggest_all on a batch',
+      request: batch(CONTEXT),
+      mode: 'suggest_all',
+      index: null,
+      recommendation: 'absent',
+      batchContext: CONTEXT,
+    },
+    {
+      name: 'explain on a lone request',
+      request: {},
+      mode: 'explain',
+      index: null,
+      recommendation: 'b',
+      batchContext: 'absent',
+    },
+    {
+      name: 'explain on a batch question',
+      request: batch(CONTEXT),
+      mode: 'explain',
+      index: 0,
+      recommendation: 'a',
+      batchContext: CONTEXT,
+    },
+    {
+      name: 'review_plan on a question',
+      request: {},
+      mode: 'review_plan',
+      index: null,
+      recommendation: 'b',
+      batchContext: 'absent',
+    },
+    {
+      name: 'suggest on a batch without context',
+      request: batch(),
+      mode: 'suggest',
+      index: 1,
+      recommendation: 'absent',
+      batchContext: 'null',
+    },
+  ]
+
+  it.each(rows)('$name', async (row) => {
+    const seeded = await open(row.request)
+    const help = await db()
+      .insertInto('helps')
+      .values({
+        run_id: seeded.runId,
+        approval_id: seeded.approvalId,
+        decision: 'question',
+        mode: row.mode,
+        question_index: row.index,
+        status: 'running',
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow()
+    const { call } = await tools(seeded.runId, seeded.taskId, help.id)
+    const read = JSON.parse((await call('get_question')).content[0]!.text)
+    if (row.mode === 'suggest_all') {
+      for (const q of read.questions)
+        expect(Object.keys(q).sort()).toEqual(['context_md', 'id', 'options', 'question'])
+    }
+    if (row.recommendation === 'absent') expect(read).not.toHaveProperty('recommendation')
+    else expect(read.recommendation).toBe(row.recommendation)
+    if (row.batchContext === 'absent') expect(read).not.toHaveProperty('batch_context_md')
+    else expect(read.batch_context_md).toBe(row.batchContext === 'null' ? null : row.batchContext)
   })
 })
