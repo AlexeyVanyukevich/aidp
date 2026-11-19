@@ -1,5 +1,13 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
@@ -1123,7 +1131,7 @@ describe('a help beside a paused run', () => {
     await loop
     expect((await helpsOf(taskId))[0]).toMatchObject({
       status: 'failed',
-      reason: 'the helper ended without saving a result',
+      reason: NOT_SAVED_REASON,
     })
     expect((await runs(taskId))[0]!.status).toBe('paused')
     const again = await askHelp(approvalId, { mode: 'explain' })
@@ -1269,10 +1277,211 @@ describe('decision helps on the help lane', () => {
       .split('\n')
       .filter((line) => line.startsWith('{'))
       .map((line) => JSON.parse(line) as { agent?: string; max_budget_usd?: string })
+    // The helper that saved nothing is asked once more, under the same limit.
     expect(calls.filter((call) => call.agent === 'helper')).toEqual([
+      expect.objectContaining({ max_budget_usd: '2' }),
       expect.objectContaining({ max_budget_usd: '2' }),
     ])
   })
+})
+
+// ── A help that ends without saving its result ────────────────────────────────────────────────
+
+const CHECK_RESULT = {
+  tool: 'save_help_result',
+  args: {
+    checked_against: 'description',
+    produced: 'nothing was produced',
+    unfinished: [],
+    unsure: 'Nothing.',
+  },
+}
+const NOT_SAVED_REASON = 'the helper ended without saving a result, even when asked to save'
+
+/** A board api that counts the helps' heartbeat calls, and lets a test fail them. */
+class CountingApi extends BoardApi {
+  heartbeats = 0
+  failing = false
+  override helpHeartbeat(runnerId: string, helpIds: string[]) {
+    this.heartbeats += 1
+    if (this.failing) return Promise.reject(new Error('the board cannot be reached'))
+    return super.helpHeartbeat(runnerId, helpIds)
+  }
+}
+
+/** Carries the queued helps with `daemon` until `finished`, then lets the help loop end. */
+async function carry(daemon: Daemon, finished: () => Promise<boolean>) {
+  const stop = new AbortController()
+  const loop = daemon.helpLoop(stop.signal)
+  await until(finished, 'the help to end', 30_000)
+  // What the runner sends after the Help phase closes, such as its failure, takes a moment.
+  await new Promise((done) => setTimeout(done, 600))
+  stop.abort()
+  await loop
+}
+const helperCalls = (f: ReturnType<typeof fleet>) => f.calls().filter((c) => c.agent === 'helper')
+const phaseEnds = async () => (await eventsOf('phase_end')).length
+
+describe('a help that ends without saving its result', () => {
+  it('asks the same session once to save, for a question help (AC2)', async () => {
+    const f = fleet({
+      planner: [[{ tool: 'save_plan', args: PLAN }]],
+      builder: [[ASK], builds('export const delays = [1, 2, 4, 8]\n')],
+      helper: [[], [SUGGESTION]],
+    })
+    const { taskId, approvalId } = await pausedOnQuestion(f)
+    await askHelp(approvalId, { mode: 'suggest' })
+    await carry(f.daemon(), async () => (await helpsOf(taskId))[0]?.status === 'succeeded')
+    const calls = helperCalls(f)
+    expect(calls).toHaveLength(2)
+    expect(calls[0]!.resumed).toBe(false)
+    expect(calls[1]!.resumed).toBe(true)
+    expect(calls[1]!.prompt).toContain('Nothing was saved')
+    expect(calls[1]!.prompt).toContain('save_help_result')
+    expect((await helpsOf(taskId))[0]).toMatchObject({
+      status: 'succeeded',
+      result: { mode: 'suggest', option_id: 'b' },
+    })
+    // One session: the phase's start and its end name the same one.
+    const start = (await eventsOf('phase_start')).filter((e) => 'session_id' in e.payload)
+    const end = (await eventsOf('phase_end')).at(-1)!
+    expect(start.at(-1)!.payload.session_id).toBe(end.payload.session_id)
+  })
+
+  it('asks a decision help once too (AC3)', async () => {
+    const f = fleet({ byTitle: { Resumed: { helper: [[], [CHECK_RESULT]] } } })
+    const taskId = await backlogTask('Resumed')
+    await askCheck(taskId)
+    await carry(f.daemon(), async () => (await helpsOf(taskId))[0]?.status === 'succeeded')
+    const calls = helperCalls(f)
+    expect(calls.map((c) => c.resumed)).toEqual([false, true])
+    expect(calls[1]!.prompt).toContain('save_help_result')
+  })
+
+  it('starts one process when the first saves (AC4)', async () => {
+    const f = fleet({ byTitle: { Saves: { helper: [[CHECK_RESULT], [CHECK_RESULT]] } } })
+    const taskId = await backlogTask('Saves')
+    await askCheck(taskId)
+    await carry(f.daemon(), async () => (await helpsOf(taskId))[0]?.status === 'succeeded')
+    expect(helperCalls(f)).toHaveLength(1)
+  })
+
+  it('fails with its own reason when the resumed process does not save either (AC5)', async () => {
+    const f = fleet({ byTitle: { Silent: { helper: [[], []] } } })
+    const taskId = await backlogTask('Silent')
+    await askCheck(taskId)
+    await carry(f.daemon(), async () => (await helpsOf(taskId))[0]?.status === 'failed')
+    expect(helperCalls(f)).toHaveLength(2)
+    expect((await helpsOf(taskId))[0]).toMatchObject({ status: 'failed', reason: NOT_SAVED_REASON })
+  })
+
+  it('resumes although a marker from before was in the run directory (AC8)', async () => {
+    const f = fleet({ byTitle: { Marked: { helper: [[], [CHECK_RESULT]] } } })
+    const taskId = await backlogTask('Marked')
+    await askCheck(taskId)
+    const [help] = await helpsOf(taskId)
+    mkdirSync(join(f.home, 'helps', help!.id), { recursive: true })
+    writeFileSync(join(f.home, 'helps', help!.id, 'help-saved'), '')
+    await carry(f.daemon(), async () => (await helpsOf(taskId))[0]?.status === 'succeeded')
+    expect(helperCalls(f).map((c) => c.resumed)).toEqual([false, true])
+  })
+
+  const longHeartbeat = { HEARTBEAT_MS: '600000' }
+  const cases: {
+    name: string
+    title: string
+    env: Record<string, string>
+    script: object[][]
+    /** What the test does to the board while the first process runs. */
+    during?: 'stop' | 'done'
+    failCheck?: boolean
+    heartbeats: number | 'any'
+    status: string
+    reason: string | null
+  }[] = [
+    {
+      name: 'the first process ends with an error result (AC6)',
+      title: 'Errors',
+      env: {},
+      script: [[{ exit: 1 }]],
+      heartbeats: 'any',
+      status: 'failed',
+      reason: 'the helper ended with an error',
+    },
+    {
+      name: 'the board stops the help through the background heartbeat (AC6)',
+      title: 'Background',
+      env: { HEARTBEAT_MS: '200' },
+      script: [[{ sleep: 8000 }]],
+      during: 'stop',
+      heartbeats: 'any',
+      status: 'stopped',
+      reason: null,
+    },
+    {
+      name: 'the board stops the help before the stop check (AC7)',
+      title: 'Checked',
+      env: longHeartbeat,
+      script: [[{ sleep: 1500 }]],
+      during: 'stop',
+      heartbeats: 1,
+      status: 'stopped',
+      reason: null,
+    },
+    {
+      name: 'a decision help whose save is stale, and whose session ends well (AC7)',
+      title: 'Stale',
+      env: longHeartbeat,
+      script: [[{ sleep: 1500 }, CHECK_RESULT]],
+      during: 'done',
+      heartbeats: 1,
+      status: 'stopped',
+      reason: null,
+    },
+    {
+      name: 'the stop check cannot reach the board (AC7)',
+      title: 'Unreachable',
+      env: longHeartbeat,
+      script: [[]],
+      failCheck: true,
+      heartbeats: 1,
+      status: 'failed',
+      reason: 'the helper ended without saving a result',
+    },
+  ]
+  it.each(cases)(
+    'starts no second process when $name',
+    async (row) => {
+      const f = fleet(
+        { byTitle: { [row.title]: { helper: [...row.script, [CHECK_RESULT]] } } },
+        row.env,
+      )
+      const taskId = await backlogTask(row.title)
+      await askCheck(taskId)
+      const api = new CountingApi(base, RUNNER_KEY)
+      api.failing = row.failCheck === true
+      const before = await phaseEnds()
+      const doing = (async () => {
+        if (row.during === undefined) return
+        await until(async () => f.calls().some((c) => c.agent === 'helper'), 'the helper to start')
+        if (row.during === 'stop')
+          await db
+            .updateTable('helps')
+            .set({ status: 'stopped' })
+            .where('status', '=', 'running')
+            .execute()
+        else await db.updateTable('tasks').set({ state: 'done' }).execute()
+      })()
+      await carry(f.daemonWith({}, { api }), async () => (await phaseEnds()) > before)
+      await doing
+      expect(helperCalls(f)).toHaveLength(1)
+      if (row.heartbeats !== 'any') expect(api.heartbeats).toBe(row.heartbeats)
+      // The board's list leaves a stopped help out, so the table is read.
+      const stored = await db.selectFrom('helps').select(['status', 'reason']).execute()
+      expect(stored).toEqual([{ status: row.status, reason: row.reason }])
+    },
+    60_000,
+  )
 })
 
 // ── A run whose worktree was lost ───────────────────────────────────────────────────────────

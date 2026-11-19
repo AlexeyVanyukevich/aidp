@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { BoardApi } from './api.js'
 import type { RunnerConfig } from './config.js'
-import type { HelpWork } from './contract.js'
+import type { HelpWork, SessionTotals } from './contract.js'
 import type { Git } from './git.js'
 import {
   LINKED_FILE,
@@ -18,8 +18,8 @@ import { newEvent, EventSink } from './sink.js'
 import { PHASES } from './phases/agents.js'
 import { attr, escape, linkedProjects } from './phases/handoff.js'
 import { runPaths } from './run-steps.js'
-import { runProcess, type ProcessTiming } from './phases/process.js'
-import { prepareRunDir } from './phases/run-dir.js'
+import { runProcess, type ProcessResult, type ProcessTiming } from './phases/process.js'
+import { HELP_SAVED_MARKER, prepareRunDir } from './phases/run-dir.js'
 import { PR_DIFF } from './hooks/guard.js'
 
 /** Helps a runner carries at once, beside its run. */
@@ -27,6 +27,10 @@ export const HELP_SLOTS = 3
 
 /** Why a help a restart cut off is failed. */
 export const RESTART_REASON = 'runner restarted'
+
+/** What a helper that ended without saving is told, in the one resume it gets. */
+const RESAVE_MESSAGE =
+  'Nothing was saved: your closing text does not reach the owner. Call save_help_result now with the advice you already wrote, then end your turn.'
 
 const TIMING: ProcessTiming = { pauseGraceMs: 60_000, stopGraceMs: 10_000, markerPollMs: 500 }
 
@@ -354,43 +358,88 @@ export async function carryHelp(work: HelpWork, deps: HelpDeps): Promise<void> {
         { payload: { name: 'help', attempt: work.attempt, session_id: sessionId } },
       ),
     ])
-    const result = await runProcess(
-      {
-        runId,
-        phaseId: work.phase_id,
-        phase: 'help',
-        attempt: work.attempt,
-        prompt: helpPrompt(work, made),
-        sessionId,
-        resume: false,
-        worktree,
-        runDir,
-        budgetUsd: work.run.task.budget_usd,
-        baseline: {},
-        token,
-      },
-      {
-        sink,
-        claudeBin: config.claudeBin,
-        boardUrl: config.boardUrl,
-        runnerCode: deps.runnerCode,
-        signal: controller.signal,
-        ...(deps.shutdown === undefined ? {} : { shutdown: deps.shutdown }),
-        ...TIMING,
-        ...deps.timing,
-      },
-    )
-    const ok = result.exitCode === 0 && result.normalizer.result?.isError === false
+    const processInput = (
+      prompt: string,
+      resume: boolean,
+      baseline: Record<string, SessionTotals>,
+      session: string = sessionId,
+    ) => ({
+      runId,
+      phaseId: work.phase_id,
+      phase: 'help' as const,
+      attempt: work.attempt,
+      prompt,
+      sessionId: session,
+      resume,
+      worktree,
+      runDir,
+      budgetUsd: work.run.task.budget_usd,
+      baseline,
+      token,
+    })
+    const processDeps = {
+      sink,
+      claudeBin: config.claudeBin,
+      boardUrl: config.boardUrl,
+      runnerCode: deps.runnerCode,
+      signal: controller.signal,
+      ...(deps.shutdown === undefined ? {} : { shutdown: deps.shutdown }),
+      ...TIMING,
+      ...deps.timing,
+    }
+    // A marker left from before must not pass for this help's save.
+    rmSync(join(runDir, HELP_SAVED_MARKER), { force: true })
+    const first = await runProcess(processInput(helpPrompt(work, made), false, {}), processDeps)
+    const endedWell = (r: ProcessResult) =>
+      r.exitCode === 0 && r.normalizer.result !== null && !r.normalizer.result.isError
+    const saved = () => existsSync(join(runDir, HELP_SAVED_MARKER))
+    let last = first
+    let resumed = false
+    if (
+      endedWell(first) &&
+      !saved() &&
+      !first.interrupted &&
+      first.stopped === 'no' &&
+      !controller.signal.aborted &&
+      deps.restart?.aborted !== true &&
+      deps.shutdown?.aborted !== true
+    ) {
+      // The board may have stopped the help since the last heartbeat; only a help it still
+      // carries is asked again.
+      const stillWanted = await api
+        .helpHeartbeat(config.runnerId, [work.id])
+        .then(({ stop }) => !stop.includes(work.id))
+        .catch(() => false)
+      if (stillWanted && !controller.signal.aborted) {
+        resumed = true
+        last = await runProcess(
+          processInput(
+            RESAVE_MESSAGE,
+            true,
+            first.normalizer.totals() ?? {},
+            first.normalizer.sessionId ?? sessionId,
+          ),
+          processDeps,
+        )
+      }
+    }
+    const ok = endedWell(last)
+    const reported: Record<string, number> = {}
+    for (const r of resumed ? [first, last] : [first])
+      for (const [model, usd] of Object.entries(r.normalizer.reportedCost()))
+        reported[model] = (reported[model] ?? 0) + usd
+    const lastText = last.normalizer.result?.text ?? ''
+    const text = lastText === '' ? (first.normalizer.result?.text ?? '') : lastText
     await sink.send([
       newEvent(
         { runId, phaseId: work.phase_id, agent, type: 'phase_end' },
         {
           payload: {
             status: ok ? 'succeeded' : 'failed',
-            summary_md: result.normalizer.result?.text ?? '',
-            reported_cost: result.normalizer.reportedCost(),
-            session_id: result.normalizer.sessionId ?? sessionId,
-            ...(result.interrupted ? { interrupted: true } : {}),
+            summary_md: text,
+            reported_cost: reported,
+            session_id: last.normalizer.sessionId ?? sessionId,
+            ...(first.interrupted || last.interrupted ? { interrupted: true } : {}),
           },
         },
       ),
@@ -405,7 +454,9 @@ export async function carryHelp(work: HelpWork, deps: HelpDeps): Promise<void> {
         : deps.shutdown?.aborted === true
           ? 'the runner stopped'
           : ok
-            ? 'the helper ended without saving a result'
+            ? resumed && !saved()
+              ? 'the helper ended without saving a result, even when asked to save'
+              : 'the helper ended without saving a result'
             : 'the helper ended with an error',
     )
   } finally {
