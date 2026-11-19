@@ -98,3 +98,22 @@ export function pausedBy(input: Record<string, unknown>): boolean {
       (block as { text: string }).text.startsWith('Paused:'),
   )
 }
+
+/**
+ * True when this hook input is the board accepting a help's result: a `save_help_result` call
+ * answered with the success text, which begins `Saved.`. The event hook then marks the run
+ * directory, so the runner knows the help saved. A refused or stale save answers otherwise.
+ */
+export function savedBy(input: Record<string, unknown>): boolean {
+  if (input.tool_name !== 'mcp__board__save_help_result') return false
+  const response = input.tool_response
+  if (!Array.isArray(response)) return false
+  return response.some(
+    (block: unknown) =>
+      typeof block === 'object' &&
+      block !== null &&
+      (block as { type?: unknown }).type === 'text' &&
+      typeof (block as { text?: unknown }).text === 'string' &&
+      (block as { text: string }).text.startsWith('Saved.'),
+  )
+}

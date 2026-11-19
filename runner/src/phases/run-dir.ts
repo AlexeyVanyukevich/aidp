@@ -91,6 +91,9 @@ export function writeBaseBranch(dir: string, branch: string): void {
 /** Written by the event hook when the board pauses the run; the guard refuses everything after. */
 export const PAUSED_MARKER = 'paused'
 
+/** Written by the event hook when the board accepts a help's result; the runner reads it. */
+export const HELP_SAVED_MARKER = 'help-saved'
+
 /** Written when the runner's code moved under a phase; the next resume says so to the session. */
 export const CODE_MOVED_MARKER = 'code-moved'
 

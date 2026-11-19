@@ -7,11 +7,17 @@ import { formatViolations, readApprovedCopies, violationsOf } from './files-gate
 import { runnerCode } from './fingerprint.js'
 import { Git } from './git.js'
 import { decide, denyOutput } from './hooks/guard.js'
-import { hookToEvent, pausedBy } from './hooks/hook-event.js'
+import { hookToEvent, pausedBy, savedBy } from './hooks/hook-event.js'
 import { readLinkedStrict } from './linked.js'
 import { readMigrationSiblings } from './hooks/migration-siblings.js'
 import { configDir } from './phases/config-dir.js'
-import { PAUSED_MARKER, readAllowed, readApproved, readExcluded } from './phases/run-dir.js'
+import {
+  HELP_SAVED_MARKER,
+  PAUSED_MARKER,
+  readAllowed,
+  readApproved,
+  readExcluded,
+} from './phases/run-dir.js'
 import { EventSink } from './sink.js'
 import { canonicalPath } from './worktree-log.js'
 
@@ -98,6 +104,13 @@ async function event(name: string): Promise<void> {
   const runDir = env('BOARD_RUN_DIR')
   // Before the event is sent: the marker must be down even if the board cannot be reached.
   if (name === 'PostToolUse' && pausedBy(input)) writeFileSync(join(runDir, PAUSED_MARKER), '')
+  if (name === 'PostToolUse' && savedBy(input)) {
+    try {
+      writeFileSync(join(runDir, HELP_SAVED_MARKER), '')
+    } catch {
+      // A marker that cannot be written is skipped: the hook never fails the tool call.
+    }
+  }
   const sink = new EventSink(
     new BoardApi(env('BOARD_URL'), ''),
     join(runDir, 'events.ndjson'),
