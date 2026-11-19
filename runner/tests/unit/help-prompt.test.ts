@@ -49,7 +49,7 @@ const paragraph = (mode: string) => {
   const next = parts.findIndex(
     (part, i) =>
       i > from &&
-      /^(review|review_plan|restate|recommend|check|advise|code_review|When the result): ?/.test(
+      /^(?:(?:review|review_plan|restate|recommend|check|advise|code_review): ?|When the result: ?|Only what save_help_result saves reaches the owner)/.test(
         part,
       ),
   )
@@ -266,5 +266,70 @@ describe('the first message with linked checkouts and a diff', () => {
     expect(text).toContain(
       '<file path="package-lock.json" first_line="8" lines="5" skip="lockfile"/>',
     )
+  })
+})
+
+describe('the save line of the first message', () => {
+  // `review_plan` is a mode the board sends that the runner's contract type does not list.
+  const rows: { decision: NonNullable<HelpWork['decision']>; mode: string }[] = [
+    { decision: 'question', mode: 'suggest' },
+    { decision: 'question', mode: 'explain' },
+    { decision: 'question', mode: 'suggest_all' },
+    { decision: 'question', mode: 'review_plan' },
+    { decision: 'spec_review', mode: 'review' },
+    { decision: 'spec_review', mode: 'restate' },
+    { decision: 'stopped_run', mode: 'recommend' },
+    { decision: 'mark_done', mode: 'check' },
+    { decision: 'proposal', mode: 'advise' },
+    { decision: 'pull_request', mode: 'code_review' },
+  ]
+  const work = (decision: NonNullable<HelpWork['decision']>, mode: string): HelpWork => ({
+    id: 'h',
+    mode: mode as HelpWork['mode'],
+    decision,
+    approval_id: null,
+    question_index: null,
+    phase_id: 'p',
+    attempt: 1,
+    run: {
+      id: 'r',
+      number: 1,
+      worktree_path: null,
+      task: { id: 't', key: 'PAY-1', title: 'T', budget_usd: null },
+    },
+  })
+  it.each(rows)('ends the $decision $mode message with the save line', ({ decision, mode }) => {
+    const last = helpPrompt(work(decision, mode)).split('\n').at(-1)
+    expect(last).toContain('save_help_result')
+    expect(last).toContain('end your turn')
+  })
+  it('ends a message with linked checkouts with the save line too', () => {
+    const text = helpPrompt(work('mark_done', 'check'), {
+      worktree: '/w',
+      runDir: '/r',
+      ref: 'origin/main',
+      source: 'base',
+      fallback: false,
+      madeWorktree: true,
+      commit: 'c'.repeat(40),
+      linked: [
+        {
+          key: 'ZLC',
+          name: 'Zellige',
+          note: 'the kit',
+          repo_path: '/owner/zlc',
+          github_repo: 'owner/zlc',
+          base_branch: 'main',
+          path: '/wt/ZLC',
+        },
+      ],
+    })
+    expect(text.split('\n').at(-1)).toContain('save_help_result')
+  })
+})
+
+describe('the shared save paragraph of the helper’s instructions', () => {
+  it('stays out of the last mode’s paragraph', () => {
+    expect(paragraph('code_review')).not.toContain('Only what save_help_result saves reaches')
   })
 })

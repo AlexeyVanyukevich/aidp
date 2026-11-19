@@ -1001,3 +1001,24 @@ describe('the helper’s review of a redrafted spec', () => {
     expect(review).toContain(phrase)
   })
 })
+
+describe('the helper’s duty to save', () => {
+  const prompt = AGENTS.helper!.prompt
+  it.each([
+    [
+      'that only the saved result reaches the owner',
+      'Only what save_help_result saves reaches the owner',
+    ],
+    ['that its closing text never reaches the owner', 'never your closing text'],
+    [
+      'not to end before the save answered Saved.',
+      'Do not end your turn before the save has answered "Saved."',
+    ],
+    [
+      'never to say it saved unless the save answered so',
+      'Never say you saved unless the save answered "Saved."',
+    ],
+  ])('tells the helper %s', (_name, words) => {
+    expect(prompt).toContain(words)
+  })
+})

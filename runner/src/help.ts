@@ -30,6 +30,9 @@ export const RESTART_REASON = 'runner restarted'
 
 const TIMING: ProcessTiming = { pauseGraceMs: 60_000, stopGraceMs: 10_000, markerPollMs: 500 }
 
+/** The last line of a helper's first message: the result reaches the owner only by being saved. */
+const SAVE_LINE = 'Save your result with save_help_result, then end your turn.'
+
 /** The first message of a helper: its mode, and the question or decision it is for. */
 export function helpPrompt(work: HelpWork, checkout?: CheckoutMade): string {
   const lines = [`<task key="${attr(work.run.task.key)}">${escape(work.run.task.title)}</task>`]
@@ -44,6 +47,7 @@ export function helpPrompt(work: HelpWork, checkout?: CheckoutMade): string {
           ? `Suggest an answer to ${asked} of the run waiting on the owner. Read it with get_question.`
           : `Explain ${asked} of the run waiting on the owner in plain words. Read it with get_question.`,
     )
+    lines.push(SAVE_LINE)
     return lines.join('\n')
   }
   lines.push(
@@ -66,6 +70,7 @@ export function helpPrompt(work: HelpWork, checkout?: CheckoutMade): string {
   const linked = checkout?.linked ?? []
   if (linked.length > 0)
     lines.push(linkedProjects(linked), 'The linked checkouts may be read and never changed.')
+  lines.push(SAVE_LINE)
   return lines.join('\n')
 }
 
