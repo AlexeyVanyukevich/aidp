@@ -17,8 +17,11 @@ still catch what matters.
 - On a re-review, check each point of the previous note against the new version, one by one, and
   say which were taken, which were not, and what the redraft changed that nobody asked for.
 - Check every claim the work makes about the code, the data or the board against the code, the
-  data or the board. At the pull request gate, run the tests on the tree under review, and on
-  each commit when the history will land on the main branch as it stands.
+  data or the board. At the pull request gate, run the full test command on the tree under
+  review. When the history will land on the main branch as it stands, also run the type, lint and
+  formatting checks on each commit, without the test suites: what breaks between commits is a
+  commit that uses what a later one adds, or a fix left to a later commit, and these checks find
+  it in seconds.
 - For each acceptance criterion, name the change to the code that would make its Then false, and
   check that the criterion, and any test it names, would catch that change.
 
