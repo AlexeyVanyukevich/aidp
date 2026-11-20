@@ -345,12 +345,14 @@ export function answerRefusal(error: unknown): string | undefined {
 
 /**
  * Use this answer: the suggested option when it has one, and the suggested words, replacing.
- * At a plan gate words win over an option: a wrong approval starts Build, wrong words only
- * send the plan back to the planner.
+ * At a plan gate an approve suggestion chooses Approve plan and empties the words field: an
+ * approval carries no words, so the suggested notes are shown as not sent and never reach the
+ * run. Words with no option fill the words and clear any chosen option.
  */
 export function applySuggestion(kind: ApprovalKind, current: Choice, result: HelpResult): Choice {
   if (result.mode !== 'suggest') return current
   if (kind === 'plan') {
+    if (result.option_id === 'approve') return { option: 'approve', text: '' }
     if (result.text !== undefined && result.text.trim() !== '') return { text: result.text }
     const option = result.option_id ?? current.option
     return {
@@ -363,6 +365,21 @@ export function applySuggestion(kind: ApprovalKind, current: Choice, result: Hel
     text: result.text ?? current.text,
     ...(option === undefined ? {} : { option }),
   }
+}
+
+/** What the status region says when Use this answer chooses Approve plan; none otherwise. */
+export function suggestionMessage(
+  kind: ApprovalKind,
+  current: Choice,
+  result: HelpResult,
+): string | undefined {
+  if (kind !== 'plan' || result.mode !== 'suggest' || result.option_id !== 'approve')
+    return undefined
+  if (result.text !== undefined && result.text.trim() !== '')
+    return 'Approve plan chosen. An approval carries no words: the suggested words are not sent, and the words field is empty.'
+  if (current.text.trim() !== '')
+    return 'Approve plan chosen. An approval carries no words: the words field is empty.'
+  return 'Approve plan chosen.'
 }
 
 export type ReviewResult = Extract<HelpResult, { mode: 'review' }>

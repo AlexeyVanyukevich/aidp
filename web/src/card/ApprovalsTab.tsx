@@ -28,6 +28,7 @@ import {
   singleAnswer,
   answerRefusal,
   applySuggestion,
+  suggestionMessage,
   fillNoteFromReview,
   type FindingPick,
   type PlanReviewResult,
@@ -141,8 +142,11 @@ function SingleForm({
         {...(approval.kind === 'plan'
           ? { planReview: { onAsk: onReviewPlan, onUseFindings: useFindings } }
           : {})}
+        requestKind={approval.kind}
         onUse={(result) => {
+          const message = suggestionMessage(approval.kind, choice, result)
           setChoice((now) => applySuggestion(approval.kind, now, result))
+          if (message !== undefined) onAnnounce(message)
           setProblem(undefined)
           if (refused !== undefined) onEdit()
         }}
