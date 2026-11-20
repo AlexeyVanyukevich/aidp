@@ -868,7 +868,9 @@ token limited to the run (`run_tokens.help_id`) that reaches only the helper's t
 Glob, `get_task`, `get_spec`, `list_projects`, `list_tasks`, `read_task`, `get_question`,
 `get_decision`, `get_phase_record` and `save_help_result`. The guard
 refuses everything else. `save_help_result` refuses an option the question does not offer, a
-suggestion with neither option nor words, and an explanation carrying an option, naming the field;
+suggestion with neither option nor words, an explanation carrying an option, and, on a `plan`
+request, a suggestion with both an option and words (`text: not allowed`, the help stays running
+so the helper can save again), naming the field;
 a saved result moves the help to `succeeded` and the card shows it without a reload. A help whose
 process sends no heartbeat for 90 seconds (the sweeper) is `failed`, and the sweeper also closes
 its Help phase. The first message of every help ends with a line telling the helper to save its
@@ -1154,7 +1156,9 @@ and the leftovers wait for a later start.
 **The plan gate.** A plan not marked `confidence: high` stops at the end of the planner's process:
 the runner raises a `plan` approval with the plan as its context, inside the still-open Plan
 phase. Approve plan ends the phase and starts Build; an answer in words resumes the planner's
-session, and its revised plan meets the gate again. A plan's rendered text is limited to 20,000
+session, and its revised plan meets the gate again. The gate's Suggest an answer saves either
+Approve plan alone or words alone, and words only for a change the plan must make before Build;
+small notes stay in its reasoning. A plan's rendered text is limited to 20,000
 characters, the most a `plan` approval's `context_md` holds: `save_plan` refuses a longer plan,
 whatever its confidence, and asks the planner to shorten it. The rendered text escapes each `|` in a
 check as `\|` and writes a line break as a space, so the table holds its columns, and the limit
@@ -1834,7 +1838,12 @@ The header's count of waiting questions is text, not announced.
 Each question carries the buttons Suggest an answer and Explain simply (busy while their help runs,
 still focusable), and under them a section "Suggested answer" (option label, words, reasoning, what
 the helper is unsure of, and **Use this answer**, which selects the option and fills the words and
-sends nothing) and "In plain words". A result that arrives, or a help that fails with its reason, is
+sends nothing) and "In plain words". At a plan gate Use this answer on an approve suggestion
+chooses Approve plan and empties the words field, whatever the suggestion carried and whatever the
+owner had typed; the suggested words stay shown, followed by "Not sent with Approve plan: an
+approval carries no words.", and never reach the run, and the status region says what happened
+("Approve plan chosen." with, when there were words, that they are not sent). A suggestion of
+words alone fills the words and clears the choice. A result that arrives, or a help that fails with its reason, is
 written into the card's status region as "Suggested answer ready for question 2 of 3", "Explanation
 ready for the open question" or the failure, whichever tab is showing.
 
