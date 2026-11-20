@@ -2237,6 +2237,36 @@ describe('the tests stage on the current base', () => {
       expect(text(h, 'verify.diff')).toBe(SHORT)
     })
 
+    const OUTPUT_ROWS: { name: string; output: string; truncated: boolean; head: string }[] = [
+      {
+        name: 'AC1: a long truncated output',
+        output: `${'a'.repeat(5_000)}${'b'.repeat(4_096)}`,
+        truncated: true,
+        head: 'exit code: 0\n[output cut to its end]\n',
+      },
+      {
+        name: 'AC2: a short output',
+        output: 'tests ok\n',
+        truncated: false,
+        head: 'exit code: 0\n',
+      },
+    ]
+    it.each(OUTPUT_ROWS)('$name: the event carries the text of test-output.txt', async (row) => {
+      const h = withPlan(
+        harness({
+          diffs: [SHORT],
+          testResults: [{ output: row.output, truncated: row.truncated }],
+        }),
+      )
+      seed(h, { 'gate-head.txt': 'abc123' })
+      await carryOut(at('verify', 1), h.deps)
+      const event = h.of('tool_call').find((e) => e.tool === 'test_command')
+      const payload = event?.payload as { output?: string; output_tail?: string }
+      expect(payload.output).toBe(text(h, 'test-output.txt'))
+      expect(payload.output?.startsWith(row.head)).toBe(true)
+      expect(payload.output_tail).toBe(row.output.slice(-4_096))
+    })
+
     it('AC11: puts the diff line between the tested line and the report', async () => {
       const h = await verified({ diffs: [LONG] })
       expect(has(h, 'verify-cuts.md')).toBe(true)
