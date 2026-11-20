@@ -58,6 +58,12 @@ function setUp(options: {
       await new Promise((done) => setTimeout(done, title ? (options.titleClaimMs ?? 2) : 2))
       return (title ? titleClaims : claims).shift() ?? null
     },
+    // The help lane finds nothing. Without this its claim throws, and the lane sits out the
+    // daemon's five-second backoff before the loop can end.
+    claimHelp: async () => {
+      await new Promise((done) => setTimeout(done, 2))
+      return null
+    },
     heartbeat: async (_runnerId: string, runIds: string[]) => {
       beats.push({ at: clock().toISOString(), runIds })
       if (options.heartbeatFails === true) throw new Error('fetch failed')
