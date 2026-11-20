@@ -969,7 +969,7 @@ export class HelpService {
       const findings =
         mode === 'suggest_all'
           ? checkBatchResult(batch, input)
-          : checkHelpResult(mode, asked?.options ?? [], input)
+          : checkHelpResult(mode, asked?.options ?? [], input, help.kind as ApprovalKind)
       if (findings.length > 0)
         return {
           error: [
