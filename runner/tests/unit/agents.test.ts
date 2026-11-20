@@ -931,7 +931,8 @@ describe('the helper’s instructions for a pull request review', () => {
     { name: 'it reads test_output', words: 'Read test_output from get_decision' },
     {
       name: 'a skipped or missing suite is a test finding',
-      words: 'shows skipped, empty or missing that the Verify report or the plan relies on',
+      words:
+        'shows skipped, empty or missing a suite or test that the Verify report or the plan relies on',
     },
     {
       name: 'evidence not shown passing is a test finding',
