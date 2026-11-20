@@ -883,9 +883,10 @@ resume the same session once, in the same Help phase, with a message saying noth
 to call `save_help_result` now with the advice already written. The resume takes the first
 process's session totals as its baseline, and the Help phase gets one `phase_start` and one
 `phase_end` whose reported cost sums both processes. A help whose resumed process also ends well
-without a marker is `failed` with the reason `the helper ended without saving a result, even when
-asked to save`; a help that is not resumed and ends without a result keeps the reason `the helper
-ended without saving a result`, which the board ignores for a help it has stopped. Answering, Cancel and withdrawal mark the
+without a marker is `failed` with the reason
+`the helper ended without saving a result, even when asked to save`; a help that is not resumed
+and ends without a result keeps the reason `the helper ended without saving a result`, which the
+board ignores for a help it has stopped. Answering, Cancel and withdrawal mark the
 request's queued and running helps `stopped`; the next heartbeat ends the process, and a save from
 it is refused. Nothing a help produced reaches the asking agent except through the answer the
 owner sends. Each help is a phase named `help` on the asking run: its usage is priced into the
