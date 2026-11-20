@@ -169,6 +169,7 @@ export async function carryOut(
     })
     const made = newlyChanged(before, await uncommitted())
     writeExcluded(runDir, [...new Set([...readExcluded(runDir), ...made])])
+    const text = `exit code: ${result.timedOut ? 'killed after timeout' : String(result.exitCode)}\n${result.truncated ? '[output cut to its end]\n' : ''}${result.output}`
     await deps.sink.send([
       newEvent(
         { runId: run.id, phaseId: null, type: 'tool_call', agent: 'runner' },
@@ -182,11 +183,11 @@ export async function carryOut(
             timed_out: result.timedOut,
             truncated: result.truncated,
             output_tail: result.output.slice(-4_096),
+            output: text,
           },
         },
       ),
     ])
-    const text = `exit code: ${result.timedOut ? 'killed after timeout' : String(result.exitCode)}\n${result.truncated ? '[output cut to its end]\n' : ''}${result.output}`
     testOutput = text
     writeFileSync(join(runDir, TEST_OUTPUT_FILE), text)
     return result
