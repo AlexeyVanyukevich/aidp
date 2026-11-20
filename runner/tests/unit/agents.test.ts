@@ -928,6 +928,24 @@ describe('the helper’s instructions for a pull request review', () => {
       name: 'it groups a list too long to fit',
       words: 'name each directory and how many of its files instead',
     },
+    { name: 'it reads test_output', words: 'Read test_output from get_decision' },
+    {
+      name: 'a skipped or missing suite is a test finding',
+      words: 'shows skipped, empty or missing that the Verify report or the plan relies on',
+    },
+    {
+      name: 'evidence not shown passing is a test finding',
+      words: 'cites as evidence a test the text does not show passing',
+    },
+    {
+      name: 'a cut suite goes under unsure',
+      words:
+        'when truncated is true, or the text begins with the line saying the board kept only the last 4,096 characters, a suite or test whose lines are not in the text goes under unsure and never into a test finding, even when the Verify report cites it',
+    },
+    {
+      name: 'a null test_output goes under unsure',
+      words: 'When test_output is null, say so under unsure.',
+    },
     {
       name: 'it says when every file was read whole',
       words: 'When every file you did not skip was read whole, say so.',
@@ -935,6 +953,13 @@ describe('the helper’s instructions for a pull request review', () => {
   ]
   it.each(rows)('$name', ({ words }) => {
     expect(prompt).toContain(words)
+  })
+
+  it('states the truncation exception after both test finding cases', () => {
+    const at = (words: string) => prompt.indexOf(words)
+    const exception = at('when truncated is true')
+    expect(exception).toBeGreaterThan(at('shows skipped, empty or missing'))
+    expect(exception).toBeGreaterThan(at('does not show passing'))
   })
 
   it('tells the helper a review finding may carry choices and a recommended one', () => {
