@@ -16,6 +16,7 @@ import {
   optionName,
   unanswered,
   applySuggestion,
+  suggestionMessage,
   fillNoteFromReview,
   fillApprovalNote,
   fillRerunNote,
@@ -365,11 +366,25 @@ describe('applySuggestion', () => {
       { text: 'Use four.' },
     ],
     [
-      'a plan suggestion of approve and words keeps the words only',
+      'a plan suggestion of approve and words chooses approve and empties the words',
       'plan' as const,
       { text: '' },
       { ...result, option_id: 'approve' },
-      { text: 'Use four.' },
+      { option: 'approve', text: '' },
+    ],
+    [
+      'a plan suggestion of approve and words replaces typed words',
+      'plan' as const,
+      { text: 'typed' },
+      { ...result, option_id: 'approve' },
+      { option: 'approve', text: '' },
+    ],
+    [
+      'a plan suggestion of approve alone empties typed words',
+      'plan' as const,
+      { text: 'typed' },
+      { ...result, option_id: 'approve', text: undefined },
+      { option: 'approve', text: '' },
     ],
     [
       'a plan suggestion of approve alone chooses approve',
@@ -386,6 +401,49 @@ describe('applySuggestion', () => {
       ...(text === undefined ? {} : { text }),
     }
     expect(applySuggestion(kind, current, clean)).toEqual(expected)
+  })
+})
+
+describe('suggestionMessage', () => {
+  const approve = { mode: 'suggest' as const, option_id: 'approve', reasoning: 'r', unsure: 'u' }
+  it.each([
+    [
+      'approve with words',
+      'plan' as const,
+      { text: '' },
+      { ...approve, text: 'Note.' },
+      'Approve plan chosen. An approval carries no words: the suggested words are not sent, and the words field is empty.',
+    ],
+    [
+      'approve alone over typed words',
+      'plan' as const,
+      { text: 'typed' },
+      approve,
+      'Approve plan chosen. An approval carries no words: the words field is empty.',
+    ],
+    [
+      'approve alone over an empty field',
+      'plan' as const,
+      { text: '' },
+      approve,
+      'Approve plan chosen.',
+    ],
+    [
+      'words alone at a plan gate',
+      'plan' as const,
+      { text: '' },
+      { mode: 'suggest' as const, text: 'Add a step.', reasoning: 'r', unsure: 'u' },
+      undefined,
+    ],
+    [
+      'an option with words at a question',
+      'question' as const,
+      { text: 'typed' },
+      { ...approve, option_id: 'a', text: 'Because.' },
+      undefined,
+    ],
+  ])('%s', (_name, kind, current, result, expected) => {
+    expect(suggestionMessage(kind, current, result)).toBe(expected)
   })
 })
 

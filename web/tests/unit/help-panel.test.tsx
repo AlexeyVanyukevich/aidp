@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   decisionRenderers,
   HelpButtons,
+  HelpPanel,
   HelpResults,
   type PanelMode,
   type Renderers,
@@ -712,5 +713,52 @@ describe('the shared review shape on the card (AC5, AC8, AC13, AC15)', () => {
     )
     expect(out).toContain('<strong>Why:</strong> The off-by-one needs a new plan')
     expect(out).not.toContain('<button')
+  })
+})
+
+describe('HelpPanel: the not-sent line', () => {
+  const NOT_SENT = 'Not sent with Approve plan: an approval carries no words.'
+  const shown = (result: HelpResult) => ({
+    suggest: { busy: false, shown: result, failure: undefined, id: 'h1' },
+    explain: NO_HELP,
+    review_plan: NO_HELP,
+  })
+  const render = (kind: 'plan' | 'question' | undefined, result: HelpResult) =>
+    renderToStaticMarkup(
+      <HelpPanel
+        help={shown(result)}
+        options={[{ id: 'approve', label: 'Approve plan' }]}
+        level={4}
+        onAsk={() => {}}
+        onUse={() => {}}
+        {...(kind === undefined ? {} : { requestKind: kind })}
+      />,
+    )
+  const both: HelpResult = {
+    mode: 'suggest',
+    option_id: 'approve',
+    text: 'A note.',
+    reasoning: 'r',
+    unsure: 'u',
+  }
+  it.each<[string, 'plan' | 'question', HelpResult, boolean]>([
+    ['approve with words at a plan', 'plan', both, true],
+    [
+      'approve alone at a plan',
+      'plan',
+      { mode: 'suggest', option_id: 'approve', reasoning: 'r', unsure: 'u' },
+      false,
+    ],
+    [
+      'words alone at a plan',
+      'plan',
+      { mode: 'suggest', text: 'A note.', reasoning: 'r', unsure: 'u' },
+      false,
+    ],
+    ['an option with words at a question', 'question', both, false],
+  ])('%s', (_name, kind, result, line) => {
+    const html = render(kind, result)
+    expect(html.includes(NOT_SENT)).toBe(line)
+    if (result.mode === 'suggest' && result.text !== undefined) expect(html).toContain('A note.')
   })
 })

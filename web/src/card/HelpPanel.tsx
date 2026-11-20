@@ -1,6 +1,7 @@
 import { Fragment, useId, useState, type ReactNode } from 'react'
 import { Badge, Button, Radio, RadioGroup } from '@zellige/react'
 import type {
+  ApprovalKind,
   ApprovalOption,
   HelpMode,
   HelpResult,
@@ -151,12 +152,15 @@ export function HelpPanel({
   onAsk,
   onUse,
   planReview,
+  requestKind,
 }: {
   help: QuestionHelp
   options: ApprovalOption[]
   level: 4 | 5
   onAsk: (mode: AskedHelpMode) => void
   onUse: (result: Suggestion) => void
+  /** The request's kind: a plan request shows an approve suggestion's words as not sent. */
+  requestKind?: ApprovalKind
   /** A plan request's Review plan: asking it, and Use these findings on its result. */
   planReview?: {
     onAsk: () => void
@@ -224,6 +228,11 @@ export function HelpPanel({
                   <strong>Words:</strong> {suggestion.text}
                 </p>
               )}
+              {requestKind === 'plan' &&
+                suggestion.option_id !== undefined &&
+                suggestion.text !== undefined && (
+                  <p>Not sent with Approve plan: an approval carries no words.</p>
+                )}
               <p>
                 <strong>Why:</strong> {suggestion.reasoning}
               </p>
