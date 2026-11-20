@@ -503,6 +503,43 @@ async function planReviewPoints(ctx: ToolContext, runId: string) {
     }))
 }
 
+const TAIL_ONLY_LINE = "[the board kept only the last 4,096 characters of this run's test output]"
+
+/** The run's newest test command, for a pull request help: its text, or why there is none. */
+async function testOutputOf(ctx: ToolContext, runId: string) {
+  const event = await ctx.db
+    .selectFrom('events')
+    .select(['target', 'payload'])
+    .where('run_id', '=', runId)
+    .where('type', '=', 'tool_call')
+    .where('agent', '=', 'runner')
+    .where('tool', '=', 'test_command')
+    .orderBy('ts', 'desc')
+    .orderBy('id', 'desc')
+    .limit(1)
+    .executeTakeFirst()
+  if (event === undefined)
+    return {
+      test_output: null,
+      test_output_missing: "The board holds no test command run for this pull request's run.",
+    }
+  const payload = event.payload as Record<string, unknown>
+  const pick = <T>(value: unknown, type: string): T | null =>
+    typeof value === type ? (value as T) : null
+  return {
+    test_output: {
+      command: event.target,
+      exit_code: pick<number>(payload.exit_code, 'number'),
+      timed_out: pick<boolean>(payload.timed_out, 'boolean'),
+      truncated: pick<boolean>(payload.truncated, 'boolean'),
+      text:
+        typeof payload.output === 'string'
+          ? payload.output
+          : `${TAIL_ONLY_LINE}\n${typeof payload.output_tail === 'string' ? payload.output_tail : ''}`,
+    },
+  }
+}
+
 /** What `get_decision` returns (R11). */
 async function decisionRecord(ctx: ToolContext, helpId: string, head: HelpHead) {
   const task = await ctx.db
@@ -653,6 +690,7 @@ async function decisionRecord(ctx: ToolContext, helpId: string, head: HelpHead) 
       spec,
       plan: plan === undefined ? null : plan.bodyMd,
       verify_report: await latestReport(ctx, run.id),
+      ...(await testOutputOf(ctx, run.id)),
     }
   }
   const read = specRead(facts)
@@ -866,7 +904,7 @@ function registerHelpTools(server: McpServer, ctx: ToolContext, helpId: string):
     'get_decision',
     {
       description:
-        'Read the decision you were asked to help with: the decision, the mode, what it is about, the task, and what the decision reads (the spec and its lint, or the stopped run and its actions, or the spec and the delivery runs). For a spec review in review mode it also returns previous: the diff from the version before (or that version’s text), the redraft note, the owner’s answers in the writing run, and the newest earlier review.',
+        "Read the decision you were asked to help with: the decision, the mode, what it is about, the task, and what the decision reads (the spec and its lint, or the stopped run and its actions, or the spec and the delivery runs). For a pull request it returns the spec, the plan, the Verify report and the run's test output (`test_output`). For a spec review in review mode it also returns previous: the diff from the version before (or that version’s text), the redraft note, the owner’s answers in the writing run, and the newest earlier review.",
     },
     async () => {
       const head = await helpHead(ctx, helpId)
