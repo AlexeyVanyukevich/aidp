@@ -381,6 +381,155 @@ describe('a pull request review', () => {
     expect(record.verify_report).toMatchObject({ body_md: 'The report' })
   })
 
+  const TAIL_LINE = "[the board kept only the last 4,096 characters of this run's test output]"
+  async function testEvent(
+    runId: string,
+    ts: string,
+    tool: string,
+    target: string,
+    payload: Record<string, unknown>,
+  ) {
+    await db()
+      .insertInto('events')
+      .values({
+        id: crypto.randomUUID(),
+        run_id: runId,
+        phase_id: null,
+        ts: new Date(ts),
+        type: 'tool_call',
+        agent: 'runner',
+        model: null,
+        tool,
+        target,
+        status: 'ok',
+        duration_ms: 1,
+        input: 0,
+        output: 0,
+        cache_read: 0,
+        cache_write: 0,
+        payload: JSON.stringify(payload),
+      } as never)
+      .execute()
+  }
+  const decisionOf = async (s: Awaited<ReturnType<typeof seed>>) => {
+    const call = await tools(s.taskId, s.helpRunId, s.helpId)
+    return JSON.parse((await call('get_decision')).text)
+  }
+
+  it('AC3: returns the newest test_command of the pull request run, whole', async () => {
+    const s = await seed(REVIEWED, 'pull_request', 'code_review')
+    const other = await db()
+      .insertInto('runs')
+      .values({
+        task_id: s.taskId,
+        kind: 'delivery',
+        number: 2,
+        spec_version: 1,
+        status: 'succeeded',
+        queued_at: new Date(),
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow()
+    const big = 'z'.repeat(70_000)
+    await testEvent(s.runId, '2026-11-01T10:00:00Z', 'test_command', 'npm old', {
+      exit_code: 1,
+      output: 'old',
+    })
+    await testEvent(s.runId, '2026-11-01T11:00:00Z', 'test_command', 'npm test', {
+      exit_code: 0,
+      timed_out: false,
+      truncated: true,
+      output: big,
+      output_tail: big.slice(-4_096),
+    })
+    await testEvent(s.runId, '2026-11-01T12:00:00Z', 'base_rebase', 'main', { output: 'rebase' })
+    await testEvent(other.id, '2026-11-01T13:00:00Z', 'test_command', 'npm other', {
+      output: 'other',
+    })
+    const record = await decisionOf(s)
+    expect(record.test_output).toEqual({
+      command: 'npm test',
+      exit_code: 0,
+      timed_out: false,
+      truncated: true,
+      text: big,
+    })
+    expect(record.test_output.text).toHaveLength(70_000)
+  })
+
+  const PAYLOADS: {
+    name: string
+    payload: Record<string, unknown>
+    expected: Record<string, unknown>
+  }[] = [
+    {
+      name: 'no output: the line, then output_tail',
+      payload: { exit_code: 1, timed_out: false, truncated: false, output_tail: 'tail' },
+      expected: { exit_code: 1, timed_out: false, truncated: false, text: `${TAIL_LINE}\ntail` },
+    },
+    {
+      name: 'output without the flags',
+      payload: { output: 'out' },
+      expected: { exit_code: null, timed_out: null, truncated: null, text: 'out' },
+    },
+    {
+      name: 'neither output nor output_tail',
+      payload: {},
+      expected: { exit_code: null, timed_out: null, truncated: null, text: `${TAIL_LINE}\n` },
+    },
+  ]
+  it.each(PAYLOADS)('AC4: $name', async (row) => {
+    const s = await seed(REVIEWED, 'pull_request', 'code_review')
+    await testEvent(s.runId, '2026-11-01T10:00:00Z', 'test_command', 'npm test', row.payload)
+    const record = await decisionOf(s)
+    expect(record.test_output).toEqual({ command: 'npm test', ...row.expected })
+    expect(record).not.toHaveProperty('test_output_missing')
+  })
+
+  it('AC5: no test_command event gives null and the reason', async () => {
+    const s = await seed(REVIEWED, 'pull_request', 'code_review')
+    await testEvent(s.runId, '2026-11-01T10:00:00Z', 'base_rebase', 'main', { output: 'x' })
+    const record = await decisionOf(s)
+    expect(record.test_output).toBeNull()
+    expect(record.test_output_missing).toBe(
+      "The board holds no test command run for this pull request's run.",
+    )
+  })
+
+  const OTHERS: { decision: CardDecision; mode: string; spec: Seed }[] = [
+    {
+      decision: 'mark_done',
+      mode: 'check',
+      spec: { state: 'review', run: { status: 'succeeded' } },
+    },
+    { decision: 'spec_review', mode: 'review', spec: { state: 'spec_review' } },
+  ]
+  it.each(OTHERS)('AC9: a $decision help has no test_output', async (row) => {
+    const s = await seed(row.spec, row.decision, row.mode)
+    const record = await decisionOf(s)
+    expect(record).not.toHaveProperty('test_output')
+    expect(record).not.toHaveProperty('test_output_missing')
+  })
+
+  it('AC8: the get_decision description names the run’s test output', async () => {
+    const s = await seed(REVIEWED, 'pull_request', 'code_review')
+    const server = new McpServer({ name: 'board', version: '1.0.0' })
+    registerBoardTools(server, {
+      db: db(),
+      runId: s.helpRunId,
+      taskId: s.taskId,
+      helpId: s.helpId,
+      clock: () => new Date(),
+    })
+    const [a, b] = InMemoryTransport.createLinkedPair()
+    await server.connect(a)
+    const client = new Client({ name: 'test', version: '0.0.0' })
+    await client.connect(b)
+    const listed = await client.listTools()
+    const text = listed.tools.find((t) => t.name === 'get_decision')!.description!
+    expect(text).toContain("the run's test output (`test_output`)")
+  })
+
   it('returns plan_to_keep when an accepted plan exists, and null when none (AC14)', async () => {
     const s = await seed(REVIEWED, 'pull_request', 'code_review')
     const call = await tools(s.taskId, s.helpRunId, s.helpId)
