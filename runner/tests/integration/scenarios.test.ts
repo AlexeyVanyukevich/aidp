@@ -1309,9 +1309,15 @@ class CountingApi extends BoardApi {
   }
 }
 
-/** Carries the queued helps with `daemon` until `finished`, then lets the help loop end. */
-async function carry(daemon: Daemon, finished: () => Promise<boolean>) {
-  const stop = new AbortController()
+/**
+ * Carries the queued helps with `daemon` until `finished`, then lets the help loop end. Aborting
+ * `stop` earlier is the daemon shutting down while a help runs.
+ */
+async function carry(
+  daemon: Daemon,
+  finished: () => Promise<boolean>,
+  stop: AbortController = new AbortController(),
+) {
   const loop = daemon.helpLoop(stop.signal)
   await until(finished, 'the help to end', 30_000)
   // What the runner sends after the Help phase closes, such as its failure, takes a moment.
@@ -1392,8 +1398,8 @@ describe('a help that ends without saving its result', () => {
     title: string
     env: Record<string, string>
     script: object[][]
-    /** What the test does to the board while the first process runs. */
-    during?: 'stop' | 'done'
+    /** What the test does to the board, or to the daemon, while the first process runs. */
+    during?: 'stop' | 'done' | 'shutdown'
     failCheck?: boolean
     heartbeats: number | 'any'
     status: string
@@ -1417,6 +1423,16 @@ describe('a help that ends without saving its result', () => {
       heartbeats: 'any',
       status: 'stopped',
       reason: null,
+    },
+    {
+      name: 'the daemon shuts down while the first process runs (AC6)',
+      title: 'Shutdown',
+      env: longHeartbeat,
+      script: [[{ sleep: 8000 }]],
+      during: 'shutdown',
+      heartbeats: 0,
+      status: 'failed',
+      reason: 'the runner stopped',
     },
     {
       name: 'the board stops the help before the stop check (AC7)',
@@ -1461,10 +1477,12 @@ describe('a help that ends without saving its result', () => {
       const api = new CountingApi(base, RUNNER_KEY)
       api.failing = row.failCheck === true
       const before = await phaseEnds()
+      const stop = new AbortController()
       const doing = (async () => {
         if (row.during === undefined) return
         await until(async () => f.calls().some((c) => c.agent === 'helper'), 'the helper to start')
-        if (row.during === 'stop')
+        if (row.during === 'shutdown') stop.abort()
+        else if (row.during === 'stop')
           await db
             .updateTable('helps')
             .set({ status: 'stopped' })
@@ -1472,7 +1490,7 @@ describe('a help that ends without saving its result', () => {
             .execute()
         else await db.updateTable('tasks').set({ state: 'done' }).execute()
       })()
-      await carry(f.daemonWith({}, { api }), async () => (await phaseEnds()) > before)
+      await carry(f.daemonWith({}, { api }), async () => (await phaseEnds()) > before, stop)
       await doing
       expect(helperCalls(f)).toHaveLength(1)
       if (row.heartbeats !== 'any') expect(api.heartbeats).toBe(row.heartbeats)
