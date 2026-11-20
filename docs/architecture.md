@@ -1052,6 +1052,18 @@ request run's newest `plan` request answered with Approve plan, and none for a h
 plan or a plan kept by a Re-run. The helper raises a point the pull request leaves unsettled as a
 blocker or an outside finding. Approve plan takes no note, so nothing else carries a point forward.
 
+For a `pull_request` help `get_decision` also returns `test_output`, read from the newest
+(`ts`, then `id`, descending) runner `test_command` event of the pull request's run:
+`{ command, exit_code, timed_out, truncated, text }`. `command` is the event's target; the three
+flags are the payload's, or null where it lacks one; `text` is the payload's `output`, whole. An
+event with no `output` (a run from before the field) gets the line `[the board kept only the last
+4,096 characters of this run's test output]`, a newline, and then `output_tail`. A run with no
+such event gets `test_output` null and `test_output_missing`, "The board holds no test command run
+for this pull request's run."; the key is absent otherwise. The helper saves a `test` finding for
+a suite the text shows skipped, empty or missing that the Verify report or plan relies on, and
+for Verify evidence the text does not show passing; a suite cut from the text (`truncated`, or
+the fallback line) goes under `unsure`.
+
 **`next_step`.** A `code_review` also saves `next_step` (`merge`, `merge_and_file`,
 `fix_by_hand`, `rerun_keep`, `rerun_again`) and `reasoning`. `merge_and_file` is refused with a
 blocker or without an outside finding, `merge` with any finding, the three others without a
@@ -1329,6 +1341,11 @@ results, decided in this order: timed out (`timedOut`), passed (`exitCode` 0), f
 number, including one such as 137 from a child killed by a signal), and not run or killed
 (`exitCode` null with `timedOut` false). The `test_command` event is sent first, whatever the
 result. The same applies when the test command runs inside a Verify started afresh after a resume.
+
+The event's payload holds `exit_code`, `timed_out`, `truncated`, `output_tail` (the output's last
+4,096 characters) and `output`: the whole text the runner writes to `test-output.txt` in that call
+(the `exit code:` line, a `[output cut to its end]` line when cut, then the output the runner
+kept, at most 65,536 bytes).
 
 - Passed: the run goes on to Verify.
 - Failed on attempt 1 or 2: no verifier starts. The runner writes `test-command-report.md` (the
