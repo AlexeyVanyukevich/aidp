@@ -98,6 +98,8 @@ export function checkHelpResult(
   mode: Exclude<QuestionHelpMode, 'suggest_all' | 'review_plan'>,
   options: ApprovalOption[],
   input: HelpResultInput,
+  /** The request's kind; a plan request refuses an option with words. */
+  kind?: ApprovalKind,
 ): Finding[] {
   const findings: Finding[] = []
   const long = (field: string, value: string | undefined, limit: number) => {
@@ -113,6 +115,8 @@ export function checkHelpResult(
     if (blank(input.unsure)) findings.push({ field: 'unsure', code: 'required' })
     for (const field of ['asked', 'matters', 'leads_to'] as const)
       if (input[field] !== undefined) findings.push({ field, code: 'not_allowed' })
+    if (kind === 'plan' && input.option_id !== undefined && !blank(input.text))
+      findings.push({ field: 'text', code: 'not_allowed' })
     long('text', input.text, HELP_LIMITS.text)
     long('reasoning', input.reasoning, HELP_LIMITS.part)
     long('unsure', input.unsure, HELP_LIMITS.part)

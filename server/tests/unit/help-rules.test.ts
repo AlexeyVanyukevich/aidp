@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { ApprovalKind } from '../../src/shared/vocabulary.js'
 import {
   checkDecisionResult,
   batchResultOf,
@@ -71,6 +72,33 @@ describe('checkHelpResult', () => {
     ],
   ])('%s', (_name, mode, input, findings) => {
     expect(checkHelpResult(mode, OPTIONS, input)).toEqual(findings)
+  })
+})
+
+describe('checkHelpResult by request kind', () => {
+  it.each<[string, ApprovalKind, HelpResultInput, { field: string; code: string }[]]>([
+    [
+      'a plan suggestion of approve with words',
+      'plan',
+      { option_id: 'a', text: 'Also rename it.', ...SUGGEST },
+      [{ field: 'text', code: 'not_allowed' }],
+    ],
+    ['a plan suggestion of approve alone', 'plan', { option_id: 'a', ...SUGGEST }, []],
+    ['a plan suggestion of words alone', 'plan', { text: 'Add a step.', ...SUGGEST }, []],
+    [
+      'a plan suggestion of approve with blank words',
+      'plan',
+      { option_id: 'a', text: '  ', ...SUGGEST },
+      [],
+    ],
+    [
+      'a question suggestion of an option with words',
+      'question',
+      { option_id: 'a', text: 'Because.', ...SUGGEST },
+      [],
+    ],
+  ])('%s', (_name, kind, input, findings) => {
+    expect(checkHelpResult('suggest', OPTIONS, input, kind)).toEqual(findings)
   })
 })
 
