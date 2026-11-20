@@ -496,17 +496,43 @@ describe('a pull request review', () => {
     )
   })
 
-  const OTHERS: { decision: CardDecision; mode: string; spec: Seed }[] = [
+  const OTHERS: { decision: CardDecision | 'proposal'; mode: string; spec: Seed }[] = [
     {
       decision: 'mark_done',
       mode: 'check',
       spec: { state: 'review', run: { status: 'succeeded' } },
     },
     { decision: 'spec_review', mode: 'review', spec: { state: 'spec_review' } },
+    {
+      decision: 'stopped_run',
+      mode: 'recommend',
+      spec: { state: 'failed', run: { status: 'failed' } },
+    },
+    {
+      decision: 'proposal',
+      mode: 'advise',
+      spec: { state: 'review', run: { status: 'succeeded' } },
+    },
   ]
   it.each(OTHERS)('AC9: a $decision help has no test_output', async (row) => {
-    const s = await seed(row.spec, row.decision, row.mode)
+    // The route asks a proposal help for an offered proposal: the row is made one in place.
+    const s = await seed(
+      row.spec,
+      row.decision === 'proposal' ? 'mark_done' : row.decision,
+      row.decision === 'proposal' ? 'check' : row.mode,
+    )
+    if (row.decision === 'proposal')
+      await db()
+        .updateTable('helps')
+        .set({
+          decision: 'proposal',
+          mode: 'advise',
+          subject: JSON.stringify({ proposal_id: crypto.randomUUID() }),
+        })
+        .where('id', '=', s.helpId)
+        .execute()
     const record = await decisionOf(s)
+    if (row.decision === 'proposal') expect(record).toHaveProperty('offered')
     expect(record).not.toHaveProperty('test_output')
     expect(record).not.toHaveProperty('test_output_missing')
   })
