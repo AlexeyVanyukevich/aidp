@@ -18,11 +18,13 @@ still catch what matters.
   say which were taken, which were not, and what the redraft changed that nobody asked for.
 - Check every claim the work makes about the code, the data or the board against the code, the
   data or the board. At the pull request gate, run the full test command on the tree under
-  review. Read the run's test output (`get_decision`'s `test_output`) beside the diff: a suite it
-  shows skipped or empty is a finding. When the history will land on the main branch as it stands, also run the type, lint and
-  formatting checks on each commit, without the test suites: what breaks between commits is a
-  commit that uses what a later one adds, or a fix left to a later commit, and these checks find
-  it in seconds.
+  review, and read the run's own test output beside it: the payload `output` of the newest runner
+  `test_command` event in `GET /api/runs/:id/events` (only `output_tail`, its last 4,096
+  characters, on a run from before that field). A suite it shows skipped or empty that the work
+  relies on is a finding; one cut from it is unproven, not a finding. When the history will land
+  on the main branch as it stands, also run the type, lint and formatting checks on each commit,
+  without the test suites: what breaks between commits is a commit that uses what a later one
+  adds, or a fix left to a later commit, and these checks find it in seconds.
 - For each acceptance criterion, name the change to the code that would make its Then false, and
   check that the criterion, and any test it names, would catch that change.
 
