@@ -14,26 +14,32 @@ someone, and a task is placed by comparing it with its neighbours.
 ## The order of the Backlog
 
 The AIDP Backlog runs in groups, by what a task costs the owner while it stays undone. The order
-of the groups is the owner's; it was read off the board on 2026-11-16. Top to bottom:
+of the groups is the owner's; it was read off the board on 2026-11-16, and the first group was
+added on 2026-11-20. Top to bottom:
 
-1. **A decision the owner cannot make well**: a gate that hides what is needed to decide, or
+1. **A gate the owner has to leave the board to decide or act on**: a review that does not say
+   how to proceed, a next step with no control, a finding that cannot be filed from the card, a
+   change to a reviewed branch that only a separate session can make. The owner asked for these
+   first on 2026-11-20: until they are done, using the board takes a second Claude session
+   beside it.
+2. **A decision the owner cannot make well**: a gate that hides what is needed to decide, or
    Verify judging the work wrongly.
-2. **A run stopped or misled by something outside the code**: a test command failing for its
+3. **A run stopped or misled by something outside the code**: a test command failing for its
    environment, output cut short.
-3. **An agent going past what the owner allowed**, and a failure that does not say why.
-4. **The board getting in the owner's way**: cards, columns and layout as the board grows.
-5. **A run doing the wrong thing in a corner case**: the guard missing a path, commits,
+4. **An agent going past what the owner allowed**, and a failure that does not say why.
+5. **The board getting in the owner's way**: cards, columns and layout as the board grows.
+6. **A run doing the wrong thing in a corner case**: the guard missing a path, commits,
    migrations, handoffs, stopping and timeouts.
-6. **Runs costing more than they need**: money, tokens and time — models, context, the prompt
+7. **Runs costing more than they need**: money, tokens and time — models, context, the prompt
    cache, budgets, test time.
-7. **A gap in the owner's flow that has a workaround**: no way to send back, go back to the spec,
-   add a note to an approval, or redo in one step.
-8. **Races, lock order and duplicated logic** that let fixes drift apart.
-9. **Test hygiene**: flaky tests, test code nothing checks.
-10. **Accessibility and small interface defects.**
-11. **New capabilities nobody is blocked without**: search, deletion, imports, attachments,
+8. **A gap in the owner's flow that has a workaround**: no way to go back to the spec, add a note
+   to an approval, or redo in one step.
+9. **Races, lock order and duplicated logic** that let fixes drift apart.
+10. **Test hygiene**: flaky tests, test code nothing checks.
+11. **Accessibility and small interface defects.**
+12. **New capabilities nobody is blocked without**: search, deletion, imports, attachments,
     parallel runs.
-12. **Tidy-ups**: naming, wording, leftover copies.
+13. **Tidy-ups**: naming, wording, leftover copies.
 
 The groups are a guide, not fences: their edges move as tasks are added and done. When the owner
 moves tasks in a way these groups do not explain, ask why and update this list in the same
@@ -47,7 +53,7 @@ order its own Backlog already has; this list is AIDP's.
 1. **Read the column as it is now**: `GET /api/projects/<KEY>/tasks`, the Backlog tasks sorted
    by `position`, not by key. Never place from memory of an earlier read.
 2. **Find its group** by asking what leaving the task undone costs, not what kind of change it
-   is. A test-time task belongs with the costs (6), not with the test command's failures (2).
+   is. A test-time task belongs with the costs (7), not with the test command's failures (3).
 3. **Place it inside the group** by comparing it with each neighbour: if both were left undone
    for a month, which would the owner miss more? A task that takes in others ranks as the
    highest of them. Within a group, these go first:
