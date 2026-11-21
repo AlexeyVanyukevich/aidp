@@ -427,3 +427,214 @@ test('an approved version shows its note for the planner, and one without a note
   await expect(bare.getByText('Approved v1; frozen for its runs.')).toBeVisible()
   await expect(bare.getByText('Note for the planner:')).toHaveCount(0)
 })
+
+// A step button on a Review spec result presses the Spec tab's own control. These journeys press
+// it in the browser and read the request it sends (AC5).
+const blockerFinding = {
+  kind: 'missing',
+  where: 'R1',
+  text: 'No retry limit',
+  destination: 'blocker',
+  evidence: 'R1',
+}
+
+async function serveStepReview(
+  page: Page,
+  taskId: string,
+  result: { verdict: 'ready' | 'changes'; blockers: number; findings: object[]; next_step: string },
+) {
+  await page.route(`**/api/tasks/${taskId}/helps`, (route) =>
+    route.fulfill({
+      json: [
+        {
+          id: '00000000-0000-4000-8000-0000000000a2',
+          approval_id: null,
+          decision: 'spec_review',
+          subject: { spec_version: 1 },
+          question_index: null,
+          mode: 'review',
+          status: 'succeeded',
+          result: { mode: 'review', unsure: 'u', reasoning: 'Because.', ...result },
+          reason: null,
+          created_at: '2026-11-17T10:00:00Z',
+        },
+      ],
+    }),
+  )
+}
+
+const refuseWith500 = (route: import('@playwright/test').Route) =>
+  route.fulfill({
+    status: 500,
+    contentType: 'application/json',
+    body: JSON.stringify({ error: 'internal_error', message: 'no' }),
+  })
+
+test('Redraft with these findings sends the redraft with the picked lines after the owner’s words', async ({
+  page,
+  request,
+}) => {
+  const task = await newTask(request, 'Step redraft', SPEC)
+  await serveStepReview(page, task.id, {
+    verdict: 'changes',
+    blockers: 1,
+    findings: [blockerFinding],
+    next_step: 'redraft',
+  })
+  const { spec } = await openSpec(page, task.key, 'Step redraft')
+  await expect(spec.getByText('Next step:')).toBeVisible()
+  await spec.getByRole('textbox', { name: 'What to change' }).fill('Mind the cap.')
+  let body: unknown
+  let calls = 0
+  await page.route('**/api/tasks/*/actions/redraft', (route) => {
+    calls += 1
+    body = route.request().postDataJSON()
+    return refuseWith500(route)
+  })
+  await expectAccessible(page)
+  await spec.getByRole('button', { name: 'Redraft with these findings' }).click()
+  await expect(page.getByRole('alert').filter({ hasText: 'That did not work.' })).toBeVisible()
+  expect(calls).toBe(1)
+  expect(body).toEqual({ note: 'Mind the cap.\n\n- blocker, missing (R1): No retry limit' })
+  await expectAccessible(page)
+})
+
+test('Approve with these findings sends the approval with the picked lines after the owner’s words', async ({
+  page,
+  request,
+}) => {
+  const task = await newTask(request, 'Step approve with note', SPEC)
+  await serveStepReview(page, task.id, {
+    verdict: 'ready',
+    blockers: 0,
+    findings: [nextGate('Name the clock')],
+    next_step: 'approve_with_note',
+  })
+  const { spec } = await openSpec(page, task.key, 'Step approve with note')
+  await spec.getByRole('textbox', { name: NOTE_FIELD }).fill('Keep it small.')
+  let body: unknown
+  let calls = 0
+  await page.route('**/api/specs/*/approve', (route) => {
+    calls += 1
+    body = route.request().postDataJSON()
+    return refuseWith500(route)
+  })
+  await spec.getByRole('button', { name: 'Approve with these findings' }).click()
+  await expect(page.getByRole('alert').filter({ hasText: 'That did not work.' })).toBeVisible()
+  expect(calls).toBe(1)
+  expect(body).toEqual({
+    note: 'Keep it small.\n\n- next gate, risk (Context): Name the clock',
+  })
+  await expectAccessible(page)
+})
+
+test('a Redraft step with every finding left out and nothing written sends nothing and marks the field missing', async ({
+  page,
+  request,
+}) => {
+  const task = await newTask(request, 'Step redraft blank', SPEC)
+  await serveStepReview(page, task.id, {
+    verdict: 'changes',
+    blockers: 1,
+    findings: [blockerFinding],
+    next_step: 'redraft',
+  })
+  const { spec } = await openSpec(page, task.key, 'Step redraft blank')
+  let calls = 0
+  await page.route('**/api/tasks/*/actions/redraft', (route) => {
+    calls += 1
+    return refuseWith500(route)
+  })
+  await spec
+    .getByRole('radiogroup', { name: 'What to do with finding 1' })
+    .getByText('Leave out')
+    .click()
+  await spec.getByRole('button', { name: 'Redraft with these findings' }).click()
+  const field = spec.getByRole('textbox', { name: 'What to change' })
+  await expect(field).toHaveAttribute('aria-invalid', 'true')
+  expect(calls).toBe(0)
+  await expectAccessible(page)
+})
+
+test('no step button is on a result of an older spec version', async ({ page, request }) => {
+  const task = await newTask(request, 'Step older version', SPEC)
+  await page.route(`**/api/tasks/${task.id}/helps`, (route) =>
+    route.fulfill({
+      json: [
+        {
+          id: '00000000-0000-4000-8000-0000000000a3',
+          approval_id: null,
+          decision: 'spec_review',
+          subject: { spec_version: 0 },
+          question_index: null,
+          mode: 'review',
+          status: 'succeeded',
+          result: {
+            mode: 'review',
+            verdict: 'changes',
+            blockers: 1,
+            findings: [blockerFinding],
+            unsure: 'u',
+            next_step: 'redraft',
+            reasoning: 'Because.',
+          },
+          reason: null,
+          created_at: '2026-11-17T10:00:00Z',
+        },
+      ],
+    }),
+  )
+  const { spec } = await openSpec(page, task.key, 'Step older version')
+  await expect(spec.getByRole('button', { name: 'Redraft with these findings' })).toHaveCount(0)
+})
+
+test('an approve step whose Approve button is disabled sends nothing', async ({
+  page,
+  request,
+}) => {
+  // A spec with no acceptance criteria is not approvable, so Approve is disabled.
+  const task = await newTask(
+    request,
+    'Step approve disabled',
+    '## Goal\nFailed deliveries back off.\n',
+  )
+  await serveStepReview(page, task.id, {
+    verdict: 'ready',
+    blockers: 0,
+    findings: [nextGate('Name the clock')],
+    next_step: 'approve_with_note',
+  })
+  const { spec } = await openSpec(page, task.key, 'Step approve disabled')
+  await expect(spec.getByRole('button', { name: 'Approve', exact: true })).toBeDisabled()
+  const step = spec.getByRole('button', { name: 'Approve with these findings' })
+  await expect(step).toBeDisabled()
+  let calls = 0
+  await page.route('**/api/specs/*/approve', (route) => {
+    calls += 1
+    return refuseWith500(route)
+  })
+  await step.click({ force: true })
+  expect(calls).toBe(0)
+  await expectAccessible(page)
+})
+
+test('an approve step has no button once the card has left Spec review', async ({
+  page,
+  request,
+}) => {
+  const task = await newTask(request, 'Step approve absent', SPEC)
+  const specs = (await (await request.get(appUrl(`/api/tasks/${task.id}/specs`))).json()) as {
+    id: string
+  }[]
+  expect((await request.post(appUrl(`/api/specs/${specs[0]!.id}/approve`))).ok()).toBe(true)
+  await serveStepReview(page, task.id, {
+    verdict: 'ready',
+    blockers: 0,
+    findings: [nextGate('Name the clock')],
+    next_step: 'approve_with_note',
+  })
+  const { spec } = await openSpec(page, task.key, 'Step approve absent')
+  await expect(spec.getByRole('button', { name: 'Approve', exact: true })).toHaveCount(0)
+  await expect(spec.getByRole('button', { name: 'Approve with these findings' })).toHaveCount(0)
+  await expectAccessible(page)
+})

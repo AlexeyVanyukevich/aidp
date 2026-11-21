@@ -224,3 +224,132 @@ test('a card in Done has no Review pull request button', async ({ page, request 
   await card.getByRole('tab', { name: 'PR', exact: true }).click()
   await expect(card.getByRole('button', { name: 'Review pull request' })).toHaveCount(0)
 })
+
+// The step and File presses on a pull request review (AC14, AC17): pressed in the browser, with
+// the request caught. The helps listing is stubbed, as above.
+const OUTSIDE = {
+  kind: 'risk',
+  where: 'src/dead.ts:1',
+  text: '**Where:** src/dead.ts\n**Found:** today\n**Problem:** a copy\n**Impact:** drift',
+  matters: 'Two copies drift',
+  destination: 'outside',
+  evidence: 'src/dead.ts:1',
+  title: 'Dead letters repeat the retry loop',
+  project: 'DFT',
+  on_board: null,
+}
+const WITH_OUTSIDE = (next_step: string) => ({
+  ...RESULT,
+  next_step,
+  findings: [...RESULT.findings, OUTSIDE],
+})
+
+test('Close the pull request, then Re-run sends the note built from the blockers, not the outside finding', async ({
+  page,
+  request,
+}) => {
+  const title = 'Close and re-run press'
+  const task = await inReview(request, title)
+  const state = {
+    list: [review({ status: 'succeeded', result: WITH_OUTSIDE('rerun_again') })],
+  }
+  await stubHelps(page, task.id, state, () => undefined)
+  let body: { note?: string } | undefined
+  await page.route(`**/api/tasks/${task.id}/helps/review-1/close-and-rerun`, (route) => {
+    body = route.request().postDataJSON() as { note?: string }
+    return route.fulfill({ status: 200, json: { state: 'ready' } })
+  })
+  const { pr } = await openPrTab(page, task.key, title)
+  const button = pr.getByRole('button', {
+    name: 'Close the pull request, then Re-run and plan again',
+  })
+  await expect(button).toBeVisible(RUN)
+  await expect(button).toHaveAccessibleDescription(
+    '1 outside finding not filed; it leaves the card with this review.',
+  )
+  await expectAccessible(page)
+  await button.click()
+  await expect.poll(() => body).toBeDefined()
+  expect(body!.note).toContain(
+    '- blocker, bug (src/retry.ts:3): The delay is not capped Evidence: src/retry.ts:3',
+  )
+  expect(body!.note).not.toContain('Dead letters')
+  expect(body!.note).not.toContain('src/dead.ts')
+  await expectAccessible(page)
+})
+
+test('File names its project, then focus is on the On the board line and the status says what was filed', async ({
+  page,
+  request,
+}) => {
+  const title = 'File an outside finding'
+  const task = await inReview(request, title)
+  const state = {
+    list: [review({ status: 'succeeded', result: WITH_OUTSIDE('fix_by_hand') })],
+  }
+  await stubHelps(page, task.id, state, () => undefined)
+  await page.route(`**/api/tasks/${task.id}/helps/review-1/findings/1/file`, (route) => {
+    state.list = [
+      review({
+        status: 'succeeded',
+        result: {
+          ...WITH_OUTSIDE('fix_by_hand'),
+          findings: [
+            RESULT.findings[0],
+            { ...OUTSIDE, on_board: { key: 'DFT-9', state: 'backlog' } },
+          ],
+        },
+      }),
+    ]
+    return route.fulfill({
+      status: 201,
+      json: { key: 'DFT-9', state: 'backlog', title: OUTSIDE.title },
+    })
+  })
+  const { card, pr } = await openPrTab(page, task.key, title)
+  const file = pr.getByRole('button', {
+    name: 'File as a task: Dead letters repeat the retry loop in DFT',
+  })
+  await expect(file).toBeVisible(RUN)
+  await expectAccessible(page)
+  await file.click()
+  const filed = pr.getByText('On the board as DFT-9 (backlog)')
+  await expect(filed).toBeFocused()
+  await expect(
+    card.getByRole('status').filter({ hasText: `Filed DFT-9: ${OUTSIDE.title}.` }),
+  ).toBeVisible()
+  await expect(file).toHaveCount(0)
+  await expectAccessible(page)
+})
+
+test('a refused File shows the problem notice with focus, naming the duplicate', async ({
+  page,
+  request,
+}) => {
+  const title = 'File refused'
+  const task = await inReview(request, title)
+  const state = {
+    list: [review({ status: 'succeeded', result: WITH_OUTSIDE('fix_by_hand') })],
+  }
+  await stubHelps(page, task.id, state, () => undefined)
+  await page.route(`**/api/tasks/${task.id}/helps/review-1/findings/1/file`, (route) =>
+    route.fulfill({
+      status: 409,
+      json: {
+        error: 'conflict',
+        message: 'no',
+        details: { reason: 'duplicate', key: 'DFT-4', state: 'backlog' },
+      },
+    }),
+  )
+  const { card, pr } = await openPrTab(page, task.key, title)
+  await pr
+    .getByRole('button', { name: 'File as a task: Dead letters repeat the retry loop in DFT' })
+    .click(RUN)
+  const notice = card
+    .getByRole('alert')
+    .filter({ hasText: 'DFT-4 (backlog) already has this title.' })
+  await expect(notice).toBeVisible()
+  await expect(notice).toBeFocused()
+  await expectAccessible(page)
+})
