@@ -12,7 +12,9 @@ import type {
   HelpResult,
   HelpSubject,
   HelpView,
+  NextStep,
   QuestionHelpMode,
+  ReviewStep,
   TaskState,
 } from '../types'
 
@@ -606,4 +608,120 @@ export function goneResults(
         !kept.has(h.id),
     )
     .map((h) => `${resultHeading(h.mode, h.subject, h.result ?? undefined)} no longer applies.`)
+}
+
+/** The label of each next step a Review spec result may give; none repeats a Spec tab button. */
+export const REVIEW_STEP_LABEL: Record<ReviewStep, string> = {
+  approve: 'Approve as it stands',
+  approve_with_note: 'Approve with these findings',
+  redraft: 'Redraft with these findings',
+}
+
+/**
+ * What a press of a Review spec step button sends. The picked lines are written into the step's
+ * field after the owner's words, as Use these findings writes them; a field that would be blank
+ * is marked missing and nothing is sent, as Redraft's own submit does.
+ */
+export type SpecStepRequest =
+  | { send: true; step: ReviewStep; note: string }
+  | { send: false; missing: 'note' | 'approval_note' }
+
+export function specStepRequest(
+  step: ReviewStep,
+  result: ReviewResult,
+  picks: readonly FindingPick[],
+  notes: { note: string; approvalNote: string },
+): SpecStepRequest {
+  if (step === 'approve') return { send: true, step, note: notes.approvalNote }
+  const next =
+    step === 'redraft'
+      ? fillNoteFromReview(notes.note, result, picks)
+      : fillApprovalNote(notes.approvalNote, result, picks).note
+  if (next.trim() === '')
+    return { send: false, missing: step === 'redraft' ? 'note' : 'approval_note' }
+  return { send: true, step, note: next }
+}
+
+/**
+ * Whether a step button is on the page: only while the Spec tab's own matching button is (Approve
+ * for both approve steps, Redraft for redraft), and for the latest version's result.
+ */
+export function specStepPresent(
+  step: ReviewStep,
+  facts: {
+    approveButton: boolean
+    redraftControl: boolean
+    resultVersion: number | null
+    latestVersion: number | null
+  },
+): boolean {
+  if (facts.resultVersion === null || facts.resultVersion !== facts.latestVersion) return false
+  return step === 'redraft' ? facts.redraftControl : facts.approveButton
+}
+
+/** Why a step button is disabled, exactly when the Spec tab's matching button is. */
+export function specStepLock(
+  step: ReviewStep,
+  facts: { canApprove: boolean; changed: boolean; rephrasing: boolean },
+): 'rephrasing' | 'unapprovable' | 'changed' | null {
+  if (facts.rephrasing) return 'rephrasing'
+  if (step === 'redraft') return facts.changed ? 'changed' : null
+  return facts.canApprove ? null : 'unapprovable'
+}
+
+/** The line under a moving step's button when outside findings are not on the board. */
+export function unfiledNotice(
+  result: ReviewResult | PlanReviewResult | PrReviewResult,
+): string | null {
+  const count = result.findings.filter(
+    (finding) => finding.destination === 'outside' && finding.on_board === null,
+  ).length
+  if (count === 0) return null
+  return count === 1
+    ? '1 outside finding not filed; it leaves the card with this review.'
+    : `${count} outside findings not filed; they leave the card with this review.`
+}
+
+/** A File button's accessible name: the title, and the project when it is not the task's own. */
+export function fileButtonName(
+  title: string,
+  project: string | undefined,
+  ownProject: string,
+): string {
+  return `File as a task: ${title}${project === undefined || project === ownProject ? '' : ` in ${project}`}`
+}
+
+/** What the button of a pull request review's step is: it moves the card, or it cannot. */
+export type PrStepControl =
+  | { kind: 'merge' }
+  | { kind: 'merge_and_file' }
+  | { kind: 'rerun'; plan: 'keep' | 'again' }
+  | { kind: 'by_hand' }
+  | { kind: 'no_commit' }
+
+export function prStepControl(result: PrReviewResult): PrStepControl {
+  const step: NextStep = result.next_step
+  if (step === 'fix_by_hand') return { kind: 'by_hand' }
+  if (step === 'rerun_keep') return { kind: 'rerun', plan: 'keep' }
+  if (step === 'rerun_again') return { kind: 'rerun', plan: 'again' }
+  if (result.commit === null) return { kind: 'no_commit' }
+  return { kind: step }
+}
+
+/** The Re-run note of a Close-and-re-run press: blockers in, outside findings out. */
+export function rerunNoteFor(result: PrReviewResult, createdAt: string): string {
+  return fillRerunNote('', result, createdAt, defaultRerunPicks(result))
+}
+
+/** The card's problem notice for a refused or failed press: gh's reason or the duplicate's key. */
+export function actionProblem(error: unknown): string {
+  if (error instanceof ApiError) {
+    const details = error.details ?? {}
+    if (error.code === 'conflict' && details.reason === 'duplicate')
+      return `${String(details.key)} (${String(details.state)}) already has this title.`
+    if (error.code === 'gh_failed')
+      return `GitHub did not do it: ${typeof details.stderr === 'string' && details.stderr !== '' ? details.stderr : 'no reason given'}`
+    if (error.code === 'conflict') return 'This card changed meanwhile; its latest state is shown.'
+  }
+  return 'That did not work. Try again.'
 }

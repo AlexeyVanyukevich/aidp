@@ -45,11 +45,19 @@ vi.mock('@zellige/react', () => ({
     busy,
     children,
     onClick: _onClick,
+    ...rest
   }: {
     busy?: boolean
     children?: unknown
     onClick?: () => void
-  }) => <button aria-busy={busy === true ? 'true' : 'false'}>{children as string}</button>,
+    'aria-label'?: string
+    'aria-describedby'?: string
+    disabled?: boolean
+  }) => (
+    <button aria-busy={busy === true ? 'true' : 'false'} {...rest}>
+      {children as string}
+    </button>
+  ),
 }))
 
 const F = { destination: 'blocker', evidence: 'R1' } as const
@@ -760,5 +768,167 @@ describe('HelpPanel: the not-sent line', () => {
     const html = render(kind, result)
     expect(html.includes(NOT_SENT)).toBe(line)
     if (result.mode === 'suggest' && result.text !== undefined) expect(html).toContain('A note.')
+  })
+})
+
+describe('a review result’s next step, step button and File controls (R3, R4, R7, R12, R13)', () => {
+  const OUT = (n: number, on_board: { key: string; state: string } | null, project?: string) => ({
+    kind: 'risk',
+    text: `Outside ${n}`,
+    title: `Title ${n}`,
+    destination: 'outside',
+    evidence: 'a.ts:1',
+    on_board,
+    ...(project === undefined ? {} : { project }),
+  })
+  const BLOCKER = { kind: 'missing', where: 'R1', text: 'A blocker', ...F }
+  const review = (next_step: string | undefined, findings: object[]) =>
+    ({
+      mode: 'review',
+      verdict: 'changes',
+      blockers: 1,
+      findings,
+      unsure: 'u',
+      ...(next_step === undefined ? {} : { next_step, reasoning: 'Because it blocks.' }),
+    }) as unknown as HelpResult
+  const pr = (next_step: string, findings: object[], commit: string | null = 'abc1234') =>
+    ({
+      mode: 'code_review',
+      verdict: 'changes',
+      blockers: 1,
+      findings,
+      unsure: 'u',
+      next_step,
+      reasoning: 'Because it blocks.',
+      commit,
+      skipped: [],
+    }) as unknown as HelpResult
+  const step = (label: string, describedBy?: string) => () => ({
+    label,
+    disabled: false,
+    busy: false,
+    describedBy,
+    onPress: () => undefined,
+  })
+  const html = (result: HelpResult, actions?: Parameters<typeof decisionRenderers>[4]) => {
+    const renderers = decisionRenderers(null, undefined, 3, undefined, actions)
+    const context = { helpId: 'h1' }
+    const node =
+      result.mode === 'review'
+        ? renderers.review?.(result, context)
+        : renderers.code_review?.(result as never, context)
+    return renderToStaticMarkup(<>{node}</>)
+  }
+
+  const labels = [
+    ['approve', 'Approve as it stands'],
+    ['approve_with_note', 'Approve with these findings'],
+    ['redraft', 'Redraft with these findings'],
+  ] as const
+  it.each(labels)('shows Next step, Why and one button for %s (AC4)', (next_step, label) => {
+    const out = html(review(next_step, [BLOCKER]), { ownProject: 'AIDP', step: step(label) })
+    expect(out).toContain(`<strong>Next step:</strong> ${label}`)
+    expect(out).toContain('<strong>Why:</strong> Because it blocks.')
+    expect(out.indexOf('Unsure about')).toBeLessThan(out.indexOf('Next step'))
+    expect(out.match(new RegExp(`<button[^>]*>${label}</button>`, 'g'))).toHaveLength(1)
+    expect(['Approve', 'Redraft']).not.toContain(label)
+  })
+
+  it('shows neither a step nor a step button for a result without next_step (AC4)', () => {
+    const out = html(review(undefined, [BLOCKER]), { ownProject: 'AIDP', step: () => undefined })
+    expect(out).not.toContain('Next step')
+    expect(out).not.toContain('Why:')
+    expect(out).not.toContain('<button')
+  })
+
+  const moving = ['approve', 'approve_with_note', 'redraft'] as const
+  const outsideTwo = (a: object | null, b: object | null) => [
+    BLOCKER,
+    OUT(1, a as never),
+    OUT(2, b as never),
+  ]
+  const done = { key: 'AIDP-3', state: 'backlog' }
+  const noticeRows = [
+    {
+      name: 'both not filed',
+      findings: outsideTwo(null, null),
+      line: '2 outside findings not filed; they leave the card with this review.',
+    },
+    {
+      name: 'one not filed',
+      findings: outsideTwo(null, done),
+      line: '1 outside finding not filed; it leaves the card with this review.',
+    },
+    { name: 'both filed', findings: outsideTwo(done, done), line: null },
+  ]
+  const cases = [
+    ...moving.map((next_step) => ({
+      next_step,
+      make: (f: object[]) => review(next_step, f),
+    })),
+    ...(['rerun_keep', 'rerun_again'] as const).map((next_step) => ({
+      next_step,
+      make: (f: object[]) => pr(next_step, f),
+    })),
+  ]
+  it.each(cases.flatMap((c) => noticeRows.map((row) => ({ ...c, ...row }))))(
+    '$next_step, $name: the button’s description (AC15)',
+    ({ make, findings, line }) => {
+      const out = html(make(findings), { ownProject: 'AIDP', step: step('Go', 'lock') })
+      const button = /<button[^>]*aria-describedby="([^"]*)"[^>]*>Go<\/button>/.exec(out)
+      expect(button).not.toBeNull()
+      const ids = button![1]!.split(' ')
+      if (line === null) {
+        expect(ids).toEqual(['lock'])
+        expect(out).not.toContain('not filed')
+      } else {
+        expect(ids).toHaveLength(2)
+        const text = new RegExp(`<p id="${ids[1]}"[^>]*>([^<]*)</p>`).exec(out)
+        expect(text?.[1]).toBe(line)
+      }
+    },
+  )
+
+  it('never shows the line on merge_and_file (AC15)', () => {
+    const out = html(pr('merge_and_file', [OUT(1, null), OUT(2, null)]), {
+      ownProject: 'AIDP',
+      step: step('Merge, then file the findings outside the task'),
+    })
+    expect(out).not.toContain('not filed')
+  })
+
+  it('has a fix_by_hand result name AIDP-59 and no button but File (AC16)', () => {
+    const out = html(pr('fix_by_hand', [BLOCKER, OUT(1, null)]), {
+      ownProject: 'AIDP',
+      onFile: async () => true,
+      step: () => undefined,
+    })
+    expect(out).toContain('AIDP-59')
+    expect(out).toContain('fix to make by hand on the branch')
+    const buttons = out.match(/<button[^>]*>[^<]*<\/button>/g) ?? []
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0]).toContain('File as a task: Title 1')
+  })
+
+  it('says to merge on GitHub when the commit is null, with no Merge button (R9)', () => {
+    const out = html(pr('merge', [], null), { ownProject: 'AIDP', step: () => undefined })
+    expect(out).toContain('merge on GitHub')
+    expect(out).not.toContain('<button')
+  })
+
+  it('names a File button for another project, and shows the filed line with tabIndex -1 (AC17)', () => {
+    const out = html(review('redraft', [BLOCKER, OUT(1, null, 'CHR'), OUT(2, done)]), {
+      ownProject: 'AIDP',
+      onFile: async () => true,
+    })
+    expect(out).toContain('aria-label="File as a task: Title 1 in CHR"')
+    expect(out).toMatch(/<span tabindex="-1">On the board as AIDP-3 \(backlog\)<\/span>/)
+    // File comes after its finding's text.
+    expect(out.indexOf('Outside 1')).toBeLessThan(out.indexOf('File as a task: Title 1'))
+  })
+
+  it('shows no File button without a handler, as before (R7)', () => {
+    const out = html(review('redraft', [BLOCKER, OUT(1, null)]))
+    expect(out).not.toContain('File as a task')
   })
 })

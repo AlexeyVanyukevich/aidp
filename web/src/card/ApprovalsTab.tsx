@@ -15,6 +15,7 @@ import type {
   TaskView,
 } from '../types'
 import {
+  actionProblem,
   answerSummary,
   batchAnswerLines,
   batchHeading,
@@ -70,6 +71,8 @@ function SingleForm({
   onAnnounce,
   onSend,
   onEdit,
+  onFile,
+  ownProject,
 }: {
   approval: ApprovalView
   helps: HelpView[]
@@ -84,6 +87,9 @@ function SingleForm({
   onAnnounce: (message: string) => void
   onSend: (body: ApprovalAnswer) => void
   onEdit: () => void
+  /** File on an outside finding of the plan review; resolves true once it is filed. */
+  onFile: (helpId: string, index: number) => Promise<boolean>
+  ownProject: string
 }) {
   const [choice, setChoice] = useState<Choice>({ text: '' })
   const [problem, setProblem] = useState<string | undefined>()
@@ -140,7 +146,13 @@ function SingleForm({
         level={4}
         onAsk={onAsk}
         {...(approval.kind === 'plan'
-          ? { planReview: { onAsk: onReviewPlan, onUseFindings: useFindings } }
+          ? {
+              planReview: {
+                onAsk: onReviewPlan,
+                onUseFindings: useFindings,
+                actions: { ownProject, onFile },
+              },
+            }
           : {})}
         requestKind={approval.kind}
         onUse={(result) => {
@@ -287,6 +299,19 @@ export function ApprovalsTab({
       ),
     onSettled: () => client.invalidateQueries({ queryKey: ['helps', task.id] }),
   })
+  /** File on an outside finding of Review plan: the status region says so, a refusal is a notice. */
+  const fileFinding = async (helpId: string, index: number): Promise<boolean> => {
+    try {
+      const filed = await api.fileFinding(task.id, helpId, index)
+      await client.invalidateQueries({ queryKey: ['helps', task.id] })
+      onAnnounce(`Filed ${filed.key}: ${filed.title}.`)
+      return true
+    } catch (error) {
+      onProblem(actionProblem(error))
+      await client.invalidateQueries({ queryKey: ['helps', task.id] })
+      return false
+    }
+  }
   const planReview = useMutation({
     mutationFn: (id: string) => api.reviewPlan(id),
     onError: (error) =>
@@ -394,6 +419,8 @@ export function ApprovalsTab({
                     send(current, body, 'single')
                   }}
                   onEdit={() => setRefused(undefined)}
+                  onFile={fileFinding}
+                  ownProject={task.key.replace(/-\d+$/, '')}
                 />
               </section>
             )}

@@ -35,6 +35,17 @@ import {
   singleAnswer,
   type ReviewResult,
 } from '../../src/card/approvals'
+import {
+  actionProblem,
+  fileButtonName,
+  prStepControl,
+  REVIEW_STEP_LABEL,
+  rerunNoteFor,
+  specStepLock,
+  specStepPresent,
+  specStepRequest,
+  unfiledNotice,
+} from '../../src/card/approvals'
 import { keysFor } from '../../src/stream'
 import type { ApprovalView, BatchQuestion, HelpView } from '../../src/types'
 
@@ -1025,5 +1036,263 @@ describe('fillApprovalNote', () => {
     ]
   it.each(cases)('fills $name', ({ note, picks, text, said }) => {
     expect(fillApprovalNote(note, ready([next]), picks)).toEqual({ note: text, message: said })
+  })
+})
+
+const REVIEW_BASE = {
+  mode: 'review' as const,
+  verdict: 'changes' as const,
+  blockers: 1,
+  unsure: 'u',
+}
+const BLOCK = {
+  kind: 'missing' as const,
+  where: 'R1',
+  text: 'No retry limit',
+  destination: 'blocker' as const,
+  evidence: 'R1',
+}
+const NEXT = { ...BLOCK, text: 'Vague wording', destination: 'next_gate' as const }
+const OUT = (on_board: { key: string; state: string } | null) => ({
+  kind: 'risk' as const,
+  text: 'Elsewhere',
+  destination: 'outside' as const,
+  evidence: 'a.ts:1',
+  title: 'Elsewhere',
+  on_board,
+})
+
+describe('the step labels of Review spec (R3)', () => {
+  it('names each step, and none repeats a Spec tab button', () => {
+    expect(REVIEW_STEP_LABEL).toEqual({
+      approve: 'Approve as it stands',
+      approve_with_note: 'Approve with these findings',
+      redraft: 'Redraft with these findings',
+    })
+    for (const label of Object.values(REVIEW_STEP_LABEL))
+      expect(['Approve', 'Redraft', 'Use these findings']).not.toContain(label)
+  })
+})
+
+describe('specStepRequest (R4, AC5)', () => {
+  const result = (steps: object[]): ReviewResult =>
+    ({ ...REVIEW_BASE, findings: steps, next_step: 'redraft', reasoning: 'r' }) as ReviewResult
+  const rows: {
+    name: string
+    step: 'approve' | 'approve_with_note' | 'redraft'
+    findings: object[]
+    picks?: FindingPick[]
+    note?: string
+    approvalNote?: string
+    expected: object
+  }[] = [
+    {
+      name: 'approve sends the Note for the planner as the owner left it',
+      step: 'approve',
+      findings: [],
+      approvalNote: 'My words',
+      expected: { send: true, step: 'approve', note: 'My words' },
+    },
+    {
+      name: 'redraft writes the findings after the owner’s words, as Use these findings does',
+      step: 'redraft',
+      findings: [BLOCK],
+      note: 'Mine',
+      expected: {
+        send: true,
+        step: 'redraft',
+        note: fillNoteFromReview('Mine', result([BLOCK]), []),
+      },
+    },
+    {
+      name: 'approve_with_note writes the next-gate findings after the owner’s words',
+      step: 'approve_with_note',
+      findings: [NEXT],
+      approvalNote: 'Mine',
+      expected: {
+        send: true,
+        step: 'approve_with_note',
+        note: fillApprovalNote('Mine', result([NEXT]), []).note,
+      },
+    },
+    {
+      name: 'redraft with every finding left out and an empty note is missing',
+      step: 'redraft',
+      findings: [BLOCK],
+      picks: ['out'],
+      expected: { send: false, missing: 'note' },
+    },
+    {
+      name: 'approve_with_note with every finding left out and an empty note is missing',
+      step: 'approve_with_note',
+      findings: [NEXT],
+      picks: ['out'],
+      expected: { send: false, missing: 'approval_note' },
+    },
+    {
+      name: 'redraft with every finding left out keeps the owner’s words and sends them',
+      step: 'redraft',
+      findings: [BLOCK],
+      picks: ['out'],
+      note: 'Already written',
+      expected: { send: true, step: 'redraft', note: 'Already written' },
+    },
+  ]
+  it.each(rows)('$name', (row) => {
+    expect(
+      specStepRequest(row.step, result(row.findings), row.picks ?? [], {
+        note: row.note ?? '',
+        approvalNote: row.approvalNote ?? '',
+      }),
+    ).toEqual(row.expected)
+  })
+})
+
+describe('specStepPresent and specStepLock (R4, AC5)', () => {
+  const base = { approveButton: true, redraftControl: true, resultVersion: 3, latestVersion: 3 }
+  const present: [string, 'approve' | 'approve_with_note' | 'redraft', object, boolean][] = [
+    ['approve with its button', 'approve', {}, true],
+    ['approve_with_note with its button', 'approve_with_note', {}, true],
+    ['approve without the Approve button', 'approve', { approveButton: false }, false],
+    ['redraft without the Redraft control', 'redraft', { redraftControl: false }, false],
+    ['redraft with an older result', 'redraft', { resultVersion: 2 }, false],
+    ['approve with an older result', 'approve', { resultVersion: 2 }, false],
+    ['redraft that does not need Approve', 'redraft', { approveButton: false }, true],
+  ]
+  it.each(present)('%s', (_name, step, change, expected) => {
+    expect(specStepPresent(step, { ...base, ...change })).toBe(expected)
+  })
+
+  const locks: [string, 'approve' | 'redraft', object, string | null][] = [
+    ['approve is free', 'approve', { canApprove: true }, null],
+    ['approve cannot be approved', 'approve', { canApprove: false }, 'unapprovable'],
+    ['approve while rephrasing', 'approve', { canApprove: true, rephrasing: true }, 'rephrasing'],
+    ['redraft is free', 'redraft', {}, null],
+    ['redraft with a draft', 'redraft', { changed: true }, 'changed'],
+    ['redraft while rephrasing', 'redraft', { changed: true, rephrasing: true }, 'rephrasing'],
+  ]
+  it.each(locks)('%s', (_name, step, change, expected) => {
+    expect(
+      specStepLock(step, { canApprove: true, changed: false, rephrasing: false, ...change }),
+    ).toBe(expected)
+  })
+})
+
+describe('unfiledNotice (R4, AC15)', () => {
+  const withOutside = (a: ReturnType<typeof OUT>, b: ReturnType<typeof OUT>) =>
+    ({ ...REVIEW_BASE, findings: [a, b], next_step: 'redraft', reasoning: 'r' }) as ReviewResult
+  const done = { key: 'AIDP-3', state: 'backlog' }
+  it.each([
+    [
+      'both null',
+      withOutside(OUT(null), OUT(null)),
+      '2 outside findings not filed; they leave the card with this review.',
+    ],
+    [
+      'one null',
+      withOutside(OUT(null), OUT(done)),
+      '1 outside finding not filed; it leaves the card with this review.',
+    ],
+    ['both set', withOutside(OUT(done), OUT(done)), null],
+  ])('%s', (_name, result, expected) => {
+    expect(unfiledNotice(result)).toBe(expected)
+  })
+})
+
+describe('fileButtonName (R13)', () => {
+  it.each([
+    ['the own project', 'A title', undefined, 'AIDP', 'File as a task: A title'],
+    ['the own project named', 'A title', 'AIDP', 'AIDP', 'File as a task: A title'],
+    ['another project', 'A title', 'CHR', 'AIDP', 'File as a task: A title in CHR'],
+  ])('%s', (_name, title, project, own, expected) => {
+    expect(fileButtonName(title, project, own)).toBe(expected)
+  })
+})
+
+describe('prStepControl (R9–R12)', () => {
+  const pr = (next_step: string, commit: string | null): PrReviewResult =>
+    ({
+      mode: 'code_review',
+      verdict: 'changes',
+      blockers: 1,
+      findings: [],
+      next_step,
+      reasoning: 'r',
+      unsure: 'u',
+      commit,
+      skipped: [],
+    }) as unknown as PrReviewResult
+  it.each([
+    ['merge', 'abc', { kind: 'merge' }],
+    ['merge', null, { kind: 'no_commit' }],
+    ['merge_and_file', 'abc', { kind: 'merge_and_file' }],
+    ['merge_and_file', null, { kind: 'no_commit' }],
+    ['rerun_keep', null, { kind: 'rerun', plan: 'keep' }],
+    ['rerun_again', 'abc', { kind: 'rerun', plan: 'again' }],
+    ['fix_by_hand', 'abc', { kind: 'by_hand' }],
+  ])('%s with commit %s', (step, commit, expected) => {
+    expect(prStepControl(pr(step, commit))).toEqual(expected)
+  })
+})
+
+describe('rerunNoteFor (R11, AC14)', () => {
+  it('holds the blocker line and not the outside finding', () => {
+    const result = {
+      mode: 'code_review',
+      verdict: 'changes',
+      blockers: 1,
+      findings: [
+        {
+          kind: 'bug',
+          where: 'a.ts:1',
+          text: 'Off by one',
+          matters: 'm',
+          destination: 'blocker',
+          evidence: 'a.ts:1',
+        },
+        {
+          kind: 'fit',
+          where: 'b.ts:2',
+          text: 'Stray',
+          matters: 'm',
+          destination: 'outside',
+          evidence: 'b.ts:2',
+          title: 'T',
+        },
+      ],
+      next_step: 'rerun_again',
+      reasoning: 'r',
+      unsure: 'u',
+      commit: 'abcdef1234567',
+      skipped: [],
+    } as unknown as PrReviewResult
+    const at = '2026-11-20T10:30:00Z'
+    const note = rerunNoteFor(result, at)
+    expect(note).toBe(fillRerunNote('', result, at, defaultRerunPicks(result)))
+    expect(note).toContain('Off by one')
+    expect(note).not.toContain('Stray')
+  })
+})
+
+describe('actionProblem (R13)', () => {
+  it.each([
+    [
+      'a duplicate names its key',
+      new ApiError(409, 'conflict', 'm', { reason: 'duplicate', key: 'AIDP-3', state: 'ready' }),
+      'AIDP-3 (ready) already has this title.',
+    ],
+    [
+      'gh’s reason',
+      new ApiError(502, 'gh_failed', 'm', { stderr: 'head branch was modified' }),
+      'GitHub did not do it: head branch was modified',
+    ],
+    [
+      'a stale card',
+      new ApiError(409, 'conflict', 'm', { reason: 'not_offered' }),
+      'This card changed meanwhile; its latest state is shown.',
+    ],
+    ['anything else', new Error('x'), 'That did not work. Try again.'],
+  ])('%s', (_name, error, expected) => {
+    expect(actionProblem(error)).toBe(expected)
   })
 })

@@ -1,4 +1,4 @@
-import { Fragment, useId, useState, type ReactNode } from 'react'
+import { Fragment, useId, useRef, useState, type ReactNode } from 'react'
 import { Badge, Button, Radio, RadioGroup } from '@zellige/react'
 import type {
   ApprovalKind,
@@ -12,6 +12,10 @@ import type {
 import {
   choicesLabel,
   decisionFailure,
+  fileButtonName,
+  prStepControl,
+  REVIEW_STEP_LABEL,
+  unfiledNotice,
   failureText,
   type FindingPick,
   resultHeading,
@@ -37,9 +41,17 @@ export interface PanelMode<Id extends HelpMode = HelpMode> {
   failureLine: (reason: string) => string
 }
 
+/** What a renderer knows besides the result: the help it shows. */
+export interface RenderContext {
+  helpId: string | undefined
+}
+
 /** A renderer per mode, each given the result narrowed to its mode. */
 export type Renderers = {
-  [M in HelpResult['mode']]?: (result: Extract<HelpResult, { mode: M }>) => ReactNode
+  [M in HelpResult['mode']]?: (
+    result: Extract<HelpResult, { mode: M }>,
+    context?: RenderContext,
+  ) => ReactNode
 }
 
 /**
@@ -85,29 +97,29 @@ export function HelpResults({
 }) {
   const id = useId()
   const Heading = `h${level}` as const
-  const render = (result: HelpResult): ReactNode => {
+  const render = (result: HelpResult, context: RenderContext): ReactNode => {
     switch (result.mode) {
       case 'suggest':
-        return renderers.suggest?.(result)
+        return renderers.suggest?.(result, context)
       case 'suggest_all':
         // Shown under each question as its own suggestion, never as a result of its own.
         return null
       case 'explain':
-        return renderers.explain?.(result)
+        return renderers.explain?.(result, context)
       case 'review':
-        return renderers.review?.(result)
+        return renderers.review?.(result, context)
       case 'review_plan':
-        return renderers.review_plan?.(result)
+        return renderers.review_plan?.(result, context)
       case 'restate':
-        return renderers.restate?.(result)
+        return renderers.restate?.(result, context)
       case 'recommend':
-        return renderers.recommend?.(result)
+        return renderers.recommend?.(result, context)
       case 'check':
-        return renderers.check?.(result)
+        return renderers.check?.(result, context)
       case 'advise':
-        return renderers.advise?.(result)
+        return renderers.advise?.(result, context)
       case 'code_review':
-        return renderers.code_review?.(result)
+        return renderers.code_review?.(result, context)
     }
     // Every mode returns above; this satisfies `consistent-return`.
     return null
@@ -132,7 +144,7 @@ export function HelpResults({
             className="help-result"
           >
             <Heading id={`${id}-${mode.id}`}>{mode.heading}</Heading>
-            {render(result)}
+            {render(result, { helpId: mode.state.id })}
           </section>
         )
       })}
@@ -165,6 +177,8 @@ export function HelpPanel({
   planReview?: {
     onAsk: () => void
     onUseFindings: (result: ReviewResult | PlanReviewResult, picks: FindingPick[]) => void
+    /** File on the result's outside findings. */
+    actions?: ReviewActions
   }
 }) {
   const label = (result: Suggestion) =>
@@ -214,7 +228,13 @@ export function HelpPanel({
           ...(planReview === undefined
             ? {}
             : {
-                review_plan: decisionRenderers(null, planReview.onUseFindings, level).review_plan,
+                review_plan: decisionRenderers(
+                  null,
+                  planReview.onUseFindings,
+                  level,
+                  undefined,
+                  planReview.actions,
+                ).review_plan,
               }),
           suggest: (suggestion) => (
             <>
@@ -309,6 +329,26 @@ export const NEXT_STEP_LABEL: Record<NextStep, string> = {
   rerun_again: 'Close the pull request, then Re-run and plan again',
 }
 
+/** A step button under a result's Why: its label, state and what a press does. */
+export interface StepButton {
+  label: string
+  disabled: boolean
+  busy: boolean
+  /** The id of text elsewhere that says why the button is disabled. */
+  describedBy?: string | undefined
+  onPress: (picks: FindingPick[]) => void
+}
+
+/** What the owner can do with a result beyond picking findings: file one, or take its step. */
+export interface ReviewActions {
+  /** The task's own project key: a File button names any other project. */
+  ownProject: string
+  /** Files the outside finding at the index of the help; resolves true once it is filed. */
+  onFile?: (helpId: string, index: number) => Promise<boolean>
+  /** The step button of a result, or undefined when it has none to show. */
+  step?: (result: AnyReview, helpId: string | undefined) => StepButton | undefined
+}
+
 /** The heading of the next-gate group: it depends on the gate and on whether a blocker stands. */
 export function nextGateHeading(gate: Gate, hasBlocker: boolean): string {
   if (gate === 'spec')
@@ -329,16 +369,31 @@ function ReviewView({
   level,
   onUseFindings,
   onUseInNote,
+  actions,
+  helpId,
 }: {
   result: AnyReview
   gate: Gate
   level: 3 | 4 | 5
+  actions?: ReviewActions | undefined
+  helpId?: string | undefined
   onUseFindings:
     ((result: ReviewResult | PlanReviewResult, picks: FindingPick[]) => void) | undefined
   /** The spec gate's, for a result with no blocker: the next-gate findings go to the approval note. */
   onUseInNote?: ((result: ReviewResult, picks: FindingPick[]) => void) | undefined
 }) {
   const [picks, setPicks] = useState<FindingPick[]>(() => result.findings.map(() => 'written'))
+  const noticeId = useId()
+  // The finding being filed, and the finding whose "On the board" line takes focus once it shows.
+  const [filing, setFiling] = useState<number | undefined>()
+  const focusFiled = useRef<number | undefined>(undefined)
+  const file = async (index: number) => {
+    if (filing !== undefined || actions?.onFile === undefined || helpId === undefined) return
+    setFiling(index)
+    const filed = await actions.onFile(helpId, index)
+    setFiling(undefined)
+    if (filed) focusFiled.current = index
+  }
   const toNote =
     onUseInNote !== undefined &&
     result.mode === 'review' &&
@@ -347,6 +402,13 @@ function ReviewView({
   const picking =
     toNote || (onUseFindings !== undefined && result.blockers > 0 && result.mode !== 'code_review')
   const Heading = `h${level + 1}` as 'h4' | 'h5' | 'h6'
+  const stepButton = actions?.step?.(result, helpId)
+  // Merge, then file never shows the line: it files them itself.
+  const moving = !(result.mode === 'code_review' && result.next_step === 'merge_and_file')
+  const notice = stepButton !== undefined && moving ? unfiledNotice(result) : null
+  const describedBy =
+    [stepButton?.describedBy, notice === null ? undefined : noticeId].filter(Boolean).join(' ') ||
+    undefined
   const entries = result.findings.map((finding, index) => ({ finding, index }))
   const inGroup = (destination: AnyFinding['destination']) =>
     entries.filter(({ finding }) => finding.destination === destination)
@@ -375,6 +437,34 @@ function ReviewView({
         <strong>Evidence:</strong> {finding.evidence}
         {!controls && choices.length > 0 && (
           <> Choices: {choicesLabel(choices, finding.recommended)}</>
+        )}
+        {finding.destination === 'outside' && finding.title !== undefined && (
+          <>
+            {' '}
+            {finding.on_board === null && actions?.onFile !== undefined && (
+              <Button
+                type="button"
+                busy={filing === index}
+                aria-label={fileButtonName(finding.title, finding.project, actions.ownProject)}
+                onClick={() => void file(index)}
+              >
+                File
+              </Button>
+            )}
+            {finding.on_board != null && (
+              <span
+                tabIndex={-1}
+                ref={(element) => {
+                  if (element !== null && focusFiled.current === index) {
+                    focusFiled.current = undefined
+                    element.focus()
+                  }
+                }}
+              >
+                On the board as {finding.on_board.key} ({finding.on_board.state})
+              </span>
+            )}
+          </>
         )}
         {controls && (
           <RadioGroup
@@ -430,6 +520,41 @@ function ReviewView({
           <Part title="Why">{result.reasoning}</Part>
         </>
       )}
+      {result.mode === 'review' && result.next_step !== undefined && (
+        <>
+          <Part title="Next step">{REVIEW_STEP_LABEL[result.next_step] ?? result.next_step}</Part>
+          <Part title="Why">{result.reasoning ?? ''}</Part>
+        </>
+      )}
+      {result.mode === 'code_review' && prStepControl(result).kind === 'by_hand' && (
+        <p>
+          The board cannot yet send a card in Review back to a run on the same branch; AIDP-59 adds
+          that. The blockers listed are the fix to make by hand on the branch.
+        </p>
+      )}
+      {result.mode === 'code_review' && prStepControl(result).kind === 'no_commit' && (
+        <p>This review has no commit to merge; merge on GitHub.</p>
+      )}
+      {stepButton !== undefined && (
+        <>
+          <Button
+            type="button"
+            busy={stepButton.busy}
+            disabled={stepButton.disabled}
+            aria-describedby={describedBy}
+            onClick={() => {
+              if (!stepButton.busy) stepButton.onPress(picks)
+            }}
+          >
+            {stepButton.label}
+          </Button>
+          {notice !== null && (
+            <p id={noticeId} className="muted">
+              {notice}
+            </p>
+          )}
+        </>
+      )}
       {picking && (
         <Button
           type="button"
@@ -456,22 +581,39 @@ export function decisionRenderers(
   onUseFindings?: (result: ReviewResult | PlanReviewResult, picks: FindingPick[]) => void,
   level: 3 | 4 | 5 = 3,
   onUseInNote?: (result: ReviewResult, picks: FindingPick[]) => void,
+  actions?: ReviewActions,
 ): Renderers {
   return {
-    review: (result) => (
+    review: (result, context) => (
       <ReviewView
         result={result}
         gate="spec"
         level={level}
         onUseFindings={onUseFindings}
         onUseInNote={onUseInNote}
+        actions={actions}
+        helpId={context?.helpId}
       />
     ),
-    review_plan: (result) => (
-      <ReviewView result={result} gate="plan" level={level} onUseFindings={onUseFindings} />
+    review_plan: (result, context) => (
+      <ReviewView
+        result={result}
+        gate="plan"
+        level={level}
+        onUseFindings={onUseFindings}
+        actions={actions}
+        helpId={context?.helpId}
+      />
     ),
-    code_review: (result) => (
-      <ReviewView result={result} gate="pull_request" level={level} onUseFindings={undefined} />
+    code_review: (result, context) => (
+      <ReviewView
+        result={result}
+        gate="pull_request"
+        level={level}
+        onUseFindings={undefined}
+        actions={actions}
+        helpId={context?.helpId}
+      />
     ),
     restate: (result) => (
       <>

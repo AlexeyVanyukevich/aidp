@@ -288,7 +288,21 @@ export function CardDrawer() {
       ),
     },
     { id: 'cost', label: 'Cost', panel: <CostTab task={t} /> },
-    { id: 'pr', label: 'PR', panel: <PrTab task={t} onProblem={(text) => setProblem({ text })} /> },
+    {
+      id: 'pr',
+      label: 'PR',
+      panel: (
+        <PrTab
+          task={t}
+          onProblem={(text) => setProblem({ text })}
+          onAnnounce={announceAgain}
+          onMoved={(text) => {
+            leave()
+            announce(text)
+          }}
+        />
+      ),
+    },
   ]
 
   return (
