@@ -942,7 +942,7 @@ A `pull_request` help's subject is `{ pr_run_id }`, the latest delivery run's id
 It stands while the decision is offered and that run is still the latest, so a push to the branch
 outside the board does not retire it: the owner presses Review pull request again to review the new
 head. A review runs only when the owner asks. It is never posted to GitHub: helpers are read-only,
-and the board runs exactly three `gh` commands, `pr view`, `pr list` and `pr create`. The server's
+and the board runs exactly five `gh` commands, `pr view`, `pr list`, `pr create`, `pr merge` and `pr close`. The server's
 `realGh` and the runner's `Git.run` check the first two arguments against that list before they
 spawn anything and refuse any other with "the board does not run gh <first> <second>".
 
@@ -1021,8 +1021,8 @@ other destination takes a `title`. A Review spec `next_gate` finding has a `wher
 mode, as `not_allowed` (a result stored before this holds one and still renders, without it).
 `code_review` refuses `next_gate`, as no gate follows the pull request. On the card a result opens
 with "Ready" or "Changes needed: N blocker(s)", then Blockers, the next-gate group and Outside the
-task, each under its own heading and each finding with its evidence; an outside finding is listed
-and has no control. Migration 015 retired every succeeded `review` and `code_review` help saved
+task, each under its own heading and each finding with its evidence; an outside finding has a File
+control (below). Migration 015 retired every succeeded `review` and `code_review` help saved
 before the shape, so a card never shows the old one.
 
 **Review plan.** A request of kind `plan` offers a third help beside Suggest an answer and
@@ -1070,8 +1070,55 @@ the fallback line) goes under `unsure`.
 `fix_by_hand`, `rerun_keep`, `rerun_again`) and `reasoning`. `merge_and_file` is refused with a
 blocker or without an outside finding, `merge` with any finding, the three others without a
 blocker, and `rerun_keep` when `plan_to_keep` is null, all as `not_offered` on `next_step`; any
-other value is `unknown_action`. The PR tab shows "Next step:" and "Why:". The step is advice and
-does nothing on its own.
+other value is `unknown_action`. The PR tab shows "Next step:" and "Why:".
+
+**Review spec `next_step`.** A `review` result also saves `next_step` (`approve`,
+`approve_with_note`, `redraft`) and `reasoning`. `approve` is refused with a blocker or a
+next-gate finding, `approve_with_note` with a blocker or without a next-gate finding, and `redraft`
+without a blocker, all as `not_offered` on `next_step`; any other value is `unknown_action`, and a
+missing step or blank reasoning is `required`. A result stored before this has neither and shows
+no step. The Spec tab shows "Next step:" and "Why:" after Unsure about, with the labels "Approve
+as it stands", "Approve with these findings" and "Redraft with these findings", and one step
+button under Why. One press writes the picked lines into the step's field (Note for the planner,
+or What to change), as Use these findings does, and sends the decision; a redraft or note that
+would be blank marks its field missing and sends nothing. The button is present only while the
+matching Spec tab button is, for the latest version's result, and is disabled exactly when that
+button is. Use these findings stays for editing before sending.
+
+**The pull request step buttons.** On a Review card the PR tab puts one button under Why.
+Merge (`POST /api/tasks/:id/helps/:helpId/merge`) runs `gh pr merge <number> --repo <repo>
+--rebase --delete-branch --match-head-commit <commit>`, then moves the card to Done with the
+`merge` move and settles the helps in one transaction; a card the PR poller already moved to Done
+counts. Merge, then file (`…/merge-and-file`) first files, in one transaction, every outside
+finding with no task of its title in its target project, then merges as Merge does; a failed merge
+leaves the filed tasks. Close and re-run (`…/close-and-rerun`, body `{ note }`) runs `gh pr close
+<number> --repo <repo>`, then in one transaction moves the card Review to Failed ("pull request
+closed without merging") and to Ready with the Re-run, taking the plan `keep` or `again` from the
+step; the client builds the note with `fillRerunNote` (blockers in, outside findings out), and a
+card the poller moved to Failed in between still gets the Re-run. Each refuses with `409` and runs
+no `gh` when the card is not in Review, when the help is not the newest succeeded `code_review`
+help that stands, when the step is another one, when the commit is null (Merge), or when there is
+no plan to keep (`rerun_keep`). A `gh` that exits non-zero moves nothing and answers `502
+gh_failed` with its stderr in `details`; the card's problem notice shows it. A result with a null
+commit shows no Merge button and says to merge on GitHub. `fix_by_hand` has no control: the result
+says the board cannot yet send a card in Review back to a run on the same branch, and that the
+blockers are the fix to make by hand. A moving step's button is described by the line "N outside
+findings not filed; they leave the card with this review." while any outside finding has
+`on_board` null; Merge, then file never shows it.
+
+**File and `on_board`.** An outside finding of a `review`, `review_plan` or `code_review` result
+may carry `project`, the key of the task's own project or a linked one (any other is `not_offered`
+on `findings`; on another destination `not_allowed`). The helps listing gives each outside finding
+`on_board`: the key and state of a task in its target project whose title matches by `sameTitle`,
+or null. File (`POST /api/tasks/:id/helps/:helpId/findings/:index/file`) creates a Backlog task
+there with the finding's title and text, then a provenance line (the review, the task's key, that
+the owner filed it); it answers `409` and creates nothing when a task already has the title (the
+answer names its key and state), when the help is not a succeeded help of the task, or when the
+finding is not an outside one. A finding already on the board shows "On the board as <key>
+(<state>)" in place of File.
+
+**`gh`.** The board runs exactly five `gh` commands: `pr view`, `pr list`, `pr create`, and on the
+owner's press `pr merge` and `pr close`; any other is refused before it runs.
 
 A decision help is claimed on the help lane (`POST /api/runner/helps/claim`) and shares its three
 slots with question helps. The work carries the project's `repo_path` and `base_branch`, the
