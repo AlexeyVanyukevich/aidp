@@ -7,7 +7,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { registerBoardTools } from '../../src/modules/mcp/board-tools.js'
 import type { Block, Checkpoint, TaskState } from '../../src/shared/vocabulary.js'
 import { lineDiff } from '../../src/modules/specs/line-diff.js'
-import { GOOD_SPEC, seedQueuedRun } from './fixtures.js'
+import { GOOD_SPEC, seedProject, seedQueuedRun } from './fixtures.js'
 import { buildTestApp, closeTestDb, getTestDb, resetDb } from './helpers.js'
 
 let app: FastifyInstance
@@ -264,7 +264,11 @@ describe('save_help_result for a decision help', () => {
   it('saves a result and ends the run (AC9)', async () => {
     const s = await seed({ state: 'spec_review' }, 'spec_review', 'review')
     const call = await tools(s.taskId, s.helpRunId, s.helpId)
-    const saved = await call('save_help_result', { unsure: 'nothing' })
+    const saved = await call('save_help_result', {
+      unsure: 'nothing',
+      next_step: 'approve',
+      reasoning: 'Nothing blocks.',
+    })
     expect(saved.isError).toBe(false)
     expect(await statusOf('runs', s.helpRunId)).toBe('succeeded')
     expect(await statusOf('helps', s.helpId)).toBe('succeeded')
@@ -276,16 +280,57 @@ describe('save_help_result for a decision help', () => {
     const one = await call('save_help_result', {
       findings: [{ ...BLOCKER, choices: ['A'], recommended: 0 }],
       unsure: 'u',
+      next_step: 'redraft',
+      reasoning: 'r',
     })
     expect(one.text).toContain('findings: too few')
     expect(await statusOf('helps', s.helpId)).not.toBe('succeeded')
     const saved = await call('save_help_result', {
       findings: [{ ...BLOCKER, choices: ['A', 'B'], recommended: 1 }],
       unsure: 'u',
+      next_step: 'redraft',
+      reasoning: 'r',
     })
     expect(saved.isError).toBe(false)
     const listed = (await app.inject({ url: `/api/tasks/${s.taskId}/helps` })).json()
     expect(listed[0].result.findings).toEqual([{ ...BLOCKER, choices: ['A', 'B'], recommended: 1 }])
+  })
+
+  it('saves a review step and an outside finding that names a linked project', async () => {
+    const s = await seed({ state: 'spec_review' }, 'spec_review', 'review')
+    const chr = await seedProject(db(), { key: 'CHR' })
+    await db()
+      .insertInto('project_links')
+      .values({ project_id: s.projectId, linked_project_id: chr.id, note: 'n' })
+      .execute()
+    const call = await tools(s.taskId, s.helpRunId, s.helpId)
+    const outside = {
+      kind: 'risk',
+      text: '**Where:** a\n**Found:** b\n**Problem:** c\n**Impact:** d',
+      title: 'Elsewhere',
+      destination: 'outside',
+      evidence: 'a',
+    }
+    const refused = await call('save_help_result', {
+      findings: [{ ...outside, project: 'ZLC' }],
+      unsure: 'u',
+      next_step: 'approve',
+      reasoning: 'r',
+    })
+    expect(refused.text).toContain('findings: not offered')
+    const saved = await call('save_help_result', {
+      findings: [{ ...outside, project: 'CHR' }],
+      unsure: 'u',
+      next_step: 'approve',
+      reasoning: ' Fine. ',
+    })
+    expect(saved.isError).toBe(false)
+    const listed = (await app.inject({ url: `/api/tasks/${s.taskId}/helps` })).json()
+    expect(listed[0].result).toMatchObject({
+      next_step: 'approve',
+      reasoning: 'Fine.',
+      findings: [{ project: 'CHR' }],
+    })
   })
 
   it('refuses a field of another mode, naming it', async () => {

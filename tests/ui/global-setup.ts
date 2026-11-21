@@ -171,6 +171,8 @@ const SCRIPT = {
             },
           ],
           unsure: 'Whether 429 counts.',
+          next_step: 'redraft',
+          reasoning: 'A blocker must be settled before the spec can be approved.',
         }),
         SUGGEST({
           changes: 'Retries back off.',
@@ -211,6 +213,8 @@ const SCRIPT = {
             },
           ],
           unsure: 'Whether 429 counts.',
+          next_step: 'redraft',
+          reasoning: 'A blocker must be settled before the spec can be approved.',
         }),
         SUGGEST({
           changes: 'Retries back off.',
@@ -230,6 +234,8 @@ const SCRIPT = {
             },
           ],
           unsure: 'Nothing else.',
+          next_step: 'redraft',
+          reasoning: 'A blocker must be settled before the spec can be approved.',
         }),
       ],
     },
@@ -259,7 +265,14 @@ const SCRIPT = {
     },
     // A help that succeeds at each decision, whose buttons are read before and after.
     'Buttons at Spec review': {
-      helper: [SUGGEST({ findings: [], unsure: 'Nothing.' })],
+      helper: [
+        SUGGEST({
+          findings: [],
+          unsure: 'Nothing.',
+          next_step: 'approve',
+          reasoning: 'No finding stands in the way of approval.',
+        }),
+      ],
     },
     'Buttons at a stop': {
       planner: [[{ tool: 'save_plan', args: PLAN }]],

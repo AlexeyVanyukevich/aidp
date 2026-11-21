@@ -152,6 +152,7 @@ export type HelpDecision =
 export type HelpStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'stopped'
 export type StoppedRunAction = 'resume' | 'cancel' | 'rerun_again' | 'rerun_keep' | 'mark_done'
 export type FindingDestination = 'blocker' | 'next_gate' | 'outside'
+export type ReviewStep = 'approve' | 'approve_with_note' | 'redraft'
 export type NextStep = 'merge' | 'merge_and_file' | 'fix_by_hand' | 'rerun_keep' | 'rerun_again'
 
 /** The shape every review of a gate has: a derived verdict, and findings with a destination. */
@@ -164,6 +165,10 @@ export interface ReviewShape<Kind extends string, Extra> {
     destination: FindingDestination
     evidence: string
     title?: string
+    /** The key of the project an outside finding belongs to, when not the task's own. */
+    project?: string
+    /** Set when the help is listed: the task already on the board with the finding's title. */
+    on_board?: { key: string; state: string } | null
     choices?: string[]
     recommended?: number
   } & Extra)[]
@@ -196,7 +201,12 @@ export type HelpResult =
       'bug' | 'breaks' | 'duplicate' | 'fit' | 'test',
       { where: string; matters: string }
     >)
-  | ({ mode: 'review' } & ReviewShape<
+  | ({
+      mode: 'review'
+      /** Absent on a review saved before Review spec gave a next step. */
+      next_step?: ReviewStep
+      reasoning?: string
+    } & ReviewShape<
       'missing' | 'contradiction' | 'uncheckable' | 'risk',
       { where?: string; edit?: string }
     >)

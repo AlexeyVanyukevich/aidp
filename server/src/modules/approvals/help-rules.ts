@@ -265,6 +265,7 @@ export interface DecisionResultInput {
         destination?: string | undefined
         evidence?: string | undefined
         title?: string | undefined
+        project?: string | undefined
         edit?: string | undefined
       }[]
     | undefined
@@ -299,10 +300,13 @@ export interface DecisionCheckFacts {
   offeredVariants?: readonly string[]
   /** Whether `planToKeepFor` finds a plan for the task: what `rerun_keep` needs. */
   planToKeep?: boolean
+  /** The task's own project key, and the keys linked to it: where an outside finding may go. */
+  ownProject?: string
+  linkedProjects?: readonly string[]
 }
 
 const DECISION_FIELDS = {
-  review: ['findings', 'unsure'],
+  review: ['findings', 'unsure', 'next_step', 'reasoning'],
   review_plan: ['findings', 'unsure'],
   restate: ['changes', 'requirements', 'left_out'],
   recommend: ['why_stopped', 'action', 'reasoning', 'unsure'],
@@ -338,6 +342,7 @@ const ACTION_IDS = ['resume', 'cancel', 'rerun_again', 'rerun_keep', 'mark_done'
 const FINDING_KINDS = ['missing', 'contradiction', 'uncheckable', 'risk']
 const PLAN_FINDING_KINDS = ['uncovered', 'missing_file', 'risk', 'simpler']
 const DESTINATIONS = ['blocker', 'next_gate', 'outside']
+const REVIEW_STEP_IDS = ['approve', 'approve_with_note', 'redraft']
 const NEXT_STEPS = ['merge', 'merge_and_file', 'fix_by_hand', 'rerun_keep', 'rerun_again']
 const EVIDENCE_LIMIT = 500
 const CODE_FINDING_KINDS = ['bug', 'breaks', 'duplicate', 'fit', 'test']
@@ -456,7 +461,12 @@ export function checkDecisionResult(
       else if ((item.title ?? '').trim().length > TITLE_LIMIT)
         findings.push({ field, code: 'too_long' })
       if (missingLabels(item.text ?? '').length > 0) findings.push({ field, code: 'required' })
-    } else if (item.title !== undefined) findings.push({ field, code: 'not_allowed' })
+      if (item.project !== undefined) {
+        const offered = [facts.ownProject, ...(facts.linkedProjects ?? [])]
+        if (!offered.includes(item.project.trim())) findings.push({ field, code: 'not_offered' })
+      }
+    } else if (item.title !== undefined || item.project !== undefined)
+      findings.push({ field, code: 'not_allowed' })
     if (destination === 'next_gate' && opts.where && blank(item.where))
       findings.push({ field, code: 'required' })
     // A next-gate point goes into the owner's note for the next gate, not into an edit.
@@ -523,6 +533,22 @@ export function checkDecisionResult(
     text('unsure', true)
   } else if (mode === 'review' || mode === 'review_plan') {
     specItems(mode === 'review' ? FINDING_KINDS : PLAN_FINDING_KINDS, mode === 'review')
+    if (mode === 'review') {
+      const list = input.findings ?? []
+      const blockers = list.filter((item) => item.destination === 'blocker').length
+      const nextGate = list.filter((item) => item.destination === 'next_gate').length
+      const step = input.next_step
+      if (step === undefined) findings.push({ field: 'next_step', code: 'required' })
+      else if (!REVIEW_STEP_IDS.includes(step))
+        findings.push({ field: 'next_step', code: 'unknown_action' })
+      else if (
+        (step === 'approve' && (blockers > 0 || nextGate > 0)) ||
+        (step === 'approve_with_note' && (blockers > 0 || nextGate === 0)) ||
+        (step === 'redraft' && blockers === 0)
+      )
+        findings.push({ field: 'next_step', code: 'not_offered' })
+      text('reasoning', true)
+    }
     text('unsure', true)
   } else if (mode === 'restate') {
     for (const field of ['changes', 'requirements', 'left_out'] as const) text(field, true)
@@ -577,7 +603,12 @@ export function decisionResultOf(
   const shared = (item: NonNullable<DecisionResultInput['findings']>[number]) => ({
     destination: item.destination as 'blocker' | 'next_gate' | 'outside',
     evidence: t(item.evidence),
-    ...(item.destination === 'outside' ? { title: t(item.title) } : {}),
+    ...(item.destination === 'outside'
+      ? {
+          title: t(item.title),
+          ...(item.project === undefined ? {} : { project: t(item.project) }),
+        }
+      : {}),
   })
   if (mode === 'code_review')
     return {
@@ -599,9 +630,8 @@ export function decisionResultOf(
     }
   const where = (value: string | undefined) =>
     value === undefined || blank(value) ? {} : { where: value.trim() }
-  if (mode === 'review' || mode === 'review_plan')
-    return {
-      mode,
+  if (mode === 'review' || mode === 'review_plan') {
+    const stored = {
       ...derived,
       findings: (input.findings ?? []).map((item) => ({
         kind: item.kind as never,
@@ -617,6 +647,14 @@ export function decisionResultOf(
       })),
       unsure: t(input.unsure),
     }
+    if (mode === 'review_plan') return { mode, ...stored }
+    return {
+      mode,
+      ...stored,
+      next_step: input.next_step as 'approve' | 'approve_with_note' | 'redraft',
+      reasoning: t(input.reasoning),
+    }
+  }
   if (mode === 'restate')
     return {
       mode,
