@@ -17,6 +17,7 @@ import type {
   QuestionHelpMode,
 } from '../../shared/vocabulary.js'
 import type { ApprovalOption, BatchQuestion } from './approval-rules.js'
+import { withOnBoard } from './help-actions.service.js'
 import {
   DECISION_MODES,
   offered,
@@ -524,7 +525,7 @@ export class HelpService {
         shown.push(help)
       }
     }
-    return shown
+    return withOnBoard(this.db, (await projectKeysOf(this.db, taskId)).ownProject, shown)
   }
 
   /**

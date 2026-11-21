@@ -55,3 +55,10 @@ export const ApprovalsQuery = Type.Object(
   { status: Type.Literal('open') },
   { additionalProperties: false },
 )
+
+/** A finding of a review's result, by the help and its index in the findings. */
+export const FindingParams = Type.Object({
+  id: Uuid,
+  helpId: Uuid,
+  index: Type.String({ pattern: '^[0-9]{1,3}$' }),
+})
