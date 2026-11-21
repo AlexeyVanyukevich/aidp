@@ -1,10 +1,16 @@
 import type { Kysely, Transaction } from 'kysely'
 import type { Database } from '../../db/schema.js'
-import { ConflictError } from '../../shared/errors.js'
+import { AppError, ConflictError, NotFoundError } from '../../shared/errors.js'
 import { publish } from '../../shared/bus.js'
-import type { HelpResult } from '../../shared/vocabulary.js'
+import type { HelpResult, HelpSubject } from '../../shared/vocabulary.js'
 import { sameTitle } from '../proposals/proposal.rules.js'
+import type { Gh } from '../runs/pr-poller.js'
+import { planToKeepFor } from '../tasks/plan-history.queries.js'
+import { rerunCard } from '../tasks/task.actions.js'
+import { moveTask } from '../tasks/task.moves.js'
 import { TaskRepository } from '../tasks/task.repository.js'
+import { stands, type CardDecision } from './decision-rules.js'
+import { readSubjectFacts } from './help.service.js'
 
 /** An outside finding of a stored review result. */
 export interface OutsideFinding {
@@ -147,12 +153,186 @@ async function taskHead(db: Db, taskId: string) {
   return { projectId: row.projectId, ownKey: row.key, taskKey: `${row.key}-${row.number}` }
 }
 
-/** What the owner's presses on a review's result do: file an outside finding. */
+/** `gh` ran and failed: its reason travels in `details`, never in the message. */
+export class GhFailedError extends AppError {
+  readonly statusCode = 502
+  readonly code = 'gh_failed'
+}
+
+/** What the owner's presses on a review's result do: file a finding, merge, close and re-run. */
 export class HelpActionsService {
   private readonly tasks: TaskRepository
 
-  constructor(private readonly db: Kysely<Database>) {
+  constructor(
+    private readonly db: Kysely<Database>,
+    private readonly gh: Gh,
+    private readonly clock: () => Date,
+  ) {
     this.tasks = new TaskRepository(db)
+  }
+
+  private async runGh(args: string[]): Promise<void> {
+    const out = await this.gh(args)
+    if (out.code !== 0)
+      throw new GhFailedError('gh failed', {
+        stderr: out.stderr.trim(),
+        command: args.slice(0, 2).join(' '),
+      })
+  }
+
+  /**
+   * The pull request review a press acts on: the card is in Review, the help is the newest
+   * succeeded one and still stands, and the pull request it read has a number.
+   */
+  private async pullRequestReview(taskId: string, helpId: string) {
+    const task = await this.db
+      .selectFrom('tasks')
+      .innerJoin('projects', 'projects.id', 'tasks.project_id')
+      .select(['tasks.state', 'projects.github_repo'])
+      .where('tasks.id', '=', taskId)
+      .executeTakeFirst()
+    if (task === undefined) throw new NotFoundError('No such task')
+    const refuse = (message: string): never => {
+      throw new ConflictError(message, { reason: 'not_offered', state: task.state })
+    }
+    if (task.state !== 'review') refuse('The card is not in Review')
+    const newest = await this.db
+      .selectFrom('helps')
+      .innerJoin('runs', 'runs.id', 'helps.run_id')
+      .select([
+        'helps.id',
+        'helps.subject',
+        'helps.result',
+        'helps.retired_at',
+        'helps.decision',
+        'helps.mode',
+      ])
+      .where('runs.task_id', '=', taskId)
+      .where('helps.decision', '=', 'pull_request')
+      .where('helps.mode', '=', 'code_review')
+      .where('helps.status', '=', 'succeeded')
+      .orderBy('helps.created_at', 'desc')
+      .limit(1)
+      .executeTakeFirst()
+    if (newest === undefined || newest.id !== helpId || newest.retired_at !== null)
+      return refuse('This is not the review that stands')
+    const subject = newest.subject as HelpSubject
+    const facts = await readSubjectFacts(this.db, taskId)
+    if (!stands('pull_request' as CardDecision, subject, facts))
+      return refuse('This is not the review that stands')
+    const result = newest.result as Extract<HelpResult, { mode: 'code_review' }> | null
+    if (result === null || result.mode !== 'code_review') return refuse('This is not a review')
+    const prRunId = (subject as { pr_run_id: string }).pr_run_id
+    const run = await this.db
+      .selectFrom('runs')
+      .select('pr_number')
+      .where('id', '=', prRunId)
+      .executeTakeFirst()
+    if (run?.pr_number === null || run === undefined) return refuse('The run has no pull request')
+    return { result, prRunId, prNumber: run.pr_number, repo: task.github_repo, help: newest }
+  }
+
+  /** Moves the card from Review to Done; a card the poller already moved for the run counts. */
+  private async moveToDone(taskId: string): Promise<void> {
+    await this.db.transaction().execute(async (trx) => {
+      const task = await trx
+        .selectFrom('tasks')
+        .select('state')
+        .where('id', '=', taskId)
+        .forUpdate()
+        .executeTakeFirstOrThrow()
+      if (task.state === 'done') return
+      await moveTask(trx, taskId, 'merge')
+    })
+  }
+
+  private async runMerge(
+    taskId: string,
+    review: Awaited<ReturnType<HelpActionsService['pullRequestReview']>>,
+  ): Promise<void> {
+    await this.runGh([
+      'pr',
+      'merge',
+      String(review.prNumber),
+      '--repo',
+      review.repo,
+      '--rebase',
+      '--delete-branch',
+      '--match-head-commit',
+      review.result.commit as string,
+    ])
+    await this.moveToDone(taskId)
+  }
+
+  /** Merge, for a result whose step is `merge`. */
+  async merge(taskId: string, helpId: string): Promise<{ state: 'done' }> {
+    const review = await this.pullRequestReview(taskId, helpId)
+    if (review.result.next_step !== 'merge' || review.result.commit === null)
+      throw new ConflictError('This review does not offer a merge', { reason: 'not_offered' })
+    await this.runMerge(taskId, review)
+    return { state: 'done' }
+  }
+
+  /** Files every outside finding not on the board, in one transaction, then merges. */
+  async mergeAndFile(taskId: string, helpId: string): Promise<{ filed: string[] }> {
+    const review = await this.pullRequestReview(taskId, helpId)
+    if (review.result.next_step !== 'merge_and_file' || review.result.commit === null)
+      throw new ConflictError('This review does not offer a merge', { reason: 'not_offered' })
+    const filed = await this.db.transaction().execute(async (trx) => {
+      const head = await taskHead(trx, taskId)
+      const line = provenanceLine(review.help as never, head.taskKey)
+      const found = outsideOf(review.result)
+      const unfiled: typeof found = []
+      for (const item of found)
+        if (
+          (await findOnBoard(trx, item.finding.project ?? head.ownKey, item.finding.title)) === null
+        )
+          unfiled.push(item)
+      const keys: string[] = []
+      for (const item of unfiled) {
+        const made = await fileOutside(trx, this.tasks, {
+          ownProjectId: head.projectId,
+          ownKey: head.ownKey,
+          line,
+          finding: item.finding,
+        })
+        keys.push(made.key)
+      }
+      return keys
+    })
+    await this.runMerge(taskId, review)
+    return { filed }
+  }
+
+  /** Closes the pull request, then moves the card through Failed to Ready with the note. */
+  async closeAndRerun(taskId: string, helpId: string, note: string): Promise<{ state: 'ready' }> {
+    const review = await this.pullRequestReview(taskId, helpId)
+    const step = review.result.next_step
+    if (step !== 'rerun_keep' && step !== 'rerun_again')
+      throw new ConflictError('This review does not offer a re-run', { reason: 'not_offered' })
+    if (step === 'rerun_keep' && (await planToKeepFor(this.db, taskId)) === undefined)
+      throw new ConflictError('This task has no accepted plan to keep', { reason: 'no_plan' })
+    await this.runGh(['pr', 'close', String(review.prNumber), '--repo', review.repo])
+    const now = this.clock()
+    await this.db.transaction().execute(async (trx) => {
+      const task = await trx
+        .selectFrom('tasks')
+        .select('state')
+        .where('id', '=', taskId)
+        .forUpdate()
+        .executeTakeFirstOrThrow()
+      // The poller may have moved the card to Failed for this run since gh closed the pull request.
+      if (task.state === 'review') {
+        await moveTask(trx, taskId, 'close_pr')
+        await trx
+          .updateTable('runs')
+          .set({ failure_reason: 'pull request closed without merging' })
+          .where('id', '=', review.prRunId)
+          .execute()
+      }
+      await rerunCard(trx, taskId, step === 'rerun_keep' ? 'keep' : 'again', note, now)
+    })
+    return { state: 'ready' }
   }
 
   /** A succeeded review help of the task, or a 409. */

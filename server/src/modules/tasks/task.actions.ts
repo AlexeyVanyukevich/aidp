@@ -77,6 +77,52 @@ async function cancel(trx: Transaction<Database>, taskId: string, now: Date): Pr
   await publish(trx, { topic: 'run.queued', runId: run.id })
 }
 
+/**
+ * Re-run's work, in the transaction given: Failed to Ready, then a queued delivery run with the
+ * owner's note and, for `keep`, a copy of the plan to keep.
+ */
+export async function rerunCard(
+  trx: Transaction<Database>,
+  taskId: string,
+  plan: 'keep' | 'again',
+  givenNote: string | null,
+  now: Date,
+): Promise<void> {
+  const note = givenNote === null || blank(givenNote) ? null : givenNote.trim()
+  await moveTask(trx, taskId, 'rerun')
+  const spec = await trx
+    .selectFrom('specs')
+    .select('version')
+    .where('task_id', '=', taskId)
+    .where('status', '=', 'approved')
+    .orderBy('version', 'desc')
+    .executeTakeFirst()
+  if (spec === undefined) throw new ConflictError('This task has no approved spec to run')
+  // Read before the new run exists: the plan to keep comes from the runs before it.
+  const kept = plan === 'keep' ? await planToKeepFor(trx, taskId) : undefined
+  if (plan === 'keep' && kept === undefined)
+    throw new ConflictError('This task has no accepted plan to keep', { reason: 'no_plan' })
+  const runId = await queueDeliveryRun(trx, taskId, spec.version, now)
+  if (note !== null) await trx.updateTable('runs').set({ note }).where('id', '=', runId).execute()
+  if (kept === undefined) return
+  const source = await trx
+    .selectFrom('artifacts')
+    .select(['body_md', 'data'])
+    .where('id', '=', kept.id)
+    .executeTakeFirstOrThrow()
+  await trx
+    .insertInto('artifacts')
+    .values({
+      run_id: runId,
+      phase_id: null,
+      kind: 'plan',
+      body_md: source.body_md,
+      data: JSON.stringify(source.data),
+      copied_from_run: kept.runNumber,
+    })
+    .execute()
+}
+
 export async function performAction(
   db: Kysely<Database>,
   taskId: string,
@@ -141,40 +187,7 @@ export async function performAction(
       return
     }
 
-    const { plan } = rerun
-    const note = rerun.note === null || blank(rerun.note) ? null : rerun.note.trim()
-    await moveTask(trx, taskId, 'rerun')
-    const spec = await trx
-      .selectFrom('specs')
-      .select('version')
-      .where('task_id', '=', taskId)
-      .where('status', '=', 'approved')
-      .orderBy('version', 'desc')
-      .executeTakeFirst()
-    if (spec === undefined) throw new ConflictError('This task has no approved spec to run')
-    // Read before the new run exists: the plan to keep comes from the runs before it.
-    const kept = plan === 'keep' ? await planToKeepFor(trx, taskId) : undefined
-    if (plan === 'keep' && kept === undefined)
-      throw new ConflictError('This task has no accepted plan to keep', { reason: 'no_plan' })
-    const runId = await queueDeliveryRun(trx, taskId, spec.version, now)
-    if (note !== null) await trx.updateTable('runs').set({ note }).where('id', '=', runId).execute()
-    if (kept === undefined) return
-    const source = await trx
-      .selectFrom('artifacts')
-      .select(['body_md', 'data'])
-      .where('id', '=', kept.id)
-      .executeTakeFirstOrThrow()
-    await trx
-      .insertInto('artifacts')
-      .values({
-        run_id: runId,
-        phase_id: null,
-        kind: 'plan',
-        body_md: source.body_md,
-        data: JSON.stringify(source.data),
-        copied_from_run: kept.runNumber,
-      })
-      .execute()
+    await rerunCard(trx, taskId, rerun.plan, rerun.note, now)
   })
 }
 

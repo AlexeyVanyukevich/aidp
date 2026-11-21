@@ -62,3 +62,14 @@ export const FindingParams = Type.Object({
   helpId: Uuid,
   index: Type.String({ pattern: '^[0-9]{1,3}$' }),
 })
+
+export const HelpParams = Type.Object({ id: Uuid, helpId: Uuid })
+
+/** The body of a press with nothing to say: sent as `{}`, so no optional body is checked by hand. */
+export const EmptyBody = Type.Object({}, { additionalProperties: false })
+
+/** Close and re-run carries the Re-run note the client built. */
+export const CloseAndRerunBody = Type.Object(
+  { note: Type.String({ maxLength: 4_000 }) },
+  { additionalProperties: false },
+)
