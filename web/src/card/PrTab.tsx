@@ -4,9 +4,23 @@ import { Badge, Empty, Loading } from '@zellige/react'
 import { api } from '../api'
 import { Loaded } from '../Loaded'
 import { isConflict } from '../errors'
-import { decisionHelp, NO_HELP } from './approvals'
+import {
+  actionProblem,
+  decisionHelp,
+  NO_HELP,
+  prStepControl,
+  rerunNoteFor,
+  type PrReviewResult,
+} from './approvals'
 import { prStatus, decisionsFor } from './blocks'
-import { decisionMode, decisionRenderers, HelpButtons, HelpResults } from './HelpPanel'
+import {
+  decisionMode,
+  decisionRenderers,
+  HelpButtons,
+  HelpResults,
+  NEXT_STEP_LABEL,
+  type ReviewActions,
+} from './HelpPanel'
 import { ownerSentence } from './lint'
 import { latestDeliveryRun } from './timeline'
 import type { ReportData, TaskView } from '../types'
@@ -18,7 +32,19 @@ const VERDICT_TONE = {
   withdrawn: 'neutral',
 } as const
 
-export function PrTab({ task, onProblem }: { task: TaskView; onProblem: (text: string) => void }) {
+export function PrTab({
+  task,
+  onProblem,
+  onAnnounce,
+  onMoved,
+}: {
+  task: TaskView
+  onProblem: (text: string) => void
+  /** The tab's status region: "Filed …". */
+  onAnnounce: (text: string) => void
+  /** A step moved the card: focus goes to the card's state line, and the move is announced. */
+  onMoved: (text: string) => void
+}) {
   const client = useQueryClient()
   const runs = useQuery({ queryKey: ['runs', task.id], queryFn: () => api.runs(task.id) })
   const run = latestDeliveryRun(runs.data ?? [])
@@ -46,6 +72,59 @@ export function PrTab({ task, onProblem }: { task: TaskView; onProblem: (text: s
       ),
     onSettled: () => client.invalidateQueries({ queryKey: ['helps', task.id] }),
   })
+  const refreshAll = () =>
+    Promise.all(
+      [['helps', task.id], ['task', task.id], ['runs', task.id], ['board']].map((queryKey) =>
+        client.invalidateQueries({ queryKey }),
+      ),
+    )
+  const press = useMutation({
+    mutationFn: async ({ result, helpId }: { result: PrReviewResult; helpId: string }) => {
+      const control = prStepControl(result)
+      if (control.kind === 'merge') await api.mergeReview(task.id, helpId)
+      else if (control.kind === 'merge_and_file') await api.mergeAndFileReview(task.id, helpId)
+      else {
+        const createdAt = (helps.data ?? []).find((help) => help.id === helpId)?.created_at ?? ''
+        await api.closeAndRerun(task.id, helpId, rerunNoteFor(result, createdAt))
+      }
+    },
+    onSuccess: (_data, { result }) =>
+      onMoved(
+        prStepControl(result).kind === 'rerun'
+          ? `${task.key} re-run; its pull request is closed.`
+          : `${task.key} merged.`,
+      ),
+    onError: (error) => onProblem(actionProblem(error)),
+    onSettled: refreshAll,
+  })
+  const fileFinding = async (helpId: string, index: number): Promise<boolean> => {
+    try {
+      const filed = await api.fileFinding(task.id, helpId, index)
+      await client.invalidateQueries({ queryKey: ['helps', task.id] })
+      onAnnounce(`Filed ${filed.key}: ${filed.title}.`)
+      return true
+    } catch (error) {
+      onProblem(actionProblem(error))
+      await client.invalidateQueries({ queryKey: ['helps', task.id] })
+      return false
+    }
+  }
+  const actions: ReviewActions = {
+    ownProject: task.key.replace(/-\d+$/, ''),
+    onFile: fileFinding,
+    step: (result, helpId) => {
+      if (result.mode !== 'code_review' || helpId === undefined || task.state !== 'review')
+        return undefined
+      const control = prStepControl(result)
+      if (control.kind === 'by_hand' || control.kind === 'no_commit') return undefined
+      return {
+        label: NEXT_STEP_LABEL[result.next_step],
+        disabled: false,
+        busy: press.isPending,
+        onPress: () => press.mutate({ result, helpId }),
+      }
+    },
+  }
   const review = decisionMode(
     'code_review',
     'Review pull request',
@@ -80,7 +159,11 @@ export function PrTab({ task, onProblem }: { task: TaskView; onProblem: (text: s
                 <div className="help-buttons">
                   <HelpButtons modes={[review]} onAsk={() => ask.mutate()} />
                 </div>
-                <HelpResults modes={[review]} level={3} renderers={decisionRenderers(null)} />
+                <HelpResults
+                  modes={[review]}
+                  level={3}
+                  renderers={decisionRenderers(null, undefined, 3, undefined, actions)}
+                />
               </>
             )}
             <section aria-labelledby={filesId}>

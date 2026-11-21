@@ -170,6 +170,22 @@ export const api = {
     }),
   askDecisionHelp: (taskId: string, decision: Exclude<HelpDecision, 'question'>, mode: HelpMode) =>
     request<HelpView>('POST', `/api/tasks/${taskId}/helps`, { decision, mode }),
+  /** Files the outside finding at `index` of a review as a Backlog task. */
+  fileFinding: (taskId: string, helpId: string, index: number) =>
+    request<{ key: string; state: string; title: string }>(
+      'POST',
+      `/api/tasks/${taskId}/helps/${helpId}/findings/${index}/file`,
+    ),
+  /** Merge on a pull request review whose step is `merge`. */
+  mergeReview: (taskId: string, helpId: string) =>
+    request<{ state: string }>('POST', `/api/tasks/${taskId}/helps/${helpId}/merge`, {}),
+  mergeAndFileReview: (taskId: string, helpId: string) =>
+    request<{ filed: string[] }>('POST', `/api/tasks/${taskId}/helps/${helpId}/merge-and-file`, {}),
+  /** Closes the pull request, then re-runs with the note the client built. */
+  closeAndRerun: (taskId: string, helpId: string, note: string) =>
+    request<{ state: string }>('POST', `/api/tasks/${taskId}/helps/${helpId}/close-and-rerun`, {
+      note,
+    }),
   costs: (taskId: string) => request<CostSummary>('GET', `/api/tasks/${taskId}/costs`),
   /** `files` is null when GitHub did not list them. */
   prFiles: (runId: string) =>

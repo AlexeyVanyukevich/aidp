@@ -6,12 +6,17 @@ import { api, ApiError } from '../api'
 import { useAnnouncer } from '../announce'
 import { invalidField, isConflict, NO_NOTE, NOTE_TOO_LONG, noteRefusal } from '../errors'
 import { Loaded } from '../Loaded'
-import type { HelpMode, SpecView, TaskView } from '../types'
+import type { HelpMode, ReviewStep, SpecView, TaskView } from '../types'
 import {
+  actionProblem,
   decisionHelp,
   fillApprovalNote,
   fillNoteFromReview,
   NO_HELP,
+  REVIEW_STEP_LABEL,
+  specStepLock,
+  specStepPresent,
+  specStepRequest,
   type FindingPick,
   type PlanReviewResult,
   type ReviewResult,
@@ -32,6 +37,7 @@ import {
   viewHeading,
 } from './lint'
 
+const NO_APPROVAL_NOTE = 'Write the note for the planner, or choose Approve as it stands.'
 const NO_DESCRIPTION = 'Write a description first; the spec-writer drafts from it.'
 const NO_TITLE = 'Enter a title.'
 const NO_DESCRIPTION_TO_REPHRASE = 'Write a description first; the rephraser works from it.'
@@ -196,6 +202,7 @@ function SpecEditor({
     decisionMode('review', 'Review spec', reviewHelp.review ?? NO_HELP),
     decisionMode('restate', 'Explain simply', reviewHelp.restate ?? NO_HELP),
   ]
+  const reviewMode = reviewModes[0]!
   const hasHelpResults = reviewModes.some(
     (mode) => mode.state.shown !== undefined || mode.state.failure !== undefined,
   )
@@ -348,7 +355,8 @@ function SpecEditor({
     onSettled: refresh,
   })
   const approve = useMutation({
-    mutationFn: (id: string) => api.approve(id, approvalNote === '' ? undefined : approvalNote),
+    mutationFn: ({ id, note: sent }: { id: string; note: string }) =>
+      api.approve(id, sent === '' ? undefined : sent),
     onMutate: () => {
       setProblem(undefined)
       setApprovalNoteMissing(undefined)
@@ -469,7 +477,7 @@ function SpecEditor({
     discardSuggestion.mutate()
   }
   const redraft = useMutation({
-    mutationFn: () => api.redraft(task.id, note.trim()),
+    mutationFn: (sent: string) => api.redraft(task.id, sent.trim()),
     onMutate: () => setProblem(undefined),
     onSuccess: () => {
       setNote('')
@@ -505,6 +513,45 @@ function SpecEditor({
     announce(filledNote.message)
   }
 
+  /** File on an outside finding: resolves true once it is filed. */
+  const fileFinding = async (helpId: string, index: number): Promise<boolean> => {
+    setProblem(undefined)
+    try {
+      const filed = await api.fileFinding(task.id, helpId, index)
+      await client.invalidateQueries({ queryKey: ['helps', task.id] })
+      announce(`Filed ${filed.key}: ${filed.title}.`)
+      return true
+    } catch (error) {
+      setProblem({ text: actionProblem(error) })
+      await client.invalidateQueries({ queryKey: ['helps', task.id] })
+      return false
+    }
+  }
+
+  /**
+   * A press of a step button: the step's field gets the picked lines after the owner's words, as
+   * Use these findings writes them, and the decision is sent. A field that would be blank is
+   * marked missing and nothing is sent.
+   */
+  const pressStep = (step: ReviewStep, result: ReviewResult, picks: FindingPick[]) => {
+    const request = specStepRequest(step, result, picks, { note, approvalNote })
+    if (!request.send) {
+      if (request.missing === 'note') markMissing('note')
+      else {
+        flushSync(() => setApprovalNoteMissing(NO_APPROVAL_NOTE))
+        approvalNoteField.current?.focus()
+      }
+      return
+    }
+    if (step === 'redraft') {
+      setNote(request.note)
+      redraft.mutate(request.note)
+    } else {
+      setApprovalNote(request.note)
+      if (shown !== undefined) approve.mutate({ id: shown.id, note: request.note })
+    }
+  }
+
   const startDraft = () => {
     if (describedAs.trim() === '') markMissing('description')
     else draftSpec.mutate()
@@ -512,7 +559,7 @@ function SpecEditor({
   const submitRedraft = (event: FormEvent) => {
     event.preventDefault()
     if (note.trim() === '') markMissing('note')
-    else redraft.mutate()
+    else redraft.mutate(note)
   }
 
   const canEdit = editable(task.state)
@@ -761,6 +808,42 @@ function SpecEditor({
               controls.redraft ? putFindingsInNote : undefined,
               4,
               canEdit && !open && buttons.approve ? putFindingsInApprovalNote : undefined,
+              {
+                ownProject: task.key.replace(/-\d+$/, ''),
+                onFile: fileFinding,
+                step: (result, helpId) => {
+                  if (result.mode !== 'review' || result.next_step === undefined) return undefined
+                  const step = result.next_step
+                  const resultVersion =
+                    (reviewMode.state.subject as { spec_version?: number } | null)?.spec_version ??
+                    null
+                  if (
+                    helpId === undefined ||
+                    !specStepPresent(step, {
+                      approveButton: buttons.approve,
+                      redraftControl: controls.redraft,
+                      resultVersion,
+                      latestVersion: latest?.version ?? null,
+                    })
+                  )
+                    return undefined
+                  const lock = specStepLock(step, { canApprove, changed, rephrasing })
+                  return {
+                    label: REVIEW_STEP_LABEL[step],
+                    disabled: lock !== null,
+                    busy: step === 'redraft' ? redraft.isPending : approve.isPending,
+                    describedBy:
+                      lock === 'rephrasing'
+                        ? waitId
+                        : lock === 'changed'
+                          ? lockId
+                          : lock === 'unapprovable'
+                            ? approveId
+                            : undefined,
+                    onPress: (picks) => pressStep(step, result, picks),
+                  }
+                },
+              },
             )}
           />
         </section>
@@ -827,7 +910,7 @@ function SpecEditor({
                 busy={approve.isPending}
                 disabled={!canApprove || rephrasing}
                 aria-describedby={rephrasing ? waitId : canApprove ? undefined : approveId}
-                onClick={() => shown && approve.mutate(shown.id)}
+                onClick={() => shown && approve.mutate({ id: shown.id, note: approvalNote })}
               >
                 Approve
               </Button>

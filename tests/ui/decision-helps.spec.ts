@@ -230,13 +230,16 @@ test('a failed review shows its reason in the Help section', async ({ page, requ
   await expect(spec.getByText(/^No spec review for v1: /)).toBeVisible(RUN)
 })
 
-test('a ready review offers no button in its result', async ({ page, request }) => {
+test('a ready review offers only its step button', async ({ page, request }) => {
   const task = await specTask(request, 'Buttons at Spec review')
   const { spec } = await openSpec(page, task.key, 'Buttons at Spec review')
   await spec.getByRole('button', { name: 'Review spec' }).click()
   const result = spec.getByRole('region', { name: 'Spec review of v1' })
   await expect(result).toContainText('Ready', RUN)
-  await expect(result.getByRole('button')).toHaveCount(0)
+  await expect(result.getByRole('button')).toHaveCount(1)
+  await expect(
+    result.getByRole('button', { name: 'Approve as it stands', exact: true }),
+  ).toBeVisible()
 })
 
 test('a refused decision POST shows the problem notice with focus', async ({ page, request }) => {
