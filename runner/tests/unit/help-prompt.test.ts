@@ -101,6 +101,31 @@ describe('the shared review shape in the helper’s instructions', () => {
   })
 })
 
+describe('Review spec’s next step and the linked project in the helper’s instructions', () => {
+  const steps: { name: string; words: string }[] = [
+    { name: 'it saves next_step and reasoning', words: 'next_step' },
+    {
+      name: 'approve has no blocker and no next_gate finding',
+      words: 'approve: no blocker and no next_gate finding',
+    },
+    {
+      name: 'approve_with_note has a next_gate finding and no blocker',
+      words: 'approve_with_note: no blocker and at least one next_gate finding',
+    },
+    { name: 'redraft has a blocker', words: 'redraft: at least one blocker' },
+    { name: 'the reasoning says why not another step', words: 'why that step and not another' },
+  ]
+  it.each(steps)('review: $name', ({ words }) => {
+    expect(paragraph('review')).toContain(words)
+  })
+  it.each(['review', 'review_plan', 'code_review'])(
+    '%s says an outside finding may name a linked project',
+    (mode) => {
+      expect(paragraph(mode)).toContain('may carry project, the key of a linked project')
+    },
+  )
+})
+
 describe('the approval note and edits in the helper’s instructions', () => {
   it('review_plan raises a dropped note point as a blocker and not a kept one', () => {
     const text = paragraph('review_plan')
