@@ -6,8 +6,11 @@ import { moveTask } from '../tasks/task.moves.js'
 
 export type Gh = (args: string[]) => Promise<{ code: number; stdout: string; stderr: string }>
 
-/** The only `gh` commands the board runs: it reads and opens pull requests, and posts nowhere. */
-const GH_COMMANDS: readonly string[] = ['pr view', 'pr list', 'pr create']
+/**
+ * The only `gh` commands the board runs. It reads pull requests, opens them, and on the owner's
+ * press merges one (`pr merge`) or closes one (`pr close`). It posts nowhere else.
+ */
+const GH_COMMANDS: readonly string[] = ['pr view', 'pr list', 'pr create', 'pr merge', 'pr close']
 
 export const realGh: Gh = (args) => {
   const command = `${args[0] ?? ''} ${args[1] ?? ''}`

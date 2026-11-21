@@ -7,7 +7,10 @@ import {
   AnswerBody,
   ApprovalParams,
   ApprovalsQuery,
+  CloseAndRerunBody,
+  EmptyBody,
   FindingParams,
+  HelpParams,
   HelpBody,
 } from './approval.schemas.js'
 import { ApprovalService } from './approval.service.js'
@@ -24,7 +27,7 @@ export function registerApprovals(instance: FastifyInstance): void {
   const app = instance.withTypeProvider<TypeBoxTypeProvider>()
   const service = new ApprovalService(app.db, app.clock)
   const helps = new HelpService(app.db, app.bus, app.clock)
-  const actions = new HelpActionsService(app.db)
+  const actions = new HelpActionsService(app.db, app.gh, app.clock)
 
   app.get('/api/tasks/:id/approvals', { schema: { params: TaskParams } }, async (request) =>
     service.forTask(request.params.id),
@@ -62,6 +65,25 @@ export function registerApprovals(instance: FastifyInstance): void {
     { schema: { params: FindingParams } },
     async (request) =>
       actions.file(request.params.id, request.params.helpId, Number(request.params.index)),
+  )
+
+  app.post(
+    '/api/tasks/:id/helps/:helpId/merge',
+    { schema: { params: HelpParams, body: EmptyBody } },
+    async (request) => actions.merge(request.params.id, request.params.helpId),
+  )
+
+  app.post(
+    '/api/tasks/:id/helps/:helpId/merge-and-file',
+    { schema: { params: HelpParams, body: EmptyBody } },
+    async (request) => actions.mergeAndFile(request.params.id, request.params.helpId),
+  )
+
+  app.post(
+    '/api/tasks/:id/helps/:helpId/close-and-rerun',
+    { schema: { params: HelpParams, body: CloseAndRerunBody } },
+    async (request) =>
+      actions.closeAndRerun(request.params.id, request.params.helpId, request.body.note),
   )
 
   app.get('/api/approvals', { schema: { querystring: ApprovalsQuery } }, async () => service.open())
