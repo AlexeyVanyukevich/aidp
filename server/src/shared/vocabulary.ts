@@ -91,6 +91,8 @@ export const NEXT_STEPS = [
   'rerun_keep',
   'rerun_again',
 ] as const
+export const REVIEW_STEPS = ['approve', 'approve_with_note', 'redraft'] as const
+export type ReviewStep = (typeof REVIEW_STEPS)[number]
 export type NextStep = (typeof NEXT_STEPS)[number]
 
 /** The shape the board stores for a review at any of the three gates. */
@@ -103,6 +105,10 @@ export interface ReviewShape<Kind extends string, Extra> {
     destination: FindingDestination
     evidence: string
     title?: string
+    /** The key of the project an outside finding belongs to, when not the task's own. */
+    project?: string
+    /** Set when the help is listed: the task already on the board with the finding's title. */
+    on_board?: { key: string; state: string } | null
     choices?: string[]
     recommended?: number
   } & Extra)[]
@@ -134,7 +140,12 @@ export type HelpResult =
       matters: string
       leads_to: string
     }
-  | ({ mode: 'review' } & ReviewShape<
+  | ({
+      mode: 'review'
+      /** Absent on a review saved before Review spec gave a next step. */
+      next_step?: ReviewStep
+      reasoning?: string
+    } & ReviewShape<
       'missing' | 'contradiction' | 'uncheckable' | 'risk',
       { where?: string; edit?: string }
     >)

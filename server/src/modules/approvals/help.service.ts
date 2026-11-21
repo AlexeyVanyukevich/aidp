@@ -67,6 +67,27 @@ export type CheckoutSource =
   | { source: 'pull_request'; branch: string }
   | { source: 'paused_run'; run_id: string }
 
+/** The task's own project key and the keys linked to it: where an outside finding may go. */
+export async function projectKeysOf(
+  db: Kysely<Database> | Transaction<Database>,
+  taskId: string,
+): Promise<{ ownProject: string; linkedProjects: string[] }> {
+  const own = await db
+    .selectFrom('tasks')
+    .innerJoin('projects', 'projects.id', 'tasks.project_id')
+    .select(['projects.id', 'projects.key'])
+    .where('tasks.id', '=', taskId)
+    .executeTakeFirstOrThrow()
+  const linked = await db
+    .selectFrom('project_links')
+    .innerJoin('projects', 'projects.id', 'project_links.linked_project_id')
+    .select('projects.key')
+    .where('project_links.project_id', '=', own.id)
+    .orderBy('projects.key')
+    .execute()
+  return { ownProject: own.key, linkedProjects: linked.map((row) => row.key) }
+}
+
 /** What a decision help carries beyond a question help: the project, the links and the source. */
 export interface DecisionWork {
   repo_path: string
@@ -945,6 +966,7 @@ export class HelpService {
         const planFindings = checkDecisionResult('review_plan', input, {
           recommendable: [],
           checkedAgainst: 'approved_spec',
+          ...(await projectKeysOf(trx, own.task_id)),
         })
         if (planFindings.length > 0)
           return {
@@ -1037,6 +1059,7 @@ export class HelpService {
       planToKeep: facts.planToKeep,
       recommendable: recommendableActions(facts),
       checkedAgainst: specRead(facts).checkedAgainst,
+      ...(await projectKeysOf(trx, help.task_id)),
       ...(proposal === undefined ? {} : { offeredVariants: proposal.offered }),
     })
     if (findings.length > 0)

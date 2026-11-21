@@ -20,6 +20,8 @@ const FACTS: DecisionCheckFacts = {
   recommendable: ['cancel', 'rerun_again', 'mark_done'],
   checkedAgainst: 'approved_spec',
   planToKeep: false,
+  ownProject: 'AIDP',
+  linkedProjects: ['CHR', 'ZLR'],
 }
 const long = 'x'.repeat(4_001)
 const item = { kind: 'missing', text: 'No retry limit', destination: 'blocker', evidence: 'R3' }
@@ -492,9 +494,149 @@ const codeRows: Row[] = [
 ]
 rows.push(...codeRows)
 
+/** A Review spec row that does not name its own step gets the one its findings call for. */
+const withStep = (mode: Mode, input: DecisionResultInput): DecisionResultInput => {
+  if (mode !== 'review' || 'next_step' in input) return input
+  const list = input.findings ?? []
+  const has = (destination: string) => list.some((f) => f.destination === destination)
+  const next_step = has('blocker') ? 'redraft' : has('next_gate') ? 'approve_with_note' : 'approve'
+  return { next_step, reasoning: 'r', ...input }
+}
+
+const specStep = (next_step: string | undefined, extra: Partial<DecisionResultInput> = {}) => ({
+  unsure: 'u',
+  reasoning: 'r',
+  next_step,
+  ...extra,
+})
+const reviewStepRows: Row[] = [
+  { name: 'approve with no findings', mode: 'review', input: specStep('approve'), expected: [] },
+  {
+    name: 'approve with an outside finding',
+    mode: 'review',
+    input: specStep('approve', { findings: [outside] }),
+    expected: [],
+  },
+  {
+    name: 'approve with a blocker',
+    mode: 'review',
+    input: specStep('approve', { findings: [item] }),
+    expected: ['next_step:not_offered'],
+  },
+  {
+    name: 'approve with a next-gate finding',
+    mode: 'review',
+    input: specStep('approve', { findings: [next] }),
+    expected: ['next_step:not_offered'],
+  },
+  {
+    name: 'approve_with_note with a next-gate finding',
+    mode: 'review',
+    input: specStep('approve_with_note', { findings: [next] }),
+    expected: [],
+  },
+  {
+    name: 'approve_with_note with a blocker and a next-gate finding',
+    mode: 'review',
+    input: specStep('approve_with_note', { findings: [item, next] }),
+    expected: ['next_step:not_offered'],
+  },
+  {
+    name: 'approve_with_note with no next-gate finding',
+    mode: 'review',
+    input: specStep('approve_with_note', { findings: [outside] }),
+    expected: ['next_step:not_offered'],
+  },
+  {
+    name: 'redraft with a blocker',
+    mode: 'review',
+    input: specStep('redraft', { findings: [item] }),
+    expected: [],
+  },
+  {
+    name: 'redraft with no blocker',
+    mode: 'review',
+    input: specStep('redraft', { findings: [next] }),
+    expected: ['next_step:not_offered'],
+  },
+  {
+    name: 'an unknown spec step',
+    mode: 'review',
+    input: specStep('merge'),
+    expected: ['next_step:unknown_action'],
+  },
+  {
+    name: 'a missing spec step',
+    mode: 'review',
+    input: specStep(undefined),
+    expected: ['next_step:required'],
+  },
+  {
+    name: 'a blank spec reasoning',
+    mode: 'review',
+    input: specStep('approve', { reasoning: '  ' }),
+    expected: ['reasoning:required'],
+  },
+  {
+    name: 'an outside finding naming the own project',
+    mode: 'review',
+    input: specStep('approve', { findings: [{ ...outside, project: 'AIDP' }] }),
+    expected: [],
+  },
+  {
+    name: 'an outside finding naming a linked project',
+    mode: 'review',
+    input: specStep('approve', { findings: [{ ...outside, project: 'CHR' }] }),
+    expected: [],
+  },
+  {
+    name: 'an outside finding naming an unlinked project',
+    mode: 'review',
+    input: specStep('approve', { findings: [{ ...outside, project: 'XYZ' }] }),
+    expected: ['findings:not_offered'],
+  },
+  {
+    name: 'a blocker naming a project',
+    mode: 'review',
+    input: specStep('redraft', { findings: [{ ...item, project: 'CHR' }] }),
+    expected: ['findings:not_allowed'],
+  },
+  {
+    name: 'a plan review outside finding naming a linked project',
+    mode: 'review_plan',
+    input: { findings: [{ ...outside, project: 'CHR' }], unsure: 'u' },
+    expected: [],
+  },
+  {
+    name: 'a plan review outside finding naming an unlinked project',
+    mode: 'review_plan',
+    input: { findings: [{ ...outside, project: 'XYZ' }], unsure: 'u' },
+    expected: ['findings:not_offered'],
+  },
+  {
+    name: 'a code review outside finding naming a linked project',
+    mode: 'code_review',
+    input: { findings: [{ ...outsideCode, project: 'CHR' }], ...step('merge_and_file') },
+    expected: [],
+  },
+  {
+    name: 'a code review outside finding naming an unlinked project',
+    mode: 'code_review',
+    input: { findings: [{ ...outsideCode, project: 'XYZ' }], ...step('merge_and_file') },
+    expected: ['findings:not_offered'],
+  },
+  {
+    name: 'a code review blocker naming a project',
+    mode: 'code_review',
+    input: { findings: [{ ...bug, project: 'CHR' }], ...step('fix_by_hand') },
+    expected: ['findings:not_allowed'],
+  },
+]
+rows.push(...reviewStepRows)
+
 describe('checkDecisionResult', () => {
   it.each(rows)('$name', ({ mode, input, facts, expected }) => {
-    const found = checkDecisionResult(mode, input, { ...FACTS, ...facts }).map(
+    const found = checkDecisionResult(mode, withStep(mode, input), { ...FACTS, ...facts }).map(
       (finding) => `${finding.field}:${finding.code}`,
     )
     expect(found).toEqual(expected)
@@ -524,5 +666,28 @@ describe('decisionResultOf for the shared review shape', () => {
       const result = stored(mode, { findings, unsure: 'u' })
       expect({ verdict: result.verdict, blockers: result.blockers }).toEqual({ verdict, blockers })
     }
+  })
+})
+
+describe('decisionResultOf for a Review spec step and an outside project', () => {
+  it('stores the step and reasoning trimmed, and the project key', () => {
+    const result = decisionResultOf('review', {
+      findings: [{ ...outside, project: 'CHR' }],
+      unsure: 'u',
+      next_step: 'approve',
+      reasoning: '  Nothing blocks.  ',
+    }) as unknown as { next_step: string; reasoning: string; findings: { project?: string }[] }
+    expect(result.next_step).toBe('approve')
+    expect(result.reasoning).toBe('Nothing blocks.')
+    expect(result.findings[0]?.project).toBe('CHR')
+  })
+  it('stores no project when none is given', () => {
+    const result = decisionResultOf('review', {
+      findings: [outside],
+      unsure: 'u',
+      next_step: 'approve',
+      reasoning: 'r',
+    }) as unknown as { findings: object[] }
+    expect('project' in (result.findings[0] ?? {})).toBe(false)
   })
 })

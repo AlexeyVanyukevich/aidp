@@ -211,7 +211,11 @@ describe('checkDecisionResult for review choices', () => {
     ['neither field', {}, []],
   ]
   it.each(rows)('%s', (_name, extra, codes) => {
-    const out = checkDecisionResult('review', { findings: [finding(extra)], unsure: 'u' }, FACTS)
+    const out = checkDecisionResult(
+      'review',
+      { findings: [finding(extra)], unsure: 'u', next_step: 'redraft', reasoning: 'r' },
+      FACTS,
+    )
     expect(out).toEqual(codes.map((code) => ({ field: 'findings', code })))
   })
 
