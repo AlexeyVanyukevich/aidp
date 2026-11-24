@@ -193,10 +193,8 @@ export function CardDrawer() {
   useEffect(() => {
     if (!focusApprovals.current || tab !== 'approvals') return
     focusApprovals.current = false
-    const tabButtons = tabs.current?.querySelectorAll<HTMLElement>('[role="tab"]') ?? []
-    Array.from(tabButtons)
-      .find((button) => button.textContent === 'Approvals')
-      ?.focus()
+    // The selected tab is Approvals now; found by its state, not its label.
+    tabs.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus()
   }, [tab])
   const closeEditorRequest = useCallback(() => setEditOnSpec(false), [])
   const move = useMutation({
