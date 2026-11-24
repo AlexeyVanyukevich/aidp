@@ -7,6 +7,7 @@ const rows: Row[] = [
   { args: ['pr', 'view', '7', '--repo', 'o/p'], allowed: true },
   { args: ['pr', 'list', '--repo', 'o/p'], allowed: true },
   { args: ['pr', 'create', '--repo', 'o/p'], allowed: true },
+  { args: ['pr', 'edit', '7', '--repo', 'o/p', '--body-file', '-'], allowed: true },
   { args: ['pr', 'comment', '7'], allowed: false },
   { args: ['pr', 'review', '7'], allowed: false },
   { args: ['api', 'repos/o/p'], allowed: false },

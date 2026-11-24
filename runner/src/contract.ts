@@ -172,10 +172,27 @@ export interface RunWork {
   plan_answers?: { run: number; approved: boolean; text: string }[]
   /** The plan a Re-run copied into this run: no planner starts. Absent from an older board. */
   kept_plan?: { artifact_id: string; from_run: number } | null
+  /**
+   * A send-back's: the run it continues and the branch and pull request it works on, and the
+   * runs whose work is on the branch, nearest first. Absent or null for any other run.
+   */
+  continues?: {
+    run: number
+    branch: string
+    pr_number: number
+    pr_url: string | null
+    chain: { id: string; number: number }[]
+  } | null
 }
 
 export type Work =
-  | { kind: 'start'; run: RunWork }
+  | {
+      kind: 'start'
+      run: RunWork
+      /** A continuing run's: what the runs it continues were allowed. */
+      allowed_files?: string[]
+      approved_migrations?: unknown
+    }
   | {
       kind: 'resume'
       run: RunWork

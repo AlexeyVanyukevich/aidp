@@ -58,6 +58,31 @@ describe('the agents', () => {
     expect(prompt).toContain('rewrite the message and commit again')
   })
 
+  it('tells the builder how to make a send-back’s changes (AC11)', () => {
+    const prompt = AGENTS.builder!.prompt
+    expect(prompt).toContain('<changes_note>')
+    expect(prompt).toContain('git commit --fixup')
+    expect(prompt).toContain('GIT_SEQUENCE_EDITOR=: git rebase -i --autosquash')
+    expect(prompt).toContain(
+      'change that belongs to no commit of the branch gets a commit of its own',
+    )
+    expect(prompt).toContain('never a criterion')
+  })
+
+  it('tells the verifier to list each point of the changes note, with no verdict (AC11)', () => {
+    const prompt = AGENTS.verifier!.prompt
+    expect(prompt).toContain('<changes_note>')
+    expect(prompt).toContain('lists each point of the note')
+    expect(prompt).toContain('whether the branch made it')
+    expect(prompt).toContain('The list sets no verdict')
+  })
+
+  it('tells the helper that fix_by_hand sends the blockers to a builder on the same branch (AC15)', () => {
+    expect(AGENTS.helper!.prompt).toContain(
+      'fix_by_hand sends the blockers to a builder on the same branch and pull request, keeping the plan',
+    )
+  })
+
   it('tells the builder a migration needs an approval', () => {
     expect(AGENTS.builder!.prompt).toContain('kind migration')
   })

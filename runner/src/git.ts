@@ -11,8 +11,11 @@ export class GitError extends Error {
   }
 }
 
-/** The only `gh` commands the board runs: it reads and opens pull requests, and posts nowhere. */
-const GH_COMMANDS: readonly string[] = ['pr view', 'pr list', 'pr create']
+/**
+ * The only `gh` commands the board runs: it reads and opens pull requests, rewrites the body of
+ * the one a continuing run works on, and posts nowhere.
+ */
+const GH_COMMANDS: readonly string[] = ['pr view', 'pr list', 'pr create', 'pr edit']
 
 const VERIFY_DIFF_FLAGS = ['--no-color', '--no-ext-diff', '--no-textconv', '--find-renames']
 
@@ -66,6 +69,20 @@ export class Git {
       await this.run('git', ['-C', repo, 'fetch', 'origin', base])
       await this.prune(repo)
       await this.run('git', ['-C', repo, 'worktree', 'add', '-b', branch, dir, `origin/${base}`])
+    })
+  }
+
+  /**
+   * A continuing run's worktree: the branch as origin has it, never cut from the base. The local
+   * branch is set to origin's head, whether or not it exists. Returns that head.
+   */
+  prepareContinuingWorktree(repo: string, branch: string, dir: string): Promise<string> {
+    return this.exclusive(repo, async () => {
+      await this.run('git', ['-C', repo, 'fetch', 'origin', branch])
+      await this.prune(repo)
+      const head = (await this.run('git', ['-C', repo, 'rev-parse', `origin/${branch}`])).trim()
+      await this.run('git', ['-C', repo, 'worktree', 'add', '-B', branch, dir, `origin/${branch}`])
+      return head
     })
   }
 
@@ -373,6 +390,41 @@ export class Git {
 
   async push(dir: string, branch: string): Promise<void> {
     await this.run('git', ['-C', dir, 'push', '-u', 'origin', branch])
+  }
+
+  /** A continuing run's push: forced only if the remote branch is still at `expected`. */
+  async pushLeased(dir: string, branch: string, expected: string): Promise<void> {
+    await this.run('git', [
+      '-C',
+      dir,
+      'push',
+      `--force-with-lease=refs/heads/${branch}:${expected}`,
+      '-u',
+      'origin',
+      branch,
+    ])
+  }
+
+  /** The state of a pull request on GitHub: OPEN, MERGED or CLOSED. */
+  async prState(dir: string, pr: { githubRepo: string; number: number }): Promise<string> {
+    const out = await this.run(
+      this.ghBin,
+      ['pr', 'view', String(pr.number), '--repo', pr.githubRepo, '--json', 'state'],
+      { cwd: dir },
+    )
+    return (JSON.parse(out) as { state: string }).state
+  }
+
+  /** Rewrites the body of a pull request. */
+  async editPrBody(
+    dir: string,
+    pr: { githubRepo: string; number: number; body: string },
+  ): Promise<void> {
+    await this.run(
+      this.ghBin,
+      ['pr', 'edit', String(pr.number), '--repo', pr.githubRepo, '--body-file', '-'],
+      { cwd: dir, input: pr.body },
+    )
   }
 
   async createPr(
