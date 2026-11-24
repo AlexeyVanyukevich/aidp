@@ -1,7 +1,13 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { buildHandoff, diffCut, linkedProjects, testOutputCut } from '../../src/phases/handoff.js'
+import {
+  buildHandoff,
+  diffCut,
+  linkedProjects,
+  pullRequestBody,
+  testOutputCut,
+} from '../../src/phases/handoff.js'
 
 const BASE = {
   taskKey: 'PAY-42',
@@ -113,6 +119,56 @@ describe('buildHandoff', () => {
     expect(text).toContain('<rerun_note>\nkeep &lt;tests&gt; in tests/unit\n</rerun_note>')
     expect(text).toContain('<note>\nThe base moved.\n</note>')
     expect(buildHandoff(BASE)).not.toContain('<rerun_note>')
+  })
+
+  it('carries a send-back’s note in one escaped element, in a continuing run’s handoffs only (AC11)', () => {
+    for (const phase of ['build', 'verify'] as const) {
+      const text = buildHandoff({ ...BASE, phase, changesNote: 'fix <the> comment & more' })
+      expect(text.match(/<changes_note>/g)).toHaveLength(1)
+      expect(text).toContain('<changes_note>\nfix &lt;the&gt; comment &amp; more\n</changes_note>')
+      expect(buildHandoff({ ...BASE, phase })).not.toContain('<changes_note>')
+    }
+  })
+
+  it('labels the reports and summaries of earlier runs with their run and attempt (AC12)', () => {
+    const entry = {
+      name: 'tests/unit/t.test.ts > T',
+      command: 'npx vitest run t',
+      way: 'before_code' as const,
+      failing_line: 'AssertionError: x',
+    }
+    const text = buildHandoff({
+      ...BASE,
+      phase: 'verify',
+      summaries: [
+        { phase: 'build', attempt: 1, text: 'base run: ok', run: 1 },
+        { phase: 'build', attempt: 1, text: 'own build' },
+      ],
+      buildReports: [
+        { attempt: 2, run: 1, tests: [entry] },
+        { attempt: 1, tests: [{ ...entry, name: 'own' }] },
+      ],
+    })
+    expect(text).toContain('<build_report run="1" attempt="2">')
+    expect(text).toContain('<test name="tests/unit/t.test.ts &gt; T"')
+    expect(text).toContain('<build_report attempt="1">')
+    expect(text).toContain('<summary run="1" phase="build" attempt="1">base run: ok</summary>')
+    expect(text).toContain('<summary phase="build" attempt="1">own build</summary>')
+  })
+
+  it('writes the pull request body from the run, the tested section, the cuts and the report', () => {
+    expect(
+      pullRequestBody({
+        taskKey: 'PAY-42',
+        run: 2,
+        specVersion: 3,
+        tested: 'Tested on `main` at `abc`.\n\n',
+        cuts: '',
+        report: 'all pass',
+      }),
+    ).toBe(
+      'PAY-42, run 2, spec v3.\n\nTested on `main` at `abc`.\n\n## Verify report\n\nall pass\n',
+    )
   })
 
   it('carries a spec’s approval note in one escaped element, in the Plan handoff only', () => {

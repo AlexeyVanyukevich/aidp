@@ -16,10 +16,12 @@ export interface HandoffInput {
   note?: string
   /** The owner's note on the earlier run, from a Re-run; apart from `note` (the redraft's, the verifier's). */
   rerunNote?: string | undefined
+  /** Build and Verify of a continuing run: the owner's words on the pull request, from a send-back. */
+  changesNote?: string | undefined
   /** Plan phase only: the owner's note for the planner, given when the spec was approved. */
   approvalNote?: string | undefined
   budgetUsd: number | null
-  summaries: { phase: string; attempt: number; text: string }[]
+  summaries: { phase: string; attempt: number; text: string; run?: number }[]
   plan?: string
   /** A planner starting again: the plans of earlier runs, newest first. Never a `<plan>`. */
   previousPlans?: { run: number; accepted: boolean; text: string }[] | undefined
@@ -35,7 +37,7 @@ export interface HandoffInput {
   /** Verify only: the diff and the absolute path of the file that holds all of it. */
   diff?: { text: string; path: string }
   /** Build and Verify: the entries each Build saved, by attempt. */
-  buildReports?: BuildReportGroup[] | undefined
+  buildReports?: (BuildReportGroup & { run?: number })[] | undefined
   /** The read-only checkouts of the projects this one links to. */
   linked?: LinkedElement[]
 }
@@ -190,6 +192,21 @@ const RETURNS: Record<HandoffInput['phase'], string> = {
   help: 'Call save_help_result, then end your turn.',
 }
 
+/**
+ * The pull request body of a run: its key, run and spec version, the tested section, the
+ * Verify cuts and the latest Verify report. `createPr` and `pr edit` both take it from here.
+ */
+export function pullRequestBody(input: {
+  taskKey: string
+  run: number
+  specVersion: number
+  tested: string
+  cuts: string
+  report: string
+}): string {
+  return `${input.taskKey}, run ${input.run}, spec v${input.specVersion}.\n\n${input.tested}${input.cuts}## Verify report\n\n${input.report}\n`
+}
+
 /** The platform design's handoff contract: the same tags for every phase. */
 export function buildHandoff(input: HandoffInput): string {
   const parts = [
@@ -204,6 +221,8 @@ export function buildHandoff(input: HandoffInput): string {
   if (input.note !== undefined) parts.push(`<note>\n${escape(input.note)}\n</note>`)
   if (input.rerunNote !== undefined)
     parts.push(`<rerun_note>\n${escape(input.rerunNote)}\n</rerun_note>`)
+  if (input.changesNote !== undefined && (input.phase === 'build' || input.phase === 'verify'))
+    parts.push(`<changes_note>\n${escape(input.changesNote)}\n</changes_note>`)
   if (input.phase === 'spec' && input.base?.commit !== undefined)
     parts.push(`<base branch="${attr(input.base.branch)}" commit="${attr(input.base.commit)}"/>`)
   if (input.phase === 'build' && input.base !== undefined)
@@ -211,7 +230,7 @@ export function buildHandoff(input: HandoffInput): string {
   const summaries = input.summaries.filter((s) => s.phase !== 'help')
   if (summaries.length > 0) {
     parts.push(
-      `<context>\n${summaries.map((s) => `<summary phase="${s.phase}" attempt="${s.attempt}">${escape(s.text)}</summary>`).join('\n')}\n</context>`,
+      `<context>\n${summaries.map((s) => `<summary${s.run === undefined ? '' : ` run="${s.run}"`} phase="${s.phase}" attempt="${s.attempt}">${escape(s.text)}</summary>`).join('\n')}\n</context>`,
     )
   }
   const reports = (input.buildReports ?? []).filter((g) => g.tests.length > 0)
@@ -220,7 +239,7 @@ export function buildHandoff(input: HandoffInput): string {
       `<build_reports>\n${reports
         .map(
           (g) =>
-            `<build_report attempt="${g.attempt}">\n${g.tests.map(testTag).join('\n')}\n</build_report>`,
+            `<build_report${g.run === undefined ? '' : ` run="${g.run}"`} attempt="${g.attempt}">\n${g.tests.map(testTag).join('\n')}\n</build_report>`,
         )
         .join('\n')}\n</build_reports>`,
     )
