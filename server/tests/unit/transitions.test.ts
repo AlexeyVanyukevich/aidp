@@ -5,6 +5,8 @@ import { TASK_STATES, type TaskState } from '../../src/shared/vocabulary.js'
 const DELIVERY: Facts = { run: 'delivery', hasSpec: true }
 const FIRST_DRAFT: Facts = { run: 'spec', hasSpec: false }
 const REDRAFT: Facts = { run: 'spec', hasSpec: true }
+const CONTINUING: Facts = { run: 'delivery', hasSpec: true, continuing: true }
+const PR_CLOSED: Facts = { run: 'delivery', hasSpec: true, continuing: true, prClosed: true }
 
 /**
  * The rows of the MVP spec's §5 table that slices 1 to 3 build — slice 2's from its own spec's
@@ -52,6 +54,15 @@ const ALLOWED: [TaskState, Move, TaskState, Facts?][] = [
   ['needs_approval', 'answer', 'spec_draft', FIRST_DRAFT],
   ['blocked', 'answer', 'spec_draft', REDRAFT],
   ['blocked', 'resume', 'spec_draft', FIRST_DRAFT],
+  // AIDP-59: a send-back, and a continuing run's end goes back to Review.
+  ['review', 'send_back', 'ready'],
+  ['running', 'finish_review', 'review', CONTINUING],
+  ['running', 'fail', 'review', CONTINUING],
+  ['running', 'cancel', 'review', CONTINUING],
+  ['ready', 'cancel', 'review', CONTINUING],
+  ['needs_approval', 'cancel', 'review', CONTINUING],
+  ['blocked', 'cancel', 'review', CONTINUING],
+  ['running', 'fail', 'failed', PR_CLOSED],
 ]
 
 describe('nextState', () => {
@@ -68,7 +79,7 @@ describe('nextState', () => {
 
   // Whatever the facts: a refused pair is refused for a draft and a delivery run alike.
   it.each(refused)('refuses %s --%s-->', (from, move) => {
-    for (const facts of [DELIVERY, FIRST_DRAFT, REDRAFT])
+    for (const facts of [DELIVERY, FIRST_DRAFT, REDRAFT, CONTINUING])
       expect(nextState(from, move, facts)).toBeUndefined()
   })
 
