@@ -345,6 +345,15 @@ test('Approve spec with a note approves the version with that note, and focus wa
       return specs[0]?.status === 'approved' ? specs[0].approval_note : undefined
     })
     .toBe('avoid the fake clock')
+  // Approve moves the card to Ready; the runner may claim it at once, so Running counts too.
+  await expect
+    .poll(async () => {
+      const shown = (await (await request.get(appUrl(`/api/tasks/${task.id}`))).json()) as {
+        state: string
+      }
+      return shown.state
+    })
+    .toMatch(/^(ready|running)$/)
 })
 
 test('words with no option redraft the spec; nothing at all is refused where the words go', async ({
