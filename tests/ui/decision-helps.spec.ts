@@ -36,12 +36,12 @@ async function specTask(request: APIRequestContext, title: string) {
   return task
 }
 
-async function openSpec(page: Page, key: string, title: string) {
+/** A card in Spec review opens on Approvals: its tab panel holds the spec gate. */
+async function openGate(page: Page, key: string, title: string) {
   await page.goto(appUrl('/p/DFT'))
   await page.getByRole('link', { name: new RegExp(`^${key} `) }).click()
   const card = page.getByRole('dialog', { name: title })
-  await card.getByRole('tab', { name: 'Spec' }).click()
-  return { card, spec: card.getByRole('tabpanel', { name: 'Spec' }) }
+  return { card, gate: card.getByRole('tabpanel', { name: 'Approvals' }) }
 }
 
 async function openFailed(page: Page, request: APIRequestContext, title: string) {
@@ -69,25 +69,23 @@ test('Review spec and Explain simply give results under their headings, announce
   request,
 }) => {
   const task = await specTask(request, 'Help at Spec review')
-  const { card, spec } = await openSpec(page, task.key, 'Help at Spec review')
-  const review = spec.getByRole('button', { name: 'Review spec' })
-  const plain = spec.getByRole('button', { name: 'Explain simply' })
-  const approve = spec.getByRole('button', { name: 'Approve' })
+  const { card, gate } = await openGate(page, task.key, 'Help at Spec review')
+  const review = gate.getByRole('button', { name: 'Review spec' })
+  const plain = gate.getByRole('button', { name: 'Explain simply' })
+  const approve = gate.getByRole('radio', { name: 'Approve spec' })
   const approveEnabled = await approve.isEnabled()
-  const note = spec.getByRole('textbox', { name: 'What to change' })
-  const use = spec.getByRole('button', { name: 'Use these findings' })
+  const note = gate.getByRole('textbox', { name: 'What to change' })
+  const use = gate.getByRole('button', { name: 'Use these findings' })
   const buttonsBefore = await buttonStates(card)
 
-  // Focus order: Edit, Note for the planner, Approve, Review spec, Explain simply.
-  await tabTo(page, spec.getByRole('button', { name: 'Edit' }))
-  await page.keyboard.press('Tab')
-  await expect(spec.getByRole('textbox', { name: 'Note for the planner' })).toBeFocused()
-  await page.keyboard.press('Tab')
-  await expect(approve).toBeFocused()
+  // Focus order: Edit on the Spec tab, Review spec, Explain simply, then the radio group.
+  await tabTo(page, gate.getByRole('button', { name: 'Edit on the Spec tab' }))
   await page.keyboard.press('Tab')
   await expect(review).toBeFocused()
   await page.keyboard.press('Tab')
   await expect(plain).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(approve).toBeFocused()
 
   await review.focus()
   await page.keyboard.press('Enter')
@@ -96,19 +94,18 @@ test('Review spec and Explain simply give results under their headings, announce
   await expect(
     card.getByRole('status').filter({ hasText: 'Spec review ready for v1.' }),
   ).toBeVisible(RUN)
-  await card.getByRole('tab', { name: 'Spec' }).click()
+  await card.getByRole('tab', { name: 'Approvals' }).click()
 
-  await expect(spec.getByRole('heading', { level: 3, name: 'Help with v1' })).toBeVisible()
-  const result = spec.getByRole('heading', { level: 4, name: 'Spec review of v1' })
+  const result = gate.getByRole('heading', { level: 4, name: 'Spec review of v1' })
   await expect(result).toBeVisible()
-  await expect(spec).toContainText('No retry limit')
+  await expect(gate).toContainText('No retry limit')
 
-  // Use these findings fills the note from the keyboard, sends nothing and leaves the card be.
+  // Use these findings fills the words from the keyboard, sends nothing and leaves the card be.
   const requests: string[] = []
   page.on('request', (req) => {
     if (req.url().includes('/api/')) requests.push(`${req.method()} ${req.url()}`)
   })
-  await spec
+  await card
     .getByRole('status')
     .first()
     .evaluate((node) => {
@@ -126,17 +123,20 @@ test('Review spec and Explain simply give results under their headings, announce
   await expect(note).toHaveValue(line)
   await expect(note).toBeFocused()
   expect(await note.evaluate((el: HTMLTextAreaElement) => el.selectionStart)).toBe(line.length)
-  await expect(spec.getByText('Findings put in What to change.')).toBeVisible()
+  await expect(
+    card.getByRole('status').filter({ hasText: 'Findings put in What to change.' }),
+  ).toBeVisible()
   await expect(card.getByText(`${task.key} · Spec review`)).toBeVisible()
   await expectAccessible(page)
   expect(await buttonStates(card)).toEqual(buttonsBefore)
-  for (const name of ['Approve', 'Redraft', 'Mark done'])
-    expect(buttonsBefore[name], name).not.toBeNull()
+  for (const name of ['Send answer', 'Mark done']) expect(buttonsBefore[name], name).not.toBeNull()
 
   // A second press is announced again: the region is emptied, then refilled.
   await page.evaluate(() => ((window as unknown as { seen: string[] }).seen.length = 0))
   await use.click()
-  await expect(spec.getByText('Findings put in What to change.')).toBeVisible()
+  await expect(
+    card.getByRole('status').filter({ hasText: 'Findings put in What to change.' }),
+  ).toBeVisible()
   const seen = await page.evaluate(() => (window as unknown as { seen: string[] }).seen)
   expect(seen.slice(0, 2)).toEqual(['', 'Findings put in What to change.'])
   expect(requests.filter((request) => !request.startsWith('GET '))).toEqual([])
@@ -148,9 +148,9 @@ test('Review spec and Explain simply give results under their headings, announce
 
   await plain.click()
   await expect(plain).toBeFocused()
-  await expect(spec.getByRole('heading', { level: 4, name: 'v1 in plain words' })).toBeVisible(RUN)
+  await expect(gate.getByRole('heading', { level: 4, name: 'v1 in plain words' })).toBeVisible(RUN)
 
-  // Help changes nothing about Approve.
+  // Help changes nothing about Approve spec.
   expect(await approve.isEnabled()).toBe(approveEnabled)
   await expectAccessible(page)
 })
@@ -160,13 +160,13 @@ test('Use these findings puts the picked choices, open choices and left-out find
   request,
 }) => {
   const task = await specTask(request, 'Choices at Spec review')
-  const { card, spec } = await openSpec(page, task.key, 'Choices at Spec review')
-  const note = spec.getByRole('textbox', { name: 'What to change' })
-  const use = spec.getByRole('button', { name: 'Use these findings' })
+  const { card, gate } = await openGate(page, task.key, 'Choices at Spec review')
+  const note = gate.getByRole('textbox', { name: 'What to change' })
+  const use = gate.getByRole('button', { name: 'Use these findings' })
   const group = (n: number) =>
-    spec.getByRole('radiogroup', { name: `What to do with finding ${n}` })
-  await spec.getByRole('button', { name: 'Review spec' }).click()
-  await expect(spec.getByRole('heading', { level: 4, name: 'Spec review of v1' })).toBeVisible(RUN)
+    gate.getByRole('radiogroup', { name: `What to do with finding ${n}` })
+  await gate.getByRole('button', { name: 'Review spec' }).click()
+  await expect(gate.getByRole('heading', { level: 4, name: 'Spec review of v1' })).toBeVisible(RUN)
 
   // Each group holds its radios in order, with Use as written checked.
   for (const n of [1, 2, 3]) {
@@ -181,7 +181,7 @@ test('Use these findings puts the picked choices, open choices and left-out find
   page.on('request', (req) => {
     if (req.url().includes('/api/')) requests.push(`${req.method()} ${req.url()}`)
   })
-  const status = spec.getByRole('status').first()
+  const status = card.getByRole('status').filter({ hasText: 'What to change' })
 
   // Keyboard only: the arrow keys move within a group, Tab leaves it.
   await tabTo(page, group(1).getByRole('radio', { name: 'Use as written' }))
@@ -214,27 +214,27 @@ test('Use these findings puts the picked choices, open choices and left-out find
   await expect(status).toHaveText('Every finding is left out; What to change is unchanged.')
 
   // The same result shown again keeps the picks; a new result starts from Use as written.
-  await spec.getByRole('button', { name: 'Explain simply' }).click()
-  await expect(spec.getByRole('heading', { level: 4, name: 'v1 in plain words' })).toBeVisible(RUN)
+  await gate.getByRole('button', { name: 'Explain simply' }).click()
+  await expect(gate.getByRole('heading', { level: 4, name: 'v1 in plain words' })).toBeVisible(RUN)
   await expect(group(1).getByRole('radio', { name: 'Leave out' })).toBeChecked()
-  await spec.getByRole('button', { name: 'Review spec' }).click()
-  await expect(spec.getByText('A second look')).toBeVisible(RUN)
+  await gate.getByRole('button', { name: 'Review spec' }).click()
+  await expect(gate.getByText('A second look')).toBeVisible(RUN)
   await expect(group(1).getByRole('radio', { name: 'Use as written' })).toBeChecked()
   await expect(card).toBeVisible()
 })
 
 test('a failed review shows its reason in the Help section', async ({ page, request }) => {
   const task = await specTask(request, 'A spec review that fails')
-  const { spec } = await openSpec(page, task.key, 'A spec review that fails')
-  await spec.getByRole('button', { name: 'Review spec' }).click()
-  await expect(spec.getByText(/^No spec review for v1: /)).toBeVisible(RUN)
+  const { card, gate } = await openGate(page, task.key, 'A spec review that fails')
+  await gate.getByRole('button', { name: 'Review spec' }).click()
+  await expect(gate.getByText(/^No spec review for v1: /)).toBeVisible(RUN)
 })
 
 test('a ready review offers only its step button', async ({ page, request }) => {
   const task = await specTask(request, 'Buttons at Spec review')
-  const { spec } = await openSpec(page, task.key, 'Buttons at Spec review')
-  await spec.getByRole('button', { name: 'Review spec' }).click()
-  const result = spec.getByRole('region', { name: 'Spec review of v1' })
+  const { card, gate } = await openGate(page, task.key, 'Buttons at Spec review')
+  await gate.getByRole('button', { name: 'Review spec' }).click()
+  const result = gate.getByRole('region', { name: 'Spec review of v1' })
   await expect(result).toContainText('Ready', RUN)
   await expect(result.getByRole('button')).toHaveCount(1)
   await expect(
@@ -244,12 +244,12 @@ test('a ready review offers only its step button', async ({ page, request }) => 
 
 test('a refused decision POST shows the problem notice with focus', async ({ page, request }) => {
   const task = await specTask(request, 'Help at Spec review')
-  const { spec } = await openSpec(page, task.key, 'Help at Spec review')
+  const { card, gate } = await openGate(page, task.key, 'Help at Spec review')
   for (const [status, words] of REFUSALS) {
     await page.route(`**/api/tasks/${task.id}/helps`, (route) => route.fulfill(refusal(status)))
-    await spec.getByRole('button', { name: 'Review spec' }).click()
+    await gate.getByRole('button', { name: 'Review spec' }).click()
     // The notice itself takes focus, not the text inside it.
-    const notice = spec.getByRole('alert').filter({ hasText: words })
+    const notice = card.getByRole('alert').filter({ hasText: words })
     await expect(notice).toBeVisible()
     await expect(notice).toBeFocused()
     await page.unroute(`**/api/tasks/${task.id}/helps`)
@@ -336,8 +336,7 @@ test('a refused POST on a Failed card shows the card’s problem notice', async 
 // AC29: a help that succeeded changes no decision button. Each card's buttons are read before
 // the help is asked and after its result is announced; a button the card does not show is null.
 const DECISION_BUTTONS = [
-  'Approve',
-  'Redraft',
+  'Send answer',
   'Mark done',
   'Resume',
   'Cancel run',
@@ -366,11 +365,11 @@ const SUCCEEDED_HELPS: {
     card: 'Spec review',
     open: async (page, request) => {
       const task = await specTask(request, 'Buttons at Spec review')
-      return (await openSpec(page, task.key, 'Buttons at Spec review')).card
+      return (await openGate(page, task.key, 'Buttons at Spec review')).card
     },
     ask: 'Review spec',
     ready: 'Spec review ready for v1.',
-    shown: ['Approve', 'Redraft', 'Mark done'],
+    shown: ['Send answer', 'Mark done'],
   },
   {
     card: 'Failed',

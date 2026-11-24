@@ -88,6 +88,10 @@ describe('initialTab', () => {
     ['blocked', { cause: 'approval_expired', stage: 'build' }, 'approvals'],
     ['blocked', { cause: 'runner_lost', stage: 'build' }, 'spec'],
     ['running', null, 'spec'],
+    ['spec_review', null, 'approvals'],
+    ['backlog', null, 'spec'],
+    ['ready', null, 'spec'],
+    ['review', null, 'spec'],
   ])('opens a %s card on its %s tab', (state, block, tab) => {
     expect(initialTab({ state, block })).toBe(tab)
   })
@@ -115,7 +119,12 @@ describe('stateAnnouncement', () => {
     [
       'a draft finishing',
       { key: 'PAY-1', from: 'spec_draft', to: 'spec_review', latestVersion: 2, draftFailure: null },
-      'PAY-1 is now in Spec review. v2 is ready to review.',
+      'PAY-1 is now in Spec review. v2 is ready to review in Approvals.',
+    ],
+    [
+      'a redraft finishing',
+      { key: 'PAY-1', from: 'spec_draft', to: 'spec_review', latestVersion: 3, draftFailure: null },
+      'PAY-1 is now in Spec review. v3 is ready to review in Approvals.',
     ],
     [
       'a first draft failing',

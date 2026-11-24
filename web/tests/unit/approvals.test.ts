@@ -18,7 +18,6 @@ import {
   applySuggestion,
   suggestionMessage,
   fillNoteFromReview,
-  fillApprovalNote,
   fillRerunNote,
   defaultRerunPicks,
   type PrReviewResult,
@@ -43,7 +42,11 @@ import {
   rerunNoteFor,
   specStepLock,
   specStepPresent,
-  specStepRequest,
+  specGateAnswer,
+  specRefusal,
+  specStepPress,
+  specFindings,
+  wordsField,
   unfiledNotice,
 } from '../../src/card/approvals'
 import { keysFor } from '../../src/stream'
@@ -1002,43 +1005,6 @@ describe('fillRerunNote', () => {
   })
 })
 
-describe('fillApprovalNote', () => {
-  const ready = (findings: ReviewResult['findings']): ReviewResult => ({
-    mode: 'review',
-    verdict: 'ready',
-    blockers: 0,
-    findings,
-    unsure: 'u',
-  })
-  const next: ReviewResult['findings'][number] = {
-    kind: 'risk',
-    where: 'Context',
-    text: 'Name the clock',
-    destination: 'next_gate',
-    evidence: 'Context',
-  }
-  const cases: { name: string; note: string; picks: FindingPick[]; text: string; said: string }[] =
-    [
-      {
-        name: 'words already there',
-        note: 'Keep it small.',
-        picks: ['written'],
-        text: 'Keep it small.\n\n- next gate, risk (Context): Name the clock',
-        said: 'Findings put in Note for the planner.',
-      },
-      {
-        name: 'a finding left out',
-        note: 'Keep it small.',
-        picks: ['out'],
-        text: 'Keep it small.',
-        said: 'Every finding is left out; Note for the planner is unchanged.',
-      },
-    ]
-  it.each(cases)('fills $name', ({ note, picks, text, said }) => {
-    expect(fillApprovalNote(note, ready([next]), picks)).toEqual({ note: text, message: said })
-  })
-})
-
 const REVIEW_BASE = {
   mode: 'review' as const,
   verdict: 'changes' as const,
@@ -1074,107 +1040,254 @@ describe('the step labels of Review spec (R3)', () => {
   })
 })
 
-describe('specStepRequest (R4, AC5)', () => {
-  const result = (steps: object[]): ReviewResult =>
-    ({ ...REVIEW_BASE, findings: steps, next_step: 'redraft', reasoning: 'r' }) as ReviewResult
+describe('specStepPresent and specStepLock (R9)', () => {
+  it.each<[string, number | null, number | null, boolean]>([
+    ['the latest version’s result', 3, 3, true],
+    ['an older result', 2, 3, false],
+    ['a result with no version', null, 3, false],
+  ])('shows a step for %s: %s', (_name, resultVersion, latestVersion, expected) => {
+    expect(specStepPresent(resultVersion, latestVersion)).toBe(expected)
+  })
+
+  const locks: [string, 'approve' | 'approve_with_note' | 'redraft', object, string | null][] = [
+    ['approve is free', 'approve', {}, null],
+    ['approve with the radio disabled', 'approve', { canApprove: false }, 'unapprovable'],
+    [
+      'approve_with_note with the radio disabled',
+      'approve_with_note',
+      { canApprove: false },
+      'unapprovable',
+    ],
+    ['approve while rephrasing', 'approve', { rephrasing: true }, 'rephrasing'],
+    ['redraft is free', 'redraft', {}, null],
+    ['redraft with the radio disabled', 'redraft', { canApprove: false }, null],
+    ['redraft while rephrasing', 'redraft', { rephrasing: true }, 'rephrasing'],
+  ]
+  it.each(locks)('%s', (_name, step, change, expected) => {
+    expect(specStepLock(step, { canApprove: true, rephrasing: false, ...change })).toBe(expected)
+  })
+})
+
+describe('specGateAnswer (R5, AC1)', () => {
+  it.each<[string, { option?: string; text: string }, object]>([
+    [
+      'approve with blank words',
+      { option: 'approve', text: '   ' },
+      { send: true, action: 'approve' },
+    ],
+    [
+      'approve with words',
+      { option: 'approve', text: '  keep it small  ' },
+      { send: true, action: 'approve', note: 'keep it small' },
+    ],
+    [
+      'words with no option',
+      { text: '  split it  ' },
+      { send: true, action: 'redraft', note: 'split it' },
+    ],
+    [
+      'only spaces with no option',
+      { text: '   ' },
+      { send: false, message: 'Write what to change, or choose Approve spec.' },
+    ],
+  ])('%s', (_name, choice, expected) => {
+    expect(specGateAnswer(choice)).toEqual(expected)
+  })
+})
+
+describe('wordsField (R4, AC2)', () => {
+  const spec = 'The spec-writer redrafts from these words and the current version.'
+  const planner = 'The planner reads this with the approved spec. It does not change the spec.'
+  it.each<[string, 'spec' | 'plan' | 'question', string | undefined, string, string | undefined]>([
+    ['the spec gate with no option', 'spec', undefined, 'What to change', spec],
+    ['the spec gate with Approve spec', 'spec', 'approve', 'Note for the planner', planner],
+    ['a plan request', 'plan', undefined, 'Changes to ask for', undefined],
+    ['a question request', 'question', undefined, 'Your answer', undefined],
+  ])('%s', (_name, gate, option, label, hint) => {
+    const field = wordsField(gate, option)
+    expect(field.label).toBe(label)
+    if (hint !== undefined) expect(field.hint).toBe(hint)
+  })
+})
+
+describe('specFindings (R8, AC3)', () => {
+  const res = (findings: object[], blockers: number): ReviewResult =>
+    ({ ...REVIEW_BASE, blockers, findings }) as ReviewResult
+  const blockerLine = '- blocker, missing (R1): No retry limit'
+  const nextLine = '- next gate, missing (R1): Vague wording'
+  const rows: {
+    name: string
+    result: ReviewResult
+    choice: { option?: string; text: string }
+    picks?: FindingPick[]
+    enabled?: boolean
+    expected: { choice: { option?: string; text: string }; message: string }
+  }[] = [
+    {
+      name: 'a blocker with Approve spec chosen',
+      result: res([BLOCK], 1),
+      choice: { option: 'approve', text: 'Mine' },
+      expected: {
+        choice: { text: `Mine\n\n${blockerLine}` },
+        message: 'Findings put in What to change.',
+      },
+    },
+    {
+      name: 'next-gate findings only, radio enabled',
+      result: res([NEXT], 0),
+      choice: { text: '' },
+      expected: {
+        choice: { option: 'approve', text: nextLine },
+        message: 'Findings put in Note for the planner.',
+      },
+    },
+    {
+      name: 'next-gate findings only, radio disabled',
+      result: res([NEXT], 0),
+      choice: { text: '' },
+      enabled: false,
+      expected: { choice: { text: nextLine }, message: 'Findings put in What to change.' },
+    },
+    {
+      name: 'every finding left out, no option',
+      result: res([BLOCK], 1),
+      choice: { text: 'Mine' },
+      picks: ['out'],
+      expected: {
+        choice: { text: 'Mine' },
+        message: 'Every finding is left out; What to change is unchanged.',
+      },
+    },
+    {
+      name: 'every finding left out, Approve spec',
+      result: res([NEXT], 0),
+      choice: { option: 'approve', text: 'Mine' },
+      picks: ['out'],
+      expected: {
+        choice: { option: 'approve', text: 'Mine' },
+        message: 'Every finding is left out; Note for the planner is unchanged.',
+      },
+    },
+  ]
+  it.each(rows)('$name', (row) => {
+    expect(specFindings(row.choice, row.result, row.picks ?? [], row.enabled ?? true)).toEqual(
+      row.expected,
+    )
+  })
+})
+
+describe('specStepPress (R9, AC4)', () => {
+  const res = (findings: object[]): ReviewResult =>
+    ({ ...REVIEW_BASE, findings, next_step: 'redraft', reasoning: 'r' }) as ReviewResult
   const rows: {
     name: string
     step: 'approve' | 'approve_with_note' | 'redraft'
     findings: object[]
     picks?: FindingPick[]
-    note?: string
-    approvalNote?: string
+    text?: string
     expected: object
   }[] = [
     {
-      name: 'approve sends the Note for the planner as the owner left it',
+      name: 'approve sends the field’s words as the note',
       step: 'approve',
       findings: [],
-      approvalNote: 'My words',
-      expected: { send: true, step: 'approve', note: 'My words' },
-    },
-    {
-      name: 'redraft writes the findings after the owner’s words, as Use these findings does',
-      step: 'redraft',
-      findings: [BLOCK],
-      note: 'Mine',
+      text: ' My words ',
       expected: {
-        send: true,
-        step: 'redraft',
-        note: fillNoteFromReview('Mine', result([BLOCK]), []),
+        choice: { option: 'approve', text: ' My words ' },
+        send: { send: true, action: 'approve', note: 'My words' },
       },
     },
     {
-      name: 'approve_with_note writes the next-gate findings after the owner’s words',
+      name: 'approve_with_note puts the picked lines after the words',
       step: 'approve_with_note',
       findings: [NEXT],
-      approvalNote: 'Mine',
+      text: 'Mine',
       expected: {
-        send: true,
-        step: 'approve_with_note',
-        note: fillApprovalNote('Mine', result([NEXT]), []).note,
+        choice: { option: 'approve', text: 'Mine\n\n- next gate, missing (R1): Vague wording' },
+        send: {
+          send: true,
+          action: 'approve',
+          note: 'Mine\n\n- next gate, missing (R1): Vague wording',
+        },
       },
     },
     {
-      name: 'redraft with every finding left out and an empty note is missing',
+      name: 'redraft puts the picked lines after the words and clears the choice',
       step: 'redraft',
       findings: [BLOCK],
-      picks: ['out'],
-      expected: { send: false, missing: 'note' },
+      text: 'Mine',
+      expected: {
+        choice: { text: 'Mine\n\n- blocker, missing (R1): No retry limit' },
+        send: {
+          send: true,
+          action: 'redraft',
+          note: 'Mine\n\n- blocker, missing (R1): No retry limit',
+        },
+      },
     },
     {
-      name: 'approve_with_note with every finding left out and an empty note is missing',
+      name: 'approve_with_note with nothing to write sends nothing',
       step: 'approve_with_note',
       findings: [NEXT],
       picks: ['out'],
-      expected: { send: false, missing: 'approval_note' },
+      expected: {
+        choice: { option: 'approve', text: '' },
+        send: {
+          send: false,
+          message: 'Write the note for the planner, or choose Approve spec and press Send answer.',
+        },
+      },
     },
     {
-      name: 'redraft with every finding left out keeps the owner’s words and sends them',
+      name: 'redraft with nothing to write sends nothing',
       step: 'redraft',
       findings: [BLOCK],
       picks: ['out'],
-      note: 'Already written',
-      expected: { send: true, step: 'redraft', note: 'Already written' },
+      expected: { choice: { text: '' }, send: { send: false, message: 'Say what to change.' } },
     },
   ]
   it.each(rows)('$name', (row) => {
     expect(
-      specStepRequest(row.step, result(row.findings), row.picks ?? [], {
-        note: row.note ?? '',
-        approvalNote: row.approvalNote ?? '',
-      }),
+      specStepPress(row.step, res(row.findings), row.picks ?? [], { text: row.text ?? '' }),
     ).toEqual(row.expected)
   })
 })
 
-describe('specStepPresent and specStepLock (R4, AC5)', () => {
-  const base = { approveButton: true, redraftControl: true, resultVersion: 3, latestVersion: 3 }
-  const present: [string, 'approve' | 'approve_with_note' | 'redraft', object, boolean][] = [
-    ['approve with its button', 'approve', {}, true],
-    ['approve_with_note with its button', 'approve_with_note', {}, true],
-    ['approve without the Approve button', 'approve', { approveButton: false }, false],
-    ['redraft without the Redraft control', 'redraft', { redraftControl: false }, false],
-    ['redraft with an older result', 'redraft', { resultVersion: 2 }, false],
-    ['approve with an older result', 'approve', { resultVersion: 2 }, false],
-    ['redraft that does not need Approve', 'redraft', { approveButton: false }, true],
-  ]
-  it.each(present)('%s', (_name, step, change, expected) => {
-    expect(specStepPresent(step, { ...base, ...change })).toBe(expected)
-  })
-
-  const locks: [string, 'approve' | 'redraft', object, string | null][] = [
-    ['approve is free', 'approve', { canApprove: true }, null],
-    ['approve cannot be approved', 'approve', { canApprove: false }, 'unapprovable'],
-    ['approve while rephrasing', 'approve', { canApprove: true, rephrasing: true }, 'rephrasing'],
-    ['redraft is free', 'redraft', {}, null],
-    ['redraft with a draft', 'redraft', { changed: true }, 'changed'],
-    ['redraft while rephrasing', 'redraft', { changed: true, rephrasing: true }, 'rephrasing'],
-  ]
-  it.each(locks)('%s', (_name, step, change, expected) => {
-    expect(
-      specStepLock(step, { canApprove: true, changed: false, rephrasing: false, ...change }),
-    ).toBe(expected)
+describe('specRefusal (R7)', () => {
+  const tooLong = refused({ field: 'note' })
+  it.each<[string, 'approve' | 'redraft', unknown, object]>([
+    [
+      'approve, note too long',
+      'approve',
+      tooLong,
+      { field: 'The note is longer than 4,000 characters.' },
+    ],
+    [
+      'redraft, note too long',
+      'redraft',
+      refused({ field: 'note', issues: [{ instancePath: '/note', keyword: 'maxLength' }] }),
+      { field: 'The note is longer than 4,000 characters.' },
+    ],
+    [
+      'a conflict',
+      'approve',
+      new ApiError(409, 'conflict', 'm'),
+      { problem: 'This card changed meanwhile; its latest state is shown.' },
+    ],
+    [
+      'approve refused by lint',
+      'approve',
+      refused(),
+      { problem: 'The spec cannot be approved until it lints clean and has no open questions.' },
+    ],
+    [
+      'anything else',
+      'redraft',
+      new ApiError(500, 'internal', 'm'),
+      { problem: 'That did not work. Try again.' },
+    ],
+  ])('%s', (_name, action, error, expected) => {
+    expect(specRefusal(action, error)).toEqual(expected)
   })
 })
 

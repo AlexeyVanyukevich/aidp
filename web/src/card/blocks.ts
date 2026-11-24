@@ -59,7 +59,7 @@ export function decisionsFor(
   return found
 }
 
-/** A card waiting on a question opens on it; one waiting on a proposal, on the Proposals tab. */
+/** A card waiting on a question, or in Spec review, opens on Approvals; one waiting on a proposal, on the Proposals tab. */
 export function initialTab(
   task: Pick<TaskView, 'state' | 'block'> & Partial<Pick<TaskView, 'approval'>>,
 ): string {
@@ -67,10 +67,7 @@ export function initialTab(
     task.state === 'needs_approval' ||
     (task.state === 'blocked' && task.block?.cause === 'approval_expired')
   if (waiting && task.approval?.kind === 'proposal') return 'proposals'
-  return task.state === 'needs_approval' ||
-    (task.state === 'blocked' && task.block?.cause === 'approval_expired')
-    ? 'approvals'
-    : 'spec'
+  return waiting || task.state === 'spec_review' ? 'approvals' : 'spec'
 }
 
 /**
@@ -92,7 +89,7 @@ export function stateAnnouncement(change: {
   if (change.draftFailure !== null)
     return `${moved} The last draft did not finish: ${change.draftFailure}.`
   if (to === 'spec_review' && change.latestVersion !== null)
-    return `${moved} v${change.latestVersion} is ready to review.`
+    return `${moved} v${change.latestVersion} is ready to review in Approvals.`
   return moved
 }
 
