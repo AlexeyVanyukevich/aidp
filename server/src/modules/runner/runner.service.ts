@@ -192,8 +192,7 @@ export class RunnerService {
             run: await this.work(trx, run.id),
             checkpoint: await this.checkpointFor(trx, run.id),
             message: run.resume_message,
-            allowed_files: await this.allowedFilesFor(trx, run.id),
-            approved_migrations: await this.approvedMigrationsFor(trx, run.id),
+            ...(await this.inheritedFor(trx, run.id)),
           }
         }
 
@@ -225,20 +224,7 @@ export class RunnerService {
           .execute()
         const work = await this.work(trx, run.id)
         if (work.continues === null) return { kind: 'start' as const, run: work }
-        const chain = await this.chainOf(trx, run.id)
-        const files = new Set<string>()
-        const migrations = new Map<string, { path: string; content: string }>()
-        for (const { id } of chain) {
-          for (const file of await this.allowedFilesFor(trx, id)) files.add(file)
-          for (const migration of await this.approvedMigrationsFor(trx, id))
-            migrations.set(migration.path, migration)
-        }
-        return {
-          kind: 'start' as const,
-          run: work,
-          allowed_files: [...files],
-          approved_migrations: [...migrations.values()],
-        }
+        return { kind: 'start' as const, run: work, ...(await this.inheritedFor(trx, run.id)) }
       })
       if (outcome === 'none') return null
       if (outcome !== 'skipped') return outcome
@@ -308,6 +294,27 @@ export class RunnerService {
       current = next === null ? undefined : runs.find((run) => run.number === next)
     }
     return chain
+  }
+
+  /**
+   * What a run's Build may change: its own lists, and for a continuing run those of every run
+   * it continues, through the chain.
+   */
+  private async inheritedFor(
+    trx: Transaction<Database>,
+    runId: string,
+  ): Promise<{
+    allowed_files: string[]
+    approved_migrations: { path: string; content: string }[]
+  }> {
+    const files = new Set<string>()
+    const migrations = new Map<string, { path: string; content: string }>()
+    for (const { id } of (await this.chainOf(trx, runId)).reverse()) {
+      for (const file of await this.allowedFilesFor(trx, id)) files.add(file)
+      for (const migration of await this.approvedMigrationsFor(trx, id))
+        migrations.set(migration.path, migration)
+    }
+    return { allowed_files: [...files], approved_migrations: [...migrations.values()] }
   }
 
   /** The latest plan's files, and every file an answered out-of-plan request allowed. */

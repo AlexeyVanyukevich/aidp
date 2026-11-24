@@ -2943,3 +2943,220 @@ describe('the fourth attempt, and the reasons a run ends with', () => {
     expect(h.handoffs['build-1']).not.toContain(REMINDER)
   })
 })
+
+describe('a continuing run (AIDP-59)', () => {
+  const S = 's'.repeat(40)
+  const NEW = 'n'.repeat(40)
+  const PR_URL = 'https://github.com/owner/pay/pull/7'
+  const CONT: RunWork = {
+    ...RUN,
+    number: 2,
+    note: 'fix the <comment>',
+    kept_plan: { artifact_id: 'plan-1', from_run: 1 },
+    continues: {
+      run: 1,
+      branch: 'board/PAY-1-r1',
+      pr_number: 7,
+      pr_url: PR_URL,
+      chain: [{ id: 'run-1', number: 1 }],
+    },
+  }
+  const START_CONT: Extract<Work, { kind: 'start' }> = {
+    kind: 'start',
+    run: CONT,
+    allowed_files: ['src/retry.ts', 'src/old.ts'],
+    approved_migrations: [],
+  }
+  const LEASE = `--force-with-lease=refs/heads/board/PAY-1-r1:${S} -u origin board/PAY-1-r1`
+
+  /** The harness with the git calls of a continuing run added to its fakes. */
+  function continuing(
+    script: Script,
+    options: { states?: string[]; leaseFails?: boolean; viewFails?: boolean } = {},
+  ) {
+    const h = harness(script)
+    withPlan(h)
+    const seen: string[] = []
+    const bodies: string[] = []
+    let views = 0
+    Object.assign(h.deps.git, {
+      prepareContinuingWorktree: async (_repo: string, branch: string, dir: string) => {
+        mkdirSync(dir, { recursive: true })
+        seen.push(`continue ${branch}`)
+        return S
+      },
+      pushLeased: async (_dir: string, branch: string, expected: string) => {
+        seen.push(`lease ${branch} ${expected}`)
+        if (options.leaseFails === true)
+          throw new GitError(
+            `git push --force-with-lease=refs/heads/${branch}:${expected}`,
+            'stale info',
+          )
+      },
+      prState: async () => {
+        if (options.viewFails === true) throw new GitError('gh pr view 7', 'gh: not logged in')
+        seen.push('pr view')
+        return options.states?.[views++] ?? 'OPEN'
+      },
+      editPrBody: async (
+        _dir: string,
+        pr: { number: number; githubRepo: string; body: string },
+      ) => {
+        seen.push(`pr edit ${pr.number} --repo ${pr.githubRepo} --body-file -`)
+        bodies.push(pr.body)
+      },
+    })
+    return { h, seen, bodies }
+  }
+  const NOTE_TAG = '<changes_note>\nfix the &lt;comment&gt;\n</changes_note>'
+
+  it('AC6/AC10: works on the branch at S, sends with the lease, and edits the body', async () => {
+    const { h, seen, bodies } = continuing({ commits: [0], buildHeads: [NEW] })
+    expect(await carryOut(START_CONT, h.deps)).toBe('review')
+    expect(h.calls.filter((c) => c.startsWith('start'))).toEqual([
+      'start build-1',
+      'start verify-1',
+    ])
+    expect(seen).toEqual([
+      'pr view',
+      'continue board/PAY-1-r1',
+      'pr view',
+      `lease board/PAY-1-r1 ${S}`,
+      'pr edit 7 --repo owner/pay --body-file -',
+    ])
+    expect(h.gitCalls.some((c) => c.startsWith('worktree '))).toBe(false)
+    expect(h.gitCalls).not.toContain('create pr')
+    expect(h.gitCalls).not.toContain('find pr')
+    expect(bodies[0]).toMatch(
+      /^PAY-1, run 2, spec v1\.\n\n.*## Verify report\n\n\| AC1 \| pass \|\n$/s,
+    )
+    expect(h.runEnd()).toMatchObject({
+      payload: { outcome: 'review', pr_number: 7, pr_url: PR_URL, branch: 'board/PAY-1-r1' },
+    })
+    expect(readFileSync(join(h.home, 'runs', RUN.id, 'allowed-files.json'), 'utf8')).toBe(
+      '["src/retry.ts","src/old.ts"]',
+    )
+    expect(LEASE).toContain(S)
+  })
+
+  it('AC6: a first run in the same suite sends with no lease', async () => {
+    const h = harness({})
+    await carryOut(START, h.deps)
+    expect(h.gitCalls).toContain(`push ${BRANCH}`)
+  })
+
+  it('AC7: a refused leased send blocks the run as step_failed at the push stage', async () => {
+    const { h } = continuing({ buildHeads: [NEW] }, { leaseFails: true })
+    expect(await carryOut(START_CONT, h.deps)).toBe('released')
+    const block = h.of('error').at(-1)
+    expect(block?.payload).toMatchObject({
+      blocks: true,
+      cause: 'step_failed',
+      stage: 'push',
+      output: 'stale info',
+    })
+    expect(JSON.stringify(block?.payload)).toContain('force-with-lease')
+  })
+
+  it('AC8: a Build that leaves HEAD at S goes round with no_commit, then ends', async () => {
+    const { h } = continuing({ buildHeads: [S, S, S], commits: [5, 5, 5] })
+    expect(await carryOut(START_CONT, h.deps)).toBe('failed')
+    expect(h.calls.filter((c) => c.startsWith('start'))).toEqual([
+      'start build-1',
+      'start build-2',
+      'start build-3',
+    ])
+    expect(h.handoffs['build-2']).toContain('made no commit')
+    expect(h.runEnd()).toMatchObject({
+      payload: { outcome: 'failed', reason: 'the build made no commit on attempt 3' },
+    })
+  })
+
+  it('AC9: a merged pull request at prepare starts no Build and sends nothing', async () => {
+    const { h, seen } = continuing({}, { states: ['MERGED'] })
+    expect(await carryOut(START_CONT, h.deps)).toBe('failed')
+    expect(h.calls).toEqual([])
+    expect(seen).toEqual(['pr view'])
+    expect(h.runEnd()).toMatchObject({
+      payload: {
+        outcome: 'failed',
+        reason:
+          'pull request #7 was merged on GitHub while the changes were being made; nothing was pushed',
+        pr_state: 'MERGED',
+      },
+    })
+  })
+
+  it('AC9: a closed pull request at the push stage sends nothing and keeps the branch', async () => {
+    const { h, seen } = continuing({ buildHeads: [NEW] }, { states: ['OPEN', 'CLOSED'] })
+    expect(await carryOut(START_CONT, h.deps)).toBe('failed')
+    expect(seen.filter((c) => c.startsWith('lease'))).toEqual([])
+    expect(h.gitCalls).not.toContain('delete branch')
+    expect(h.runEnd()).toMatchObject({
+      payload: {
+        outcome: 'failed',
+        reason:
+          'pull request #7 was closed on GitHub while the changes were being made; nothing was pushed',
+        pr_state: 'CLOSED',
+      },
+    })
+  })
+
+  it('R10: a gh that fails on the check blocks the run as step_failed', async () => {
+    const { h } = continuing({}, { viewFails: true })
+    expect(await carryOut(START_CONT, h.deps)).toBe('released')
+    expect(h.calls).toEqual([])
+  })
+
+  it('AC11/AC12: Build and Verify carry the note and the reports and summaries of run 1', async () => {
+    const { h } = continuing({ buildHeads: [NEW] })
+    const own = h.deps.api.getRun.bind(h.deps.api)
+    h.deps.api.getRun = async (id: string) =>
+      id === 'run-1'
+        ? ({
+            id,
+            status: 'succeeded',
+            phases: [
+              {
+                id: 'p1',
+                name: 'build',
+                attempt: 2,
+                status: 'succeeded',
+                summary_md: 'base run: 3 of 3 passed',
+              },
+              { id: 'p0', name: 'plan', attempt: 1, status: 'succeeded', summary_md: 'planned' },
+            ],
+            artifacts: [
+              {
+                id: 'br',
+                kind: 'build_report',
+                phase_id: 'p1',
+                body_md: '',
+                uri: null,
+                data: {
+                  tests: [
+                    {
+                      name: 'tests/unit/t.test.ts > T',
+                      command: 'npx vitest run t',
+                      way: 'before_code',
+                      failing_line: 'AssertionError',
+                    },
+                  ],
+                },
+              },
+            ],
+          } as never)
+        : own(id)
+    await carryOut(START_CONT, h.deps)
+    for (const key of ['build-1', 'verify-1']) {
+      expect(h.handoffs[key]).toContain(NOTE_TAG)
+      expect(h.handoffs[key]).not.toContain('<rerun_note>')
+      expect(h.handoffs[key]).toContain('<build_report run="1" attempt="2">')
+      expect(h.handoffs[key]).toContain('tests/unit/t.test.ts &gt; T')
+      expect(h.handoffs[key]).toContain(
+        '<summary run="1" phase="build" attempt="2">base run: 3 of 3 passed</summary>',
+      )
+      expect(h.handoffs[key]).not.toContain('planned</summary>')
+    }
+  })
+})
