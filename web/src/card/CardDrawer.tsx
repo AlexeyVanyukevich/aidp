@@ -27,6 +27,7 @@ import {
   decisionHelp,
   defaultRerunPicks,
   fillRerunNote,
+  latestPrReview,
   goneResults,
   helpAnnouncement,
   NO_HELP,
@@ -417,7 +418,7 @@ export function CardDrawer() {
                   value={rerunNote}
                   error={noteError}
                   field={noteField}
-                  review={rerunReview(helps.data ?? [])}
+                  review={latestPrReview(helps.data ?? [])}
                   picks={picks}
                   setPicks={setPicks}
                   onChange={(value) => {
@@ -464,22 +465,6 @@ export function CardDrawer() {
       </Loaded>
     </Dialog>
   )
-}
-
-/** The newest succeeded pull request review of the new shape the helps listing returned, if any. */
-function rerunReview(helps: HelpView[]): { result: PrReviewResult; createdAt: string } | undefined {
-  const found = helps
-    .filter(
-      (help) =>
-        help.decision === 'pull_request' &&
-        help.status === 'succeeded' &&
-        help.result?.mode === 'code_review' &&
-        typeof help.result.blockers === 'number',
-    )
-    .sort((a, b) => b.created_at.localeCompare(a.created_at))[0]
-  return found?.result?.mode === 'code_review'
-    ? { result: found.result, createdAt: found.created_at }
-    : undefined
 }
 
 /**

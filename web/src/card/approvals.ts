@@ -696,19 +696,19 @@ export type PrStepControl =
   | { kind: 'merge' }
   | { kind: 'merge_and_file' }
   | { kind: 'rerun'; plan: 'keep' | 'again' }
-  | { kind: 'by_hand' }
+  | { kind: 'send_back' }
   | { kind: 'no_commit' }
 
 export function prStepControl(result: PrReviewResult): PrStepControl {
   const step: NextStep = result.next_step
-  if (step === 'fix_by_hand') return { kind: 'by_hand' }
+  if (step === 'fix_by_hand') return { kind: 'send_back' }
   if (step === 'rerun_keep') return { kind: 'rerun', plan: 'keep' }
   if (step === 'rerun_again') return { kind: 'rerun', plan: 'again' }
   if (result.commit === null) return { kind: 'no_commit' }
   return { kind: step }
 }
 
-/** The Re-run note of a Close-and-re-run press: blockers in, outside findings out. */
+/** The note of a Close-and-re-run or Send-back press: blockers in, outside findings out. */
 export function rerunNoteFor(result: PrReviewResult, createdAt: string): string {
   return fillRerunNote('', result, createdAt, defaultRerunPicks(result))
 }
@@ -724,4 +724,22 @@ export function actionProblem(error: unknown): string {
     if (error.code === 'conflict') return 'This card changed meanwhile; its latest state is shown.'
   }
   return 'That did not work. Try again.'
+}
+
+/** The newest succeeded pull request review of the new shape the helps listing returned, if any. */
+export function latestPrReview(
+  helps: HelpView[],
+): { result: PrReviewResult; createdAt: string } | undefined {
+  const found = helps
+    .filter(
+      (help) =>
+        help.decision === 'pull_request' &&
+        help.status === 'succeeded' &&
+        help.result?.mode === 'code_review' &&
+        typeof help.result.blockers === 'number',
+    )
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))[0]
+  return found?.result?.mode === 'code_review'
+    ? { result: found.result, createdAt: found.created_at }
+    : undefined
 }

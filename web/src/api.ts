@@ -186,6 +186,12 @@ export const api = {
     request<{ state: string }>('POST', `/api/tasks/${taskId}/helps/${helpId}/close-and-rerun`, {
       note,
     }),
+  /** Sends a card in Review back to a builder on the same branch, with the owner's words. */
+  sendBack: (taskId: string, note: string, helpId?: string) =>
+    request<TaskView>('POST', `/api/tasks/${taskId}/actions/send-back`, {
+      note,
+      ...(helpId === undefined ? {} : { help_id: helpId }),
+    }),
   costs: (taskId: string) => request<CostSummary>('GET', `/api/tasks/${taskId}/costs`),
   /** `files` is null when GitHub did not list them. */
   prFiles: (runId: string) =>

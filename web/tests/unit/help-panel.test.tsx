@@ -866,7 +866,7 @@ describe('a review result’s next step, step button and File controls (R3, R4, 
       next_step,
       make: (f: object[]) => review(next_step, f),
     })),
-    ...(['rerun_keep', 'rerun_again'] as const).map((next_step) => ({
+    ...(['fix_by_hand', 'rerun_keep', 'rerun_again'] as const).map((next_step) => ({
       next_step,
       make: (f: object[]) => pr(next_step, f),
     })),
@@ -897,17 +897,24 @@ describe('a review result’s next step, step button and File controls (R3, R4, 
     expect(out).not.toContain('not filed')
   })
 
-  it('has a fix_by_hand result name AIDP-59 and no button but File (AC16)', () => {
-    const out = html(pr('fix_by_hand', [BLOCKER, OUT(1, null)]), {
+  it('gives a fix_by_hand result the send-back step, with no word of AIDP-59 (AC14)', () => {
+    const findings = [BLOCKER, OUT(1, null)]
+    const out = html(pr('fix_by_hand', findings), {
       ownProject: 'AIDP',
       onFile: async () => true,
-      step: () => undefined,
+      step: step('Send back to fix on the branch', 'lock'),
     })
-    expect(out).toContain('AIDP-59')
-    expect(out).toContain('fix to make by hand on the branch')
-    const buttons = out.match(/<button[^>]*>[^<]*<\/button>/g) ?? []
-    expect(buttons).toHaveLength(1)
-    expect(buttons[0]).toContain('File as a task: Title 1')
+    expect(out).toContain('Send back to fix on the branch')
+    expect(out).not.toContain('AIDP-59')
+    expect(out).not.toContain('cannot yet send')
+    const button =
+      /<button[^>]*aria-describedby="([^"]*)"[^>]*>Send back to fix on the branch<\/button>/.exec(
+        out,
+      )
+    expect(button).not.toBeNull()
+    const ids = button![1]!.split(' ')
+    const text = new RegExp(`<p id="${ids[1]}"[^>]*>([^<]*)</p>`).exec(out)
+    expect(text?.[1]).toBe('1 outside finding not filed; it leaves the card with this review.')
   })
 
   it('says to merge on GitHub when the commit is null, with no Merge button (R9)', () => {
