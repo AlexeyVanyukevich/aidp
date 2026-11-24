@@ -942,8 +942,9 @@ A `pull_request` help's subject is `{ pr_run_id }`, the latest delivery run's id
 It stands while the decision is offered and that run is still the latest, so a push to the branch
 outside the board does not retire it: the owner presses Review pull request again to review the new
 head. A review runs only when the owner asks. It is never posted to GitHub: helpers are read-only,
-and the board runs exactly five `gh` commands, `pr view`, `pr list`, `pr create`, `pr merge` and `pr close`. The server's
-`realGh` and the runner's `Git.run` check the first two arguments against that list before they
+and the board's `gh` commands are a short list: the server runs `pr view`, `pr list`, `pr merge`
+and `pr close`, and the runner runs `pr view`, `pr list`, `pr create` and `pr edit`. The server's
+`realGh` and the runner's `Git.run` check the first two arguments against their list before they
 spawn anything and refuse any other with "the board does not run gh <first> <second>".
 
 `get_decision` for a `spec_review` help in `review` mode (never `restate`) also returns `previous`,
@@ -1100,9 +1101,9 @@ no `gh` when the card is not in Review, when the help is not the newest succeede
 help that stands, when the step is another one, when the commit is null (Merge), or when there is
 no plan to keep (`rerun_keep`). A `gh` that exits non-zero moves nothing and answers `502
 gh_failed` with its stderr in `details`; the card's problem notice shows it. A result with a null
-commit shows no Merge button and says to merge on GitHub. `fix_by_hand` has no control: the result
-says the board cannot yet send a card in Review back to a run on the same branch, and that the
-blockers are the fix to make by hand. A moving step's button is described by the line "N outside
+commit shows no Merge button and says to merge on GitHub. `fix_by_hand` is labelled "Send back to
+fix on the branch" and has a button that sends the card back (see "Send back with changes"): one
+press builds the note as Close and re-run does and sends it with the help's id. A moving step's button is described by the line "N outside
 findings not filed; they leave the card with this review." while any outside finding has
 `on_board` null; Merge, then file never shows it.
 
@@ -1117,8 +1118,51 @@ answer names its key and state), when the help is not a succeeded help of the ta
 finding is not an outside one. A finding already on the board shows "On the board as <key>
 (<state>)" in place of File.
 
-**`gh`.** The board runs exactly five `gh` commands: `pr view`, `pr list`, `pr create`, and on the
-owner's press `pr merge` and `pr close`; any other is refused before it runs.
+**`gh`.** The server runs `pr view`, `pr list` and, on the owner's press, `pr merge` and `pr
+close`. The runner runs `pr view`, `pr list`, `pr create` and, for a continuing run, `pr edit`
+(`--body-file -`, to rewrite the continued pull request's body). Any other is refused before it
+runs.
+
+**Send back with changes.** A card in Review can be sent back to a builder on the same branch and
+pull request. `POST /api/tasks/:id/actions/send-back` takes `{ note, help_id? }` (`note` required,
+at most 4,000 characters, stored trimmed; a blank, missing or longer note or an unknown field is
+`400 validation_error`). It answers `409` and moves nothing when the card is not in Review, when
+the latest delivery run has no pull request, or, with a `help_id`, unless that help is the newest
+succeeded `code_review` help that stands and its step is `fix_by_hand`. In one transaction it makes
+the `send_back` move (Review to Ready, which settles the card's helps) and queues the next delivery
+run, a _continuing run_: it carries the continued run's branch, pull request number and URL from
+the moment it is queued, `runs.continues_run` names the run it continues (the runs listing shows
+it), and it holds a copy of the continued run's plan (`copied_from_run` set), so it has no Plan
+phase and no plan gate. Its claim carries `continues` (the run, branch, pull request and the chain
+of runs whose work is on the branch) and, as `allowed_files` and `approved_migrations`, the plan's
+files, every file allowed out of plan and every approved migration of the continued runs, through
+the chain.
+
+A continuing run's `prepare` first reads the pull request (`gh pr view <n> --repo <repo> --json
+state`), then fetches the branch and makes its worktree on the local branch set to origin's head,
+never cut from the base, and records that head as the start head. Its Build and Verify handoffs
+carry the owner's words in one escaped `<changes_note>` element (and no `<rerun_note>`), and the
+build reports and succeeded Build summaries of every run on the branch, each labelled with its run
+and attempt. The builder folds each change into the commit it corrects with `git commit --fixup`
+and a non-interactive autosquash rebase, and gives a change that belongs to no commit a commit of
+its own. In the tests stage "no commit" means HEAD equals the start head. The send stage reads the
+pull request again and, while it is open, runs `git push --force-with-lease=refs/heads/<branch>:<start
+head> -u origin <branch>`; a refused send blocks the run as `step_failed` at `push`. A first run's
+send stays plain, and only a continuing run's is forced. The pr stage never opens a pull request:
+it rewrites the body with `gh pr edit <n> --repo <repo> --body-file -`, from the one function
+`createPr` also uses, and ends `review` with that pull request's number and URL. Verify judges the
+criteria as always; its summary also says, point by point, whether each requested change was made,
+and sets no verdict.
+
+When a continuing run fails, or is cancelled, the card goes back to Review (`fail` and `cancel`
+take the facts of the latest delivery run), with the failure reason shown and the pull request as
+it was. The exception is a run that ends because its pull request was merged or closed (the
+`run_end` carries `pr_state`): nothing is sent, the local branch is kept, and the card goes to
+Failed through `fail`. The PR tab shows a section "Send back with changes" (`h3`, after the review
+result, before Files changed) on a card in Review with a pull request: the field "Changes to
+make", Use the pull request review with Fill note, and Send back; a blank field sends nothing and
+sets `aria-invalid` with the error "Say what to change.". A send-back focuses the card's state
+line and announces "<KEY> sent back with changes."
 
 A decision help is claimed on the help lane (`POST /api/runner/helps/claim`) and shares its three
 slots with question helps. The work carries the project's `repo_path` and `base_branch`, the
@@ -1490,7 +1534,8 @@ instead of ended: `step_failed` at `tests`, command `git rebase origin/<base>`, 
 and the instruction to rebase by hand and Resume. The attempt stays as it was, and Resume runs the
 `tests` stage again from step 1. A tests stage where no rebase was owed and none was in progress
 sends no `base_rebase` event. The linked checkouts are not fetched or remade in the `tests` or
-`push` stage, nothing force-pushes, and the base is never merged in.
+`push` stage, only a continuing run's send is forced (with an explicit lease), and the base is
+never merged in.
 
 _The half-finished rebase on resume._ A resume whose worktree is not on the run's branch looks for
 a rebase of that branch in progress (above). Without one the run ends `failed` with "the run's
@@ -1750,7 +1795,7 @@ the end of the tests stage, after any rebase onto the base; if Verify committed,
 `failed` with `Verify changed the branch: HEAD is <sha>, Build ended on <sha>` and nothing is
 pushed (a run started before the gate existed has no record and pushes as before). The push stage
 then fetches the base again, only to record what arrived after the tests (see "The tests stage on
-the current base"); the push is never forced. A `Bash` write outside the worktree is not caught.
+the current base"); a first run's send is plain, and a continuing run's is leased. A `Bash` write outside the worktree is not caught.
 
 The guard reads `linked.json`. Edit, Write, MultiEdit and NotebookEdit on a path inside a linked
 checkout or a linked project's `repo_path` are refused, naming the project's key and saying linked
