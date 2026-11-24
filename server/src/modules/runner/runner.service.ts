@@ -72,11 +72,24 @@ export interface RunWork {
   plan_answers: { run: number; approved: boolean; text: string }[]
   /** The plan a Re-run copied into this run; the run starts no planner. */
   kept_plan: { artifact_id: string; from_run: number } | null
+  /** A send-back's: the run it continues, and the branch and pull request it works on. */
+  continues: {
+    run: number
+    branch: string
+    pr_number: number
+    pr_url: string | null
+  } | null
 }
 
 /** What a claim hands the runner (spec §6): a run to start, to resume, or to clean up after. */
 export type Work =
-  | { kind: 'start'; run: RunWork }
+  | {
+      kind: 'start'
+      run: RunWork
+      /** A continuing run's: what the runs it continues were allowed. */
+      allowed_files?: string[]
+      approved_migrations?: { path: string; content: string }[]
+    }
   | {
       kind: 'resume'
       run: RunWork
@@ -208,7 +221,22 @@ export class RunnerService {
           .set({ ...claimedRun, ...fixed, started_at: now })
           .where('id', '=', run.id)
           .execute()
-        return { kind: 'start' as const, run: await this.work(trx, run.id) }
+        const work = await this.work(trx, run.id)
+        if (work.continues === null) return { kind: 'start' as const, run: work }
+        const chain = await this.chainOf(trx, run.id)
+        const files = new Set<string>()
+        const migrations = new Map<string, { path: string; content: string }>()
+        for (const id of chain) {
+          for (const file of await this.allowedFilesFor(trx, id)) files.add(file)
+          for (const migration of await this.approvedMigrationsFor(trx, id))
+            migrations.set(migration.path, migration)
+        }
+        return {
+          kind: 'start' as const,
+          run: work,
+          allowed_files: [...files],
+          approved_migrations: [...migrations.values()],
+        }
       })
       if (outcome === 'none') return null
       if (outcome !== 'skipped') return outcome
@@ -252,6 +280,29 @@ export class RunnerService {
       plan_artifact_id: plan?.id ?? null,
       failing_report_id: null,
     }
+  }
+
+  /** The run and each run it continues, through the chain, newest first. */
+  private async chainOf(trx: Transaction<Database>, runId: string): Promise<string[]> {
+    const first = await trx
+      .selectFrom('runs')
+      .select(['task_id'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow()
+    const runs = await trx
+      .selectFrom('runs')
+      .select(['id', 'number', 'continues_run'])
+      .where('task_id', '=', first.task_id)
+      .where('kind', '=', 'delivery')
+      .execute()
+    const chain: string[] = []
+    let current = runs.find((run) => run.id === runId)
+    while (current !== undefined && !chain.includes(current.id)) {
+      chain.push(current.id)
+      const next: number | null = current.continues_run
+      current = next === null ? undefined : runs.find((run) => run.number === next)
+    }
+    return chain
   }
 
   /** The latest plan's files, and every file an answered out-of-plan request allowed. */
@@ -334,6 +385,10 @@ export class RunnerService {
         'runs.number as run_number',
         'runs.spec_version',
         'runs.note',
+        'runs.continues_run',
+        'runs.branch',
+        'runs.pr_number',
+        'runs.pr_url',
         'runs.base_md',
         'runs.test_command as run_test_command',
         'projects.id as project_id',
@@ -427,6 +482,15 @@ export class RunnerService {
         kept === undefined || kept.copied_from_run === null
           ? null
           : { artifact_id: kept.id, from_run: kept.copied_from_run },
+      continues:
+        row.continues_run === null || row.branch === null || row.pr_number === null
+          ? null
+          : {
+              run: row.continues_run,
+              branch: row.branch,
+              pr_number: row.pr_number,
+              pr_url: row.pr_url,
+            },
     }
   }
 
@@ -769,9 +833,10 @@ export class RunnerService {
             status: outcome === 'review' || outcome === 'drafted' ? 'succeeded' : outcome,
             ended_at: effect.at,
             failure_reason: saved ? effect.reason : 'the spec-writer saved no spec',
-            pr_number: effect.prNumber,
-            pr_url: effect.prUrl,
-            branch: effect.branch,
+            // A continuing run carries its pull request from the start: a report without one keeps it.
+            ...(effect.prNumber === null ? {} : { pr_number: effect.prNumber }),
+            ...(effect.prUrl === null ? {} : { pr_url: effect.prUrl }),
+            ...(effect.branch === null ? {} : { branch: effect.branch }),
             worktree_path: effect.worktreePath,
           })
           .where('id', '=', context.runId)
@@ -805,7 +870,13 @@ export class RunnerService {
           return
         }
         if (task.state !== 'running') return
-        await moveTask(trx, context.taskId, outcome === 'review' ? 'finish_review' : 'fail')
+        const facts = await moveFacts(trx, context.taskId)
+        await moveTask(
+          trx,
+          context.taskId,
+          outcome === 'review' ? 'finish_review' : 'fail',
+          effect.prState === undefined ? facts : { ...facts, prClosed: true },
+        )
         return
       }
     }

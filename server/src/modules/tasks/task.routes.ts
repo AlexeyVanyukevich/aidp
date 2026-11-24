@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import type { TypeBoxTypeProvider } from '@fastify/type-provider-typebox'
 import { Type, type Static } from 'typebox'
 import { Compile } from 'typebox/compile'
+import { HelpActionsService } from '../approvals/help-actions.service.js'
 import { ValidationError } from '../../shared/errors.js'
 import { Uuid } from '../../shared/schemas.js'
 import { CostService } from '../costs/cost.service.js'
@@ -32,6 +33,10 @@ import {
 } from './task.schemas.js'
 import { TaskService } from './task.service.js'
 
+const SendBackBody = Type.Object(
+  { note: Type.String({ maxLength: 4_000 }), help_id: Type.Optional(Uuid) },
+  { additionalProperties: false },
+)
 const rerunBody = Compile(RerunBody)
 
 export function registerTasks(instance: FastifyInstance): void {
@@ -105,6 +110,19 @@ export function registerTasks(instance: FastifyInstance): void {
     })
     return service.get(request.params.id)
   })
+
+  // Send back: a static path, which wins over `:action`.
+  const helpActions = new HelpActionsService(app.db, app.gh, app.clock)
+  app.post(
+    '/api/tasks/:id/actions/send-back',
+    { schema: { params: TaskParams, body: SendBackBody } },
+    async (request) => {
+      const { note, help_id: helpId } = request.body
+      if (note.trim() === '') throw new ValidationError('Say what to change', { field: 'note' })
+      await helpActions.sendBack(request.params.id, helpId ?? null, note)
+      return service.get(request.params.id)
+    },
+  )
 
   // The one action with a body; a static path, so it wins over `:action` (slice 3 spec, §8).
   app.post(

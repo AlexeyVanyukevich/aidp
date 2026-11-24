@@ -21,7 +21,7 @@ export async function moveFacts(
 ): Promise<Facts> {
   const run = await db
     .selectFrom('runs')
-    .select('kind')
+    .select(['kind', 'continues_run'])
     .where('task_id', '=', taskId)
     .where('kind', 'in', ['spec', 'delivery'])
     .orderBy('created_at', 'desc')
@@ -33,7 +33,11 @@ export async function moveFacts(
     .where('task_id', '=', taskId)
     .limit(1)
     .executeTakeFirst()
-  return { run: run?.kind === 'spec' ? 'spec' : 'delivery', hasSpec: spec !== undefined }
+  return {
+    run: run?.kind === 'spec' ? 'spec' : 'delivery',
+    hasSpec: spec !== undefined,
+    continuing: run?.kind === 'delivery' && run.continues_run !== null,
+  }
 }
 
 /**

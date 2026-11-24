@@ -31,7 +31,7 @@ async function cancel(trx: Transaction<Database>, taskId: string, now: Date): Pr
     .orderBy('created_at', 'desc')
     .executeTakeFirst()
   if (run?.kind === 'spec') await moveTask(trx, taskId, 'drop_draft', await moveFacts(trx, taskId))
-  else await moveTask(trx, taskId, 'cancel')
+  else await moveTask(trx, taskId, 'cancel', await moveFacts(trx, taskId))
   if (run === undefined) return
   await stopHelps(trx, { runId: run.id }, now)
   await publish(trx, { topic: 'help.updated', taskId })
@@ -119,6 +119,72 @@ export async function rerunCard(
       body_md: source.body_md,
       data: JSON.stringify(source.data),
       copied_from_run: kept.runNumber,
+    })
+    .execute()
+}
+
+/**
+ * Send back's work, in the transaction given: Review to Ready, then a queued delivery run that
+ * continues the latest one on its branch and pull request, holding a copy of that run's plan.
+ */
+export async function sendBackCard(
+  trx: Transaction<Database>,
+  taskId: string,
+  givenNote: string,
+  now: Date,
+): Promise<void> {
+  const note = givenNote.trim()
+  await moveTask(trx, taskId, 'send_back')
+  const continued = await trx
+    .selectFrom('runs')
+    .select(['id', 'number', 'branch', 'pr_number', 'pr_url'])
+    .where('task_id', '=', taskId)
+    .where('kind', '=', 'delivery')
+    .orderBy('created_at', 'desc')
+    .limit(1)
+    .executeTakeFirst()
+  if (continued === undefined || continued.pr_number === null || continued.branch === null)
+    throw new ConflictError('The latest run has no pull request to continue', {
+      reason: 'no_pull_request',
+    })
+  const spec = await trx
+    .selectFrom('specs')
+    .select('version')
+    .where('task_id', '=', taskId)
+    .where('status', '=', 'approved')
+    .orderBy('version', 'desc')
+    .executeTakeFirst()
+  if (spec === undefined) throw new ConflictError('This task has no approved spec to run')
+  const plan = await trx
+    .selectFrom('artifacts')
+    .select(['body_md', 'data'])
+    .where('run_id', '=', continued.id)
+    .where('kind', '=', 'plan')
+    .orderBy('created_at', 'desc')
+    .executeTakeFirst()
+  if (plan === undefined)
+    throw new ConflictError('The latest run has no accepted plan to keep', { reason: 'no_plan' })
+  const runId = await queueDeliveryRun(trx, taskId, spec.version, now)
+  await trx
+    .updateTable('runs')
+    .set({
+      note,
+      branch: continued.branch,
+      pr_number: continued.pr_number,
+      pr_url: continued.pr_url,
+      continues_run: continued.number,
+    })
+    .where('id', '=', runId)
+    .execute()
+  await trx
+    .insertInto('artifacts')
+    .values({
+      run_id: runId,
+      phase_id: null,
+      kind: 'plan',
+      body_md: plan.body_md,
+      data: JSON.stringify(plan.data),
+      copied_from_run: continued.number,
     })
     .execute()
 }
