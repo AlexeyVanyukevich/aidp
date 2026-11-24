@@ -7,12 +7,13 @@ import { isConflict } from '../errors'
 import {
   actionProblem,
   decisionHelp,
+  latestPrReview,
   NO_HELP,
   prStepControl,
   rerunNoteFor,
   type PrReviewResult,
 } from './approvals'
-import { prStatus, decisionsFor } from './blocks'
+import { prStatus, decisionsFor, sendBackShown } from './blocks'
 import {
   decisionMode,
   decisionRenderers,
@@ -22,6 +23,7 @@ import {
   type ReviewActions,
 } from './HelpPanel'
 import { ownerSentence } from './lint'
+import { SendBack } from './SendBack'
 import { latestDeliveryRun } from './timeline'
 import type { ReportData, TaskView } from '../types'
 
@@ -85,15 +87,27 @@ export function PrTab({
       else if (control.kind === 'merge_and_file') await api.mergeAndFileReview(task.id, helpId)
       else {
         const createdAt = (helps.data ?? []).find((help) => help.id === helpId)?.created_at ?? ''
-        await api.closeAndRerun(task.id, helpId, rerunNoteFor(result, createdAt))
+        const note = rerunNoteFor(result, createdAt)
+        if (control.kind === 'send_back') await api.sendBack(task.id, note, helpId)
+        else await api.closeAndRerun(task.id, helpId, note)
       }
     },
-    onSuccess: (_data, { result }) =>
+    onSuccess: (_data, { result }) => {
+      const kind = prStepControl(result).kind
       onMoved(
-        prStepControl(result).kind === 'rerun'
-          ? `${task.key} re-run; its pull request is closed.`
-          : `${task.key} merged.`,
-      ),
+        kind === 'send_back'
+          ? `${task.key} sent back with changes.`
+          : kind === 'rerun'
+            ? `${task.key} re-run; its pull request is closed.`
+            : `${task.key} merged.`,
+      )
+    },
+    onError: (error) => onProblem(actionProblem(error)),
+    onSettled: refreshAll,
+  })
+  const sendBack = useMutation({
+    mutationFn: (note: string) => api.sendBack(task.id, note),
+    onSuccess: () => onMoved(`${task.key} sent back with changes.`),
     onError: (error) => onProblem(actionProblem(error)),
     onSettled: refreshAll,
   })
@@ -116,7 +130,7 @@ export function PrTab({
       if (result.mode !== 'code_review' || helpId === undefined || task.state !== 'review')
         return undefined
       const control = prStepControl(result)
-      if (control.kind === 'by_hand' || control.kind === 'no_commit') return undefined
+      if (control.kind === 'no_commit') return undefined
       return {
         label: NEXT_STEP_LABEL[result.next_step],
         disabled: false,
@@ -154,6 +168,9 @@ export function PrTab({
               </a>{' '}
               on <code>{latest.branch}</code> · {prStatus(task.state, latest.failure_reason)}
             </p>
+            {task.state === 'review' && latest.failure_reason !== null && (
+              <p>The last run did not finish: {latest.failure_reason}</p>
+            )}
             {offered && (
               <>
                 <div className="help-buttons">
@@ -165,6 +182,14 @@ export function PrTab({
                   renderers={decisionRenderers(null, undefined, 3, undefined, actions)}
                 />
               </>
+            )}
+            {sendBackShown(task.state, true) && latest.branch !== null && (
+              <SendBack
+                branch={latest.branch}
+                review={latestPrReview(helps.data ?? [])}
+                busy={sendBack.isPending}
+                onSend={(note) => sendBack.mutate(note)}
+              />
             )}
             <section aria-labelledby={filesId}>
               <h3 id={filesId}>Files changed</h3>

@@ -324,7 +324,7 @@ type AnyFinding = AnyReview['findings'][number]
 export const NEXT_STEP_LABEL: Record<NextStep, string> = {
   merge: 'Merge',
   merge_and_file: 'Merge, then file the findings outside the task',
-  fix_by_hand: 'Fix by hand on the branch',
+  fix_by_hand: 'Send back to fix on the branch',
   rerun_keep: 'Close the pull request, then Re-run with this plan',
   rerun_again: 'Close the pull request, then Re-run and plan again',
 }
@@ -525,12 +525,6 @@ function ReviewView({
           <Part title="Next step">{REVIEW_STEP_LABEL[result.next_step] ?? result.next_step}</Part>
           <Part title="Why">{result.reasoning ?? ''}</Part>
         </>
-      )}
-      {result.mode === 'code_review' && prStepControl(result).kind === 'by_hand' && (
-        <p>
-          The board cannot yet send a card in Review back to a run on the same branch; AIDP-59 adds
-          that. The blockers listed are the fix to make by hand on the branch.
-        </p>
       )}
       {result.mode === 'code_review' && prStepControl(result).kind === 'no_commit' && (
         <p>This review has no commit to merge; merge on GitHub.</p>

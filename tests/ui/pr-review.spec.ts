@@ -353,3 +353,122 @@ test('a refused File shows the problem notice with focus, naming the duplicate',
   await expect(notice).toBeFocused()
   await expectAccessible(page)
 })
+
+// Send back with changes (AIDP-59): the three presses, with the request caught.
+test('Send back: a blank field sends nothing and is invalid; words send the trimmed note', async ({
+  page,
+  request,
+}) => {
+  const title = 'Send back by hand'
+  const task = await inReview(request, title)
+  let body: { note?: string; help_id?: string } | undefined
+  let calls = 0
+  await page.route(`**/api/tasks/${task.id}/actions/send-back`, (route) => {
+    calls += 1
+    body = route.request().postDataJSON() as { note?: string; help_id?: string }
+    return route.fulfill({ status: 200, json: { state: 'ready' } })
+  })
+  const { card, pr } = await openPrTab(page, task.key, title)
+  const heading = pr.getByRole('heading', { level: 3, name: 'Send back with changes' })
+  await expect(heading).toBeVisible(RUN)
+  const files = pr.getByRole('heading', { level: 3, name: 'Files changed' })
+  expect(
+    await heading.evaluate(
+      (h, f) => !!(h.compareDocumentPosition(f) & Node.DOCUMENT_POSITION_FOLLOWING),
+      await files.elementHandle(),
+    ),
+  ).toBe(true)
+  const field = pr.getByRole('textbox', { name: 'Changes to make' })
+  await expect(field).toHaveAccessibleDescription(/Verify runs again before the card returns/)
+  await expectAccessible(page)
+
+  await pr.getByRole('button', { name: 'Send back', exact: true }).click()
+  expect(calls).toBe(0)
+  await expect(field).toHaveAttribute('aria-invalid', 'true')
+  await expect(field).toHaveAccessibleDescription(/Say what to change\./)
+  await expect(field).toBeFocused()
+  await expectAccessible(page)
+
+  await field.fill('  cap the delay  ')
+  await pr.getByRole('button', { name: 'Send back', exact: true }).click()
+  await expect.poll(() => body).toBeDefined()
+  expect(calls).toBe(1)
+  expect(body).toEqual({ note: 'cap the delay' })
+  await expect(
+    card.getByRole('status').filter({ hasText: `${task.key} sent back with changes.` }),
+  ).toBeVisible()
+})
+
+test('Send back to fix on the branch sends the help id and the note built from the blockers', async ({
+  page,
+  request,
+}) => {
+  const title = 'Send back step'
+  const task = await inReview(request, title)
+  const state = {
+    list: [review({ status: 'succeeded', result: WITH_OUTSIDE('fix_by_hand') })],
+  }
+  await stubHelps(page, task.id, state, () => undefined)
+  let body: { note?: string; help_id?: string } | undefined
+  await page.route(`**/api/tasks/${task.id}/actions/send-back`, (route) => {
+    body = route.request().postDataJSON() as { note?: string; help_id?: string }
+    return route.fulfill({ status: 200, json: { state: 'ready' } })
+  })
+  const { card, pr } = await openPrTab(page, task.key, title)
+  await expect(pr).not.toContainText('AIDP-59')
+  const button = pr.getByRole('button', { name: 'Send back to fix on the branch' })
+  await expect(button).toBeVisible(RUN)
+  await expect(button).toHaveAccessibleDescription(
+    '1 outside finding not filed; it leaves the card with this review.',
+  )
+  await expectAccessible(page)
+  await button.click()
+  await expect.poll(() => body).toBeDefined()
+  expect(body!.help_id).toBe('review-1')
+  expect(body!.note).toContain(
+    '- blocker, bug (src/retry.ts:3): The delay is not capped Evidence: src/retry.ts:3',
+  )
+  expect(body!.note).not.toContain('Dead letters')
+  await expect(
+    card.getByRole('status').filter({ hasText: `${task.key} sent back with changes.` }),
+  ).toBeVisible()
+})
+
+test('Use the pull request review fills the send-back field, and Send back sends it; a refusal shows the notice', async ({
+  page,
+  request,
+}) => {
+  const title = 'Send back with the review'
+  const task = await inReview(request, title)
+  const state = {
+    list: [review({ status: 'succeeded', result: WITH_OUTSIDE('fix_by_hand') })],
+  }
+  await stubHelps(page, task.id, state, () => undefined)
+  let refuse = true
+  let body: { note?: string; help_id?: string } | undefined
+  await page.route(`**/api/tasks/${task.id}/actions/send-back`, (route) => {
+    if (refuse) return route.fulfill(refusal(409))
+    body = route.request().postDataJSON() as { note?: string; help_id?: string }
+    return route.fulfill({ status: 200, json: { state: 'ready' } })
+  })
+  const { card, pr } = await openPrTab(page, task.key, title)
+  await pr.getByRole('button', { name: 'Use the pull request review' }).click(RUN)
+  await pr.getByRole('button', { name: 'Fill note' }).click()
+  const field = pr.getByRole('textbox', { name: 'Changes to make' })
+  await expect(field).toHaveValue(/The delay is not capped/)
+  await expect(field).not.toHaveValue(/Dead letters/)
+  await expect(field).toBeFocused()
+
+  await pr.getByRole('button', { name: 'Send back', exact: true }).click()
+  const notice = card
+    .getByRole('alert')
+    .filter({ hasText: 'This card changed meanwhile; its latest state is shown.' })
+  await expect(notice).toBeVisible()
+  await expect(notice).toBeFocused()
+
+  refuse = false
+  await pr.getByRole('button', { name: 'Send back', exact: true }).click()
+  await expect.poll(() => body).toBeDefined()
+  expect(body!.help_id).toBeUndefined()
+  expect(body!.note).toContain('The delay is not capped')
+})

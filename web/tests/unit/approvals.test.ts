@@ -1229,7 +1229,8 @@ describe('prStepControl (R9–R12)', () => {
     ['merge_and_file', null, { kind: 'no_commit' }],
     ['rerun_keep', null, { kind: 'rerun', plan: 'keep' }],
     ['rerun_again', 'abc', { kind: 'rerun', plan: 'again' }],
-    ['fix_by_hand', 'abc', { kind: 'by_hand' }],
+    ['fix_by_hand', 'abc', { kind: 'send_back' }],
+    ['fix_by_hand', null, { kind: 'send_back' }],
   ])('%s with commit %s', (step, commit, expected) => {
     expect(prStepControl(pr(step, commit))).toEqual(expected)
   })

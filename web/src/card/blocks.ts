@@ -98,6 +98,13 @@ export function stateAnnouncement(change: {
 
 /** The PR line's status word: a recorded failure or a Failed card reads closed, a Done card merged. */
 export function prStatus(state: TaskState, failureReason: string | null): string {
+  // A card back in Review after a continuing run failed keeps its pull request open.
+  if (state === 'review') return 'open'
   if (failureReason !== null || state === 'failed') return 'closed'
   return state === 'done' ? 'merged' : 'open'
+}
+
+/** Whether the PR tab offers Send back with changes: a card in Review with a pull request. */
+export function sendBackShown(state: TaskState, hasPullRequest: boolean): boolean {
+  return state === 'review' && hasPullRequest
 }
