@@ -78,6 +78,8 @@ export interface RunWork {
     branch: string
     pr_number: number
     pr_url: string | null
+    /** The runs whose work is on the branch, nearest first: the continued run and its chain. */
+    chain: { id: string; number: number }[]
   } | null
 }
 
@@ -226,7 +228,7 @@ export class RunnerService {
         const chain = await this.chainOf(trx, run.id)
         const files = new Set<string>()
         const migrations = new Map<string, { path: string; content: string }>()
-        for (const id of chain) {
+        for (const { id } of chain) {
           for (const file of await this.allowedFilesFor(trx, id)) files.add(file)
           for (const migration of await this.approvedMigrationsFor(trx, id))
             migrations.set(migration.path, migration)
@@ -283,7 +285,10 @@ export class RunnerService {
   }
 
   /** The run and each run it continues, through the chain, newest first. */
-  private async chainOf(trx: Transaction<Database>, runId: string): Promise<string[]> {
+  private async chainOf(
+    trx: Transaction<Database>,
+    runId: string,
+  ): Promise<{ id: string; number: number }[]> {
     const first = await trx
       .selectFrom('runs')
       .select(['task_id'])
@@ -295,10 +300,10 @@ export class RunnerService {
       .where('task_id', '=', first.task_id)
       .where('kind', '=', 'delivery')
       .execute()
-    const chain: string[] = []
+    const chain: { id: string; number: number }[] = []
     let current = runs.find((run) => run.id === runId)
-    while (current !== undefined && !chain.includes(current.id)) {
-      chain.push(current.id)
+    while (current !== undefined && !chain.some((link) => link.id === current?.id)) {
+      chain.push({ id: current.id, number: current.number })
       const next: number | null = current.continues_run
       current = next === null ? undefined : runs.find((run) => run.number === next)
     }
@@ -490,6 +495,7 @@ export class RunnerService {
               branch: row.branch,
               pr_number: row.pr_number,
               pr_url: row.pr_url,
+              chain: (await this.chainOf(trx, runId)).slice(1),
             },
     }
   }
