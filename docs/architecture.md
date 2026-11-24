@@ -1046,7 +1046,7 @@ is not raised again. Use these findings puts the blocker and next-gate lines (as
 with `Decision:` and `Open choice, ask me:` lines under a finding with choices) into the words
 field, clears Approve plan, and sends nothing; it is offered only when a blocker stands.
 
-**Where a next-gate point goes.** At the spec gate with a blocker it joins the Redraft note; with
+**Where a next-gate point goes.** At the spec gate with a blocker it joins What to change; with
 no blocker it goes into the Note for the planner (the "Goes into the approval note" group), which
 the planner and the Review plan helper read; the result offers Use these findings and the same
 picks as with a blocker, and the lines fill that field, after any words already there, with focus
