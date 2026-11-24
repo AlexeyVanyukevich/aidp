@@ -1,5 +1,7 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
+import { PrTab } from '../../src/card/PrTab'
 import { SendBack, sendBackHint, SEND_BACK_BLANK } from '../../src/card/SendBack'
 import { sendBackShown } from '../../src/card/blocks'
 import type { PrReviewResult } from '../../src/card/approvals'
@@ -34,6 +36,9 @@ vi.mock('@zellige/react', () => ({
       {children as string}
     </div>
   ),
+  Loading: () => <p>Loading</p>,
+  Badge: ({ children }: { children?: unknown }) => <span>{children as string}</span>,
+  Empty: ({ title }: { title: string }) => <p>{title}</p>,
   Radio: ({ children }: { children?: unknown }) => <label>{children as string}</label>,
 }))
 
@@ -100,5 +105,48 @@ describe('where the section shows', () => {
   ]
   it.each(rows)('state %s, pull request %s: shown %s', (state, hasPr, shown) => {
     expect(sendBackShown(state, hasPr)).toBe(shown)
+  })
+})
+
+describe('the PR tab of a card back in Review after a failed continuing run (AC16)', () => {
+  it('shows the link, the branch, the failure reason, Review pull request and Send back', () => {
+    const client = new QueryClient()
+    const run = {
+      id: 'r2',
+      number: 2,
+      kind: 'delivery',
+      status: 'failed',
+      branch: 'board/PAY-1-r1',
+      pr_number: 7,
+      pr_url: 'https://github.com/o/p/pull/7',
+      failure_reason: 'the build made no commit on attempt 3',
+      phases: [],
+      artifacts: [],
+    }
+    client.setQueryData(['runs', 't1'], [run])
+    client.setQueryData(['helps', 't1'], [])
+    client.setQueryData(['pr-files', 'r2'], { files: [] })
+    const task = {
+      id: 't1',
+      key: 'PAY-1',
+      state: 'review',
+      has_pull_request: true,
+      block: null,
+    } as unknown as TaskView
+    const out = renderToStaticMarkup(
+      <QueryClientProvider client={client}>
+        <PrTab
+          task={task}
+          onProblem={() => undefined}
+          onAnnounce={() => undefined}
+          onMoved={() => undefined}
+        />
+      </QueryClientProvider>,
+    )
+    expect(out).toContain('href="https://github.com/o/p/pull/7"')
+    expect(out).toContain('board/PAY-1-r1')
+    expect(out).toContain('The last run did not finish: the build made no commit on attempt 3')
+    expect(out).toContain('Review pull request')
+    expect(out).toMatch(/<h3[^>]*>Send back with changes<\/h3>/)
   })
 })
