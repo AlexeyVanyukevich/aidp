@@ -16,6 +16,7 @@ export const MOVES = [
   'drag_done',
   'mark_done',
   'close_pr',
+  'send_back',
   'request_approval',
   'answer',
   'expire',
@@ -35,6 +36,10 @@ export type Move = (typeof MOVES)[number]
 export interface Facts {
   run: 'spec' | 'delivery'
   hasSpec: boolean
+  /** The latest delivery run continues a reviewed run (a send-back): its end goes to Review. */
+  continuing?: boolean
+  /** A continuing run ended because its pull request is no longer open. */
+  prClosed?: boolean
 }
 
 /** A delivery run on a task with a spec: every move before slice 3 assumes it. */
@@ -42,6 +47,10 @@ export const DELIVERY_FACTS: Facts = { run: 'delivery', hasSpec: true }
 
 /** A run's working state: a spec run drafts, a delivery run runs. */
 const working = (facts: Facts): TaskState => (facts.run === 'spec' ? 'spec_draft' : 'running')
+
+/** Where a run's failure or cancel leaves a card: Review for a continuing run, else Failed. */
+const ends = (facts: Facts): TaskState =>
+  facts.continuing === true && facts.prClosed !== true ? 'review' : 'failed'
 
 const TABLE: Record<
   Move,
@@ -51,9 +60,9 @@ const TABLE: Record<
   approve: { from: ['spec_review'], to: 'ready' },
   claim: { from: ['ready'], to: 'running' },
   finish_review: { from: ['running'], to: 'review' },
-  fail: { from: ['running'], to: 'failed' },
+  fail: { from: ['running'], to: ends },
   // A spec run's Cancel is `drop_draft`: Failed and Re-run are a delivery run's.
-  cancel: { from: ['ready', 'running', 'needs_approval', 'blocked'], to: 'failed' },
+  cancel: { from: ['ready', 'running', 'needs_approval', 'blocked'], to: ends },
   // An answer is accepted from Blocked only when the block is the question expiring; the
   // approvals service checks that, since the table cannot see why a card is blocked.
   request_approval: { from: ['running', 'spec_draft'], to: 'needs_approval' },
@@ -66,6 +75,7 @@ const TABLE: Record<
   drag_done: { from: ['review'], to: 'done' },
   mark_done: { from: ['backlog', 'spec_review', 'failed'], to: 'done' },
   close_pr: { from: ['review'], to: 'failed' },
+  send_back: { from: ['review'], to: 'ready' },
   draft_spec: { from: ['backlog'], to: 'spec_draft' },
   redraft: { from: ['spec_review'], to: 'spec_draft' },
   finish_draft: { from: ['spec_draft'], to: 'spec_review' },

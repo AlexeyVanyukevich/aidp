@@ -102,6 +102,8 @@ export interface RunsTable {
   worktree_path: string | null
   pr_number: number | null
   pr_url: string | null
+  /** A send-back's: the number of the delivery run it continues. */
+  continues_run: ColumnType<number | null, number | null | undefined, number | null>
   fix_loops: Generated<number>
   failure_reason: string | null
   runner_id: string | null
