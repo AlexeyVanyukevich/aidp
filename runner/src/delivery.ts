@@ -5,7 +5,13 @@ import type { PlanData, ReportData, Work } from './contract.js'
 import type { RunnerConfig } from './config.js'
 import type { Git } from './git.js'
 import { foldBuildReports } from './build-reports.js'
-import { buildHandoff, DIFF_MAX, type BuildEntry, type HandoffInput } from './phases/handoff.js'
+import {
+  buildHandoff,
+  DIFF_MAX,
+  pullRequestBody,
+  type BuildEntry,
+  type HandoffInput,
+} from './phases/handoff.js'
 import { diffSections, type DiffSection } from './pr-diff.js'
 import { cutLines } from './verify-cuts.js'
 import { formatViolations, newlyChanged, readApprovedCopies, violationsOf } from './files-gate.js'
@@ -103,6 +109,8 @@ const PLAN_QUESTION =
 const VERIFY_DIFF_FILE = 'verify.diff'
 const TEST_OUTPUT_FILE = 'test-output.txt'
 const VERIFY_CUTS_FILE = 'verify-cuts.md'
+/** A continuing run's start head: the remote branch's commit its worktree began on. */
+const START_HEAD_FILE = 'start-head'
 
 /**
  * Carries a delivery run out from where it stands (slice 2 spec, §6): from the start, or from a
@@ -115,7 +123,9 @@ export async function carryOut(
 ): Promise<Outcome> {
   const { run } = work
   const { project, task } = run
-  const branch = `board/${task.key}-r${run.number}`
+  /** A send-back: this run continues a reviewed run on its branch and pull request. */
+  const continuing = run.continues ?? null
+  const branch = continuing?.branch ?? `board/${task.key}-r${run.number}`
   const { worktree, runDir } = runPaths(deps.config.home, run.id)
   const steps = runSteps(work, deps, { worktree, runDir, budgetUsd: task.budget_usd })
   const { state } = steps
@@ -136,24 +146,50 @@ export async function carryOut(
       .filter((a) => by.phaseId === undefined || a.phase_id === by.phaseId)
       .at(-1)
 
-  const summaries = async (): Promise<HandoffInput['summaries']> =>
-    (await getRun()).phases
-      .filter((p) => p.name !== 'help' && p.status === 'succeeded' && p.summary_md !== null)
-      .map((p) => ({ phase: p.name, attempt: p.attempt, text: p.summary_md ?? '' }))
+  /** The runs whose work is on the branch, earliest first; none for any other run. */
+  const earlierRuns = () => [...(continuing?.chain ?? [])].reverse()
+
+  const summaries = async (): Promise<HandoffInput['summaries']> => {
+    const earlier: HandoffInput['summaries'] = []
+    for (const { id, number } of earlierRuns())
+      earlier.push(
+        ...(await deps.api.getRun(id)).phases
+          .filter((p) => p.name === 'build' && p.status === 'succeeded' && p.summary_md !== null)
+          .map((p) => ({
+            phase: p.name,
+            attempt: p.attempt,
+            text: p.summary_md ?? '',
+            run: number,
+          })),
+      )
+    return [
+      ...earlier,
+      ...(await getRun()).phases
+        .filter((p) => p.name !== 'help' && p.status === 'succeeded' && p.summary_md !== null)
+        .map((p) => ({ phase: p.name, attempt: p.attempt, text: p.summary_md ?? '' })),
+    ]
+  }
 
   /** The entries each Build saved, folded by attempt; the Build and Verify handoffs carry them. */
   const buildReports = async () => {
-    const view = await getRun()
-    const attempts = new Map(view.phases.map((p) => [p.id, p.attempt]))
-    return foldBuildReports(
-      view.artifacts.flatMap((a) => {
-        const attempt = a.phase_id === null ? undefined : attempts.get(a.phase_id)
-        const tests = (a.data as { tests?: BuildEntry[] } | null)?.tests
-        return a.kind === 'build_report' && a.phase_id !== null && attempt !== undefined && tests
-          ? [{ phaseId: a.phase_id, attempt, tests }]
-          : []
-      }),
-    )
+    const foldedOf = (view: Awaited<ReturnType<typeof getRun>>) => {
+      const attempts = new Map(view.phases.map((p) => [p.id, p.attempt]))
+      return foldBuildReports(
+        view.artifacts.flatMap((a) => {
+          const attempt = a.phase_id === null ? undefined : attempts.get(a.phase_id)
+          const tests = (a.data as { tests?: BuildEntry[] } | null)?.tests
+          return a.kind === 'build_report' && a.phase_id !== null && attempt !== undefined && tests
+            ? [{ phaseId: a.phase_id, attempt, tests }]
+            : []
+        }),
+      )
+    }
+    const earlier: (ReturnType<typeof foldedOf>[number] & { run?: number })[] = []
+    for (const { id, number } of earlierRuns())
+      earlier.push(
+        ...foldedOf(await deps.api.getRun(id)).map((group) => ({ ...group, run: number })),
+      )
+    return [...earlier, ...foldedOf(await getRun())]
   }
 
   const uncommitted = async () =>
@@ -226,15 +262,20 @@ export async function carryOut(
 
   const handoffFor = (name: 'plan' | 'build' | 'verify') => async (): Promise<string> => {
     // A kept plan sends the note to Build and Verify; planning again sends it to the planner only.
+    const ownNote = run.note === null || run.note === undefined || run.note.trim() === ''
     const rerunNote =
-      run.note === null || run.note === undefined || run.note.trim() === ''
+      ownNote || continuing !== null
         ? undefined
         : (kept === null) === (name === 'plan')
-          ? run.note
+          ? (run.note ?? undefined)
           : undefined
+    // A send-back's note goes to Build and Verify, apart from a Re-run's.
+    const changesNote =
+      continuing !== null && !ownNote && name !== 'plan' ? (run.note ?? undefined) : undefined
     const approvalNote = specOf().approval_note
     const common = {
       ...(rerunNote === undefined ? {} : { rerunNote }),
+      ...(changesNote === undefined ? {} : { changesNote }),
       taskKey: task.key,
       title: task.title,
       specVersion: specOf().version,
@@ -498,9 +539,30 @@ export async function carryOut(
   const allowPlanFiles = async () => {
     const plan = state.planId === null ? undefined : await artifact('plan', { id: state.planId })
     const files = (plan?.data as PlanData | undefined)?.steps.flatMap((s) => s.files) ?? []
-    const allowed = work.kind === 'resume' ? work.allowed_files : []
+    const allowed = work.kind === 'resume' ? work.allowed_files : (work.allowed_files ?? [])
     writeAllowedFiles(runDir, [...new Set([...files, ...allowed])])
     writeApproved()
+  }
+  /** The remote branch's commit a continuing run began on. */
+  const startHead = () => readFileSync(join(runDir, START_HEAD_FILE), 'utf8').trim()
+  /**
+   * A continuing run's check of its pull request: null while it is open; else the run's end, with
+   * nothing pushed, naming the pull request and its state. A gh that fails throws, and blocks.
+   */
+  const notOpen = async () => {
+    if (continuing === null) return null
+    const state = await deps.git.prState(project.repo_path, {
+      githubRepo: project.github_repo,
+      number: continuing.pr_number,
+    })
+    if (state !== 'MERGED' && state !== 'CLOSED') return null
+    return {
+      outcome: 'failed' as const,
+      extra: {
+        reason: `pull request #${continuing.pr_number} was ${state.toLowerCase()} on GitHub while the changes were being made; nothing was pushed`,
+        pr_state: state,
+      },
+    }
   }
   let approvedClaim: ApprovedMigration[] = []
   const writeApproved = () => {
@@ -510,7 +572,7 @@ export async function carryOut(
   return steps.carry({ repo: project.repo_path, branch }, async () => {
     if (run.kind !== 'delivery') throw new End('failed', 'a spec run is not a delivery run')
     // A claim in the old form (plain strings) would allow a path without a content check.
-    const claimed = work.kind === 'resume' ? (work.approved_migrations ?? []) : []
+    const claimed = work.approved_migrations ?? []
     if (!isApprovedList(claimed))
       throw new End(
         'failed',
@@ -572,12 +634,25 @@ export async function carryOut(
       switch (state.stage) {
         case 'prepare': {
           await steps.checkpoint()
+          if (continuing !== null) {
+            // The pull request must still be open before anything is made.
+            const closed = await notOpen()
+            if (closed !== null) return closed
+          }
           if (work.kind === 'resume') {
             // A prepare that stopped partway may have left either half behind.
             await steps.removeWorktree('delivery_prepare', project.repo_path, worktree)
-            await deps.git.deleteBranch(project.repo_path, branch).catch(() => undefined)
+            // A continuing run's branch is the pull request's: it is set afresh, never deleted.
+            if (continuing === null)
+              await deps.git.deleteBranch(project.repo_path, branch).catch(() => undefined)
           }
-          await deps.git.prepareWorktree(project.repo_path, project.base_branch, branch, worktree)
+          if (continuing === null)
+            await deps.git.prepareWorktree(project.repo_path, project.base_branch, branch, worktree)
+          else
+            writeFileSync(
+              join(runDir, START_HEAD_FILE),
+              await deps.git.prepareContinuingWorktree(project.repo_path, branch, worktree),
+            )
           await steps.prepareLinkedCheckouts()
           await steps.runSetup(project.setup_command, undefined, project.base_branch)
           // What setup left in the worktree is the runner's doing, not the builder's.
@@ -706,7 +781,12 @@ export async function carryOut(
             break
           }
           await deps.git.fetchBase(project.repo_path, base)
-          if ((await deps.git.newCommits(worktree, base)) === 0) {
+          // A continuing run's branch already holds commits: it made none when HEAD has not moved.
+          const made =
+            continuing === null
+              ? (await deps.git.newCommits(worktree, base)) > 0
+              : (await deps.git.head(worktree)) !== startHead()
+          if (!made) {
             // Nothing to test: no undo, setup, rebase or test command; the builder's edits stay.
             if (!(await gate())) break
             await steps.stopIfShuttingDown()
@@ -825,13 +905,44 @@ export async function carryOut(
               })
             }
           }
-          await deps.git.push(worktree, branch)
+          if (continuing === null) await deps.git.push(worktree, branch)
+          else {
+            // Checked again just before: the pull request may have merged while Build ran.
+            const closed = await notOpen()
+            if (closed !== null) return closed
+            await deps.git.pushLeased(worktree, branch, startHead())
+          }
           state.stage = 'pr'
           break
         }
         case 'pr': {
           await steps.checkpoint()
           const report = (await getRun()).artifacts.filter((a) => a.kind === 'verify_report').at(-1)
+          const body = pullRequestBody({
+            taskKey: task.key,
+            run: run.number,
+            specVersion: specOf().version,
+            tested: testedSection(),
+            cuts: verifyCuts(),
+            report: report?.body_md ?? '',
+          })
+          if (continuing !== null) {
+            // The pull request stands: only its body is rewritten.
+            await deps.git.editPrBody(worktree, {
+              githubRepo: project.github_repo,
+              number: continuing.pr_number,
+              body,
+            })
+            return {
+              outcome: 'review' as const,
+              extra: {
+                pr_number: continuing.pr_number,
+                pr_url:
+                  continuing.pr_url ??
+                  `https://github.com/${project.github_repo}/pull/${continuing.pr_number}`,
+              },
+            }
+          }
           // A run stopped after `gh pr create` already has its pull request: it is taken.
           const pr =
             (await deps.git.findPr(worktree, { githubRepo: project.github_repo, branch })) ??
@@ -840,7 +951,7 @@ export async function carryOut(
               base: project.base_branch,
               branch,
               title: `${task.key}: ${task.title}`,
-              body: `${task.key}, run ${run.number}, spec v${specOf().version}.\n\n${testedSection()}${verifyCuts()}## Verify report\n\n${report?.body_md ?? ''}\n`,
+              body,
             }))
           return { outcome: 'review' as const, extra: { pr_number: pr.number, pr_url: pr.url } }
         }

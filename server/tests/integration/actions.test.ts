@@ -994,7 +994,10 @@ describe('Send back (AIDP-59)', () => {
     await sendBack(taskId, { note: 'two' })
     const third = await claimRun()
     expect(third.run).toMatchObject({ number: 3 })
-    expect(third.run.continues).toMatchObject({ run: 2 })
+    expect(third.run.continues).toMatchObject({
+      run: 2,
+      chain: [{ number: 2 }, { number: 1 }],
+    })
     expect(third.allowed_files).toEqual(['a.ts', 'b.ts', 'm/018.ts'])
     expect(third.approved_migrations).toEqual([{ path: 'm/018.ts', content: 'the migration' }])
   })
