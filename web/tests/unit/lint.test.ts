@@ -155,7 +155,7 @@ describe('viewHeading', () => {
 })
 
 describe('viewButtons', () => {
-  const none = { edit: false, writeSpec: false, approve: false, draftSpec: false }
+  const none = { edit: false, writeSpec: false, draftSpec: false }
   const rows: {
     name: string
     state: TaskState
@@ -182,14 +182,14 @@ describe('viewButtons', () => {
       state: 'spec_review',
       version: true,
       draft: false,
-      expected: { ...none, edit: true, approve: true },
+      expected: { ...none, edit: true },
     },
     {
       name: 'spec review, draft',
       state: 'spec_review',
       version: true,
       draft: true,
-      expected: { ...none, edit: true, approve: true },
+      expected: { ...none, edit: true },
     },
     { name: 'spec draft', state: 'spec_draft', version: true, draft: false, expected: none },
     { name: 'ready', state: 'ready', version: true, draft: false, expected: none },
