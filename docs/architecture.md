@@ -23,7 +23,8 @@ Backlog → (Draft spec, or the owner saves a spec) → Spec draft → Spec revi
   **Redraft**, which needs a note. Spec draft → Spec review when the spec run ends having saved a
   version. A spec run that fails, saves nothing or is cancelled sends its card back where it came
   from: Spec review if the task has a version, Backlog if not.
-- Spec review → Ready on **Approve**, which takes an optional note for the planner (below).
+- Spec review → Ready on **Approve spec**, which takes an optional note for the planner (below);
+  both Approve spec and Redraft are decided on the Approvals tab (see "The spec gate").
 - Running or Spec draft → Needs approval when an agent asks, or the plan gate stops a plan its
   planner was not confident of; Needs approval → Running, or Spec draft for a spec run, when the
   owner answers.
@@ -49,8 +50,11 @@ rules it out; it is not a criterion, never overrides the spec, and loses to a co
 answer. For a `review_plan` help `get_question` also returns `approval_note` (the note on the spec
 version the asking run works to, or null), and the helper raises a dropped or partly taken point
 as a blocker quoting it. No Build or Verify handoff carries it, and `get_spec` never returns it.
-The Spec tab shows an optional field "Note for the planner" immediately before Approve, and "Note
-for the planner:" with the note wherever it shows an approved version that has one.
+The spec gate's words field is the "Note for the planner" while Approve spec is chosen, and the Spec
+tab shows "Note for the planner:" with the note wherever it shows an approved version that has one.
+Approve spec takes words and Approve plan does not, for one reason: the planner has a place for a
+note on the approved spec, and the builder has none for a note on the approved plan until a plan
+note is built.
 
 Every move runs in a transaction: `moveTask` takes only a `Transaction`, locks the task row with
 `for update` before it checks the move is legal, and holds the lock to the commit, so a move that
@@ -519,9 +523,9 @@ The task view carries `rephrase`, read from the latest rephrase run: its `status
 The Spec tab shows **Rephrase description** beside Save description in Backlog and Spec review. An
 edited, unsaved description is saved first; a blank one is marked invalid with "Write a
 description first; the rephraser works from it." and takes focus. While a run is in flight the
-button gives way to "The rephraser is reading the code." and **Cancel rephrase**, and Draft spec,
-Redraft and Approve are disabled and described by "Wait for the rephrase to finish, or cancel
-it." A pending suggestion appears beside the Description, stacking below it at narrow widths,
+button gives way to "The rephraser is reading the code." and **Cancel rephrase**, and Draft spec on
+the Spec tab, and Send answer and the step buttons of the spec gate on the Approvals tab, are
+disabled and described by "Wait for the rephrase to finish, or cancel it." A pending suggestion appears beside the Description, stacking below it at narrow widths,
 under the heading "Suggested description", in an editable "Suggestion text" field with **Accept
 suggestion** and **Discard suggestion**, and "Written from an earlier version of your
 description." when stale. Accept with the field blank sends nothing: the field is marked "Write
@@ -1078,13 +1082,16 @@ other value is `unknown_action`. The PR tab shows "Next step:" and "Why:".
 next-gate finding, `approve_with_note` with a blocker or without a next-gate finding, and `redraft`
 without a blocker, all as `not_offered` on `next_step`; any other value is `unknown_action`, and a
 missing step or blank reasoning is `required`. A result stored before this has neither and shows
-no step. The Spec tab shows "Next step:" and "Why:" after Unsure about, with the labels "Approve
-as it stands", "Approve with these findings" and "Redraft with these findings", and one step
-button under Why. One press writes the picked lines into the step's field (Note for the planner,
-or What to change), as Use these findings does, and sends the decision; a redraft or note that
-would be blank marks its field missing and sends nothing. The button is present only while the
-matching Spec tab button is, for the latest version's result, and is disabled exactly when that
-button is. Use these findings stays for editing before sending.
+no step. The spec gate on the Approvals tab shows "Next step:" and "Why:" after Unsure about, with
+the labels "Approve as it stands", "Approve with these findings" and "Redraft with these
+findings", and one step button under Why, for the latest version's result only. One press sets
+the choice to the step's (Approve spec for the two approve steps, none for redraft), writes the
+picked lines after the words in the one words field as Use these findings does, and sends the form
+as Send answer would; Approve as it stands sends the words already there as the note. A note that
+would be blank marks the field invalid ("Write the note for the planner, or choose Approve spec and
+press Send answer." or "Say what to change.") and sends nothing. The approve steps are disabled
+while the Approve spec radio is, every step while a rephrase runs, each described by the same
+reason. Use these findings stays for editing before sending.
 
 **The pull request step buttons.** On a Review card the PR tab puts one button under Why.
 Merge (`POST /api/tasks/:id/helps/:helpId/merge`) runs `gh pr merge <number> --repo <repo>
@@ -1915,7 +1922,7 @@ it; the card announces its own changes of state, the board nothing the runner do
 writes link changes into its status region. Route changes
 focus the new page's `h1`; closing a card returns focus to its link.
 
-The Approvals tab, which a card waiting on a question opens on, holds the question and one form: its
+The Approvals tab, which a card waiting on a question or in Spec review opens on, holds the question and one form: its
 options as the kit's `RadioGroup` named by the question — the recommended one's name ends
 "(recommended)", an option's impact is its description — a field for an answer in words, and one
 Send answer. Choosing sends nothing. While an option of a single request is chosen, a Clear choice
@@ -1926,6 +1933,30 @@ marks the words field invalid and focuses it. Answering, Resume and Cancel move 
 state line before their controls go. A request's context is rendered Markdown, headings starting at
 `h4` (`h5` for a batch question's); a plan's checks read as a table. A migration's stays plain code.
 The header's count of waiting questions is text, not announced.
+
+**The spec gate.** A card in Spec review opens on the Approvals tab, and the card announces a draft
+that is ready as "v<n> is ready to review in Approvals." While the card is in Spec review and has
+a version, the tab shows a section under an `h3` "Spec review": an `h4` "Spec v<n>" with the latest
+version formatted (headings from `h5`), an `h4` "Lint" with the version's lint in the Spec tab's
+words, the button "Edit on the Spec tab", and the one form. The gate is a view of the card's state,
+not an approval record: its form calls `POST /api/specs/:id/approve` and `POST
+/api/tasks/:id/actions/redraft`, and past spec decisions do not join the Answered list. The form is
+the same component as a single request's: Review spec and Explain simply, the radio group "Approve
+spec v<n>, or say what to change" with one radio "Approve spec", Clear choice while it is chosen,
+one words field and Send answer. The words field is labelled "What to change" (hint "The
+spec-writer redrafts from these words and the current version.") with no option chosen and "Note
+for the planner" (hint "The planner reads this with the approved spec. It does not change the
+spec.") with Approve spec chosen; the label is its accessible name. Send answer approves the latest
+version with no note (Approve spec, blank words), approves it with the trimmed words as its note
+(Approve spec, words), redrafts with the trimmed words (no option, words), or sends nothing and
+marks the field invalid with "Write what to change, or choose Approve spec." (neither). The Approve
+spec radio is disabled while the latest version does not lint clean, described by "Approve needs
+the latest version linting clean, with no open questions."; while a description rephrase is queued
+or running Send answer is disabled and described by "Wait for the rephrase to finish, or cancel
+it." After a send that succeeds focus moves to the card's state line; a refusal on the note marks
+the words field invalid and focuses it; a conflict, a refused approve and any other failure show
+the card's problem notice. "Edit on the Spec tab" selects the Spec tab with the editor open and
+focus in its Spec field. The empty state "No questions yet" does not show while the gate does.
 
 Each question carries the buttons Suggest an answer and Explain simply (busy while their help runs,
 still focusable), and under them a section "Suggested answer" (option label, words, reasoning, what
@@ -1957,35 +1988,34 @@ through the same announcer as the other writes, so a message equal to the last i
 When a whole-batch help ends, the region says, once, "Suggested answers ready for all <n>
 questions" or "No suggestions for the batch: <reason>", whichever tab is showing.
 
-Decision helps add buttons. In Spec review the Spec tab shows Edit, then the field "Note for the
-planner", then a row reading Approve, Review spec, Explain simply, then the Redraft note field and
-Redraft; Approve and Redraft are enabled and disabled as without help. The results sit in a section
-under an `h3` "Help with v<n>", after the Lint section and before the tab's status region, each
-under an `h4` ("Spec review of v<n>": Nothing to change or the findings, then Unsure about, then
-the button Use these findings when the result offers it; "v<n> in plain words": What changes, What
-it requires, What it leaves out), with a failure line "No spec review for v<n>: <reason>".
+Decision helps add buttons. In Spec review the spec gate on the Approvals tab (see "The spec gate")
+holds Review spec and Explain simply as the first controls of its form; their results sit under
+`h4` headings in the form, before the radio group ("Spec review of v<n>": Nothing to change or the
+findings, then Unsure about, then the button Use these findings when the result offers it; "v<n> in
+plain words": What changes, What it requires, What it leaves out), with a failure line "No spec
+review for v<n>: <reason>".
 
-Use these findings is offered in two cases, and fills a different field in each. With a blocker,
-while the Redraft form is shown, it fills What to change. On a result with no blocker and at least
-one next-gate finding, while Approve is shown, it fills Note for the planner. A result with only
-outside findings offers no control. It puts one line per blocker and next-gate finding,
+Use these findings at the spec gate is offered on a result with a blocker or at least one next-gate
+finding, and on none with outside findings only. It puts one line per blocker and next-gate finding,
 `- <destination>, <kind> (<where>): <text>` (`blocker` or `next gate`, and no ` (<where>)` without
-a where), into the field: alone when the field is blank, else after the words already there and a
-blank line. Outside findings and Unsure about stay out. A second press adds the lines again.
-Wherever it is offered, each blocker and next-gate finding also holds a radio group "What to do
-with finding <n>": "Use as written" (checked first), the finding's own choices in their saved order
-with " (recommended)" on the helper's pick, then "Leave out"; no choice is checked by default. The
-picks are held in the page only and reset to "Use as written" when a different review result is
-shown. A picked choice adds the line `  Decision: <choice>` (the choice alone, without the mark)
-under its finding; a finding with choices left "Use as written" adds
-`  Open choice, ask me: A (recommended); or B`, the choices in order with "or" before the last; a
-finding left out adds nothing. Where it is not offered, a finding with choices shows
-"Choices: A; B (recommended)" as text. It sends nothing and changes no decision button; focus moves
-to the field it filled with the caret at its end, any error on the field is cleared, and "Findings
-put in What to change." or "Findings put in Note for the planner." is announced in the tab's status
-region on every press, repeated ones included. When every finding is left out the field stays as it
-was, and "Every finding is left out; What to change is unchanged." (or "…; Note for the planner is
-unchanged.") is announced instead.
+a where), into the words field: alone when the field is blank, else after the words already there
+and a blank line. Outside findings and Unsure about stay out. A second press adds the lines again.
+It sets the choice to match where the lines go: a result with a blocker clears Approve spec and
+announces "Findings put in What to change."; a result with only next-gate findings chooses Approve
+spec while that radio is enabled and announces "Findings put in Note for the planner."; while the
+radio is disabled the choice is cleared and the first message is announced. Each blocker and
+next-gate finding also holds a radio group "What to do with finding <n>": "Use as written" (checked
+first), the finding's own choices in their saved order with " (recommended)" on the helper's pick,
+then "Leave out"; no choice is checked by default. The picks are held in the page only and reset
+to "Use as written" when a different review result is shown. A picked choice adds the line
+`  Decision: <choice>` (the choice alone, without the mark) under its finding; a finding with
+choices left "Use as written" adds `  Open choice, ask me: A (recommended); or B`, the choices in
+order with "or" before the last; a finding left out adds nothing. Where it is not offered, a
+finding with choices shows "Choices: A; B (recommended)" as text. It sends nothing and changes no
+decision button; focus moves to the words field with the caret at its end, any error on the field
+is cleared, and the message is announced in the card's status region on every press, repeated ones
+included. When every finding is left out the words and the choice stay as they were, and "Every
+finding is left out; <the field's current label> is unchanged." is announced instead.
 
 The card's action bar reads Move up, Move down, Mark done,
 Check what is unfinished, Resume, Cancel run, Re-run with this plan, Re-run and plan again, Suggest
@@ -2031,12 +2061,16 @@ then the Version select and the spec formatted: Markdown rendered by the kit's `
 component under an `h3` "Spec v<n> · <status>", with raw HTML shown as text and only `http`,
 `https` and `mailto` links kept. A card with no version says "No spec yet."; in Backlog it offers
 Write spec and Draft spec. In Spec review the formatted view is followed by the version's Lint
-section, and the actions Edit and Approve; What to change with Redraft follow. Edit (or Write spec)
+section and the action Edit, then the line "Approve or redraft this spec on the Approvals tab." with
+the button "Go to Approvals", which selects the Approvals tab and moves focus to its tab; while the
+editor holds unsaved changes it is disabled and described by "Save or discard your changes first."
+The Spec tab holds no decision control: Approve, the note fields, Redraft and the helps are on the
+Approvals tab. Edit (or Write spec)
 opens the editor, a textarea holding the unsaved draft or the shown version, with Save as
 v<latest + 1>, Preview and Discard changes. A draft exists while the editor's text differs from
-its baseline; without one Save as is disabled and says why. While a draft exists the Version select,
-Redraft and Draft spec are disabled with their reason beside them, and Preview shows the draft
-formatted as "unsaved changes" in place of Lint, with Approve disabled. Saving, Preview and Discard
+its baseline; without one Save as is disabled and says why. While a draft exists the Version select
+and Draft spec are disabled with their reason beside them, and Preview shows the draft
+formatted as "unsaved changes" in place of Lint, with Go to Approvals disabled. Saving, Preview and Discard
 move focus to Edit (to Write spec when no version exists). In every state after Spec review, and in
 Spec draft (which says so), the spec is only read. An empty description or note marks its field
 invalid and focuses it. The card announces a draft ready to review with its
