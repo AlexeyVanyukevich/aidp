@@ -51,12 +51,11 @@ export function viewButtons(
   state: TaskState,
   hasVersion: boolean,
   draft: boolean,
-): { edit: boolean; writeSpec: boolean; approve: boolean; draftSpec: boolean } {
+): { edit: boolean; writeSpec: boolean; draftSpec: boolean } {
   const open = editable(state)
   return {
     edit: open && (hasVersion || draft),
     writeSpec: state === 'backlog' && !hasVersion && !draft,
-    approve: state === 'spec_review' && hasVersion,
     draftSpec: state === 'backlog' && !hasVersion,
   }
 }
