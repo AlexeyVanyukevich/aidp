@@ -1,4 +1,5 @@
 import { ApiError } from '../api'
+import { invalidField, isConflict, NO_NOTE, NOTE_TOO_LONG, noteRefusal } from '../errors'
 import type {
   ApprovalAnswer,
   ApprovalKind,
@@ -444,20 +445,6 @@ export function fillNoteFromReview(
   return words === '' ? lines.join('\n') : `${words}\n\n${lines.join('\n')}`
 }
 
-/** The announcements of Use these findings at the spec gate, where the words go to the planner. */
-const APPROVAL_NOTE_FILLED = 'Findings put in Note for the planner.'
-const APPROVAL_NOTE_UNCHANGED = 'Every finding is left out; Note for the planner is unchanged.'
-
-/** The approval note after Use these findings, and what to announce; nothing is sent. */
-export function fillApprovalNote(
-  note: string,
-  result: GateReviewResult,
-  picks: readonly FindingPick[] = [],
-): { note: string; message: string } {
-  const next = fillNoteFromReview(note, result, picks)
-  return { note: next, message: next === note ? APPROVAL_NOTE_UNCHANGED : APPROVAL_NOTE_FILLED }
-}
-
 /** What the owner chose for a finding of the pull request review: put it in the note, or not. */
 export type RerunPick = 'in' | 'out'
 
@@ -610,63 +597,136 @@ export function goneResults(
     .map((h) => `${resultHeading(h.mode, h.subject, h.result ?? undefined)} no longer applies.`)
 }
 
-/** The label of each next step a Review spec result may give; none repeats a Spec tab button. */
+/** The label of each next step a Review spec result may give. */
 export const REVIEW_STEP_LABEL: Record<ReviewStep, string> = {
   approve: 'Approve as it stands',
   approve_with_note: 'Approve with these findings',
   redraft: 'Redraft with these findings',
 }
 
-/**
- * What a press of a Review spec step button sends. The picked lines are written into the step's
- * field after the owner's words, as Use these findings writes them; a field that would be blank
- * is marked missing and nothing is sent, as Redraft's own submit does.
- */
-export type SpecStepRequest =
-  | { send: true; step: ReviewStep; note: string }
-  | { send: false; missing: 'note' | 'approval_note' }
+export const NO_APPROVAL_NOTE =
+  'Write the note for the planner, or choose Approve spec and press Send answer.'
+export const NO_SPEC_WORDS = 'Write what to change, or choose Approve spec.'
 
-export function specStepRequest(
+/** What the spec gate's Send answer does, or why it sends nothing. */
+export type SpecSend =
+  | { send: true; action: 'approve'; note?: string }
+  | { send: true; action: 'redraft'; note: string }
+  | { send: false; message: string }
+
+/** The words field of a gate: its label, which is its accessible name, and its hint. */
+export function wordsField(
+  gate: 'spec' | ApprovalKind,
+  option?: string,
+): { label: string; hint: string } {
+  if (gate !== 'spec')
+    return { label: fieldLabel(gate), hint: 'Sent to the agent as you write it.' }
+  return option === undefined
+    ? {
+        label: 'What to change',
+        hint: 'The spec-writer redrafts from these words and the current version.',
+      }
+    : {
+        label: 'Note for the planner',
+        hint: 'The planner reads this with the approved spec. It does not change the spec.',
+      }
+}
+
+/** What the spec gate's Send answer does with the owner's choice and words. */
+export function specGateAnswer(choice: Choice): SpecSend {
+  const words = choice.text.trim()
+  if (choice.option !== undefined)
+    return words === ''
+      ? { send: true, action: 'approve' }
+      : { send: true, action: 'approve', note: words }
+  return words === ''
+    ? { send: false, message: NO_SPEC_WORDS }
+    : { send: true, action: 'redraft', note: words }
+}
+
+/**
+ * Use these findings at the spec gate: the lines go after the words. A blocker clears Approve
+ * spec; next-gate findings alone choose it while it is enabled. Nothing is sent.
+ */
+export function specFindings(
+  choice: Choice,
+  result: ReviewResult,
+  picks: readonly FindingPick[],
+  approveEnabled: boolean,
+): { choice: Choice; message: string } {
+  const text = fillNoteFromReview(choice.text, result, picks)
+  if (text === choice.text)
+    return {
+      choice,
+      message: `Every finding is left out; ${wordsField('spec', choice.option).label} is unchanged.`,
+    }
+  const toNote = result.blockers === 0 && approveEnabled
+  return toNote
+    ? { choice: { option: 'approve', text }, message: 'Findings put in Note for the planner.' }
+    : { choice: { text }, message: 'Findings put in What to change.' }
+}
+
+/**
+ * A press of a Review spec step button: the choice becomes the step's, the picked lines go after
+ * the owner's words as Use these findings writes them, and the decision is sent unless the words
+ * it would send are blank.
+ */
+export function specStepPress(
   step: ReviewStep,
   result: ReviewResult,
   picks: readonly FindingPick[],
-  notes: { note: string; approvalNote: string },
-): SpecStepRequest {
-  if (step === 'approve') return { send: true, step, note: notes.approvalNote }
-  const next =
-    step === 'redraft'
-      ? fillNoteFromReview(notes.note, result, picks)
-      : fillApprovalNote(notes.approvalNote, result, picks).note
-  if (next.trim() === '')
-    return { send: false, missing: step === 'redraft' ? 'note' : 'approval_note' }
-  return { send: true, step, note: next }
+  choice: Choice,
+): { choice: Choice; send: SpecSend } {
+  if (step === 'approve') {
+    const next = { option: 'approve', text: choice.text }
+    return { choice: next, send: specGateAnswer(next) }
+  }
+  const text = fillNoteFromReview(choice.text, result, picks)
+  if (step === 'redraft') {
+    const next = { text }
+    return {
+      choice: next,
+      send: text.trim() === '' ? { send: false, message: NO_NOTE } : specGateAnswer(next),
+    }
+  }
+  const next = { option: 'approve', text }
+  return {
+    choice: next,
+    send: text.trim() === '' ? { send: false, message: NO_APPROVAL_NOTE } : specGateAnswer(next),
+  }
 }
 
-/**
- * Whether a step button is on the page: only while the Spec tab's own matching button is (Approve
- * for both approve steps, Redraft for redraft), and for the latest version's result.
- */
-export function specStepPresent(
-  step: ReviewStep,
-  facts: {
-    approveButton: boolean
-    redraftControl: boolean
-    resultVersion: number | null
-    latestVersion: number | null
-  },
-): boolean {
-  if (facts.resultVersion === null || facts.resultVersion !== facts.latestVersion) return false
-  return step === 'redraft' ? facts.redraftControl : facts.approveButton
+/** What a refused spec send shows: a message on the words field, or the card's problem notice. */
+export function specRefusal(
+  action: 'approve' | 'redraft',
+  error: unknown,
+): { field: string } | { problem: string } {
+  const refusal = action === 'approve' ? approvalNoteRefusal(error) : noteRefusal(error)
+  if (refusal !== undefined) return { field: refusal }
+  if (isConflict(error))
+    return { problem: 'This card changed meanwhile; its latest state is shown.' }
+  if (action === 'approve' && error instanceof ApiError && error.code === 'validation_error')
+    return {
+      problem: 'The spec cannot be approved until it lints clean and has no open questions.',
+    }
+  return { problem: 'That did not work. Try again.' }
 }
 
-/** Why a step button is disabled, exactly when the Spec tab's matching button is. */
+const approvalNoteRefusal = (error: unknown) =>
+  invalidField(error) === 'note' ? NOTE_TOO_LONG : undefined
+
+/** A review step button shows under the latest version's result only. */
+export function specStepPresent(resultVersion: number | null, latestVersion: number | null) {
+  return resultVersion !== null && resultVersion === latestVersion
+}
+
+/** Why a step button is disabled: the approve steps with the Approve spec radio, all while rephrasing. */
 export function specStepLock(
   step: ReviewStep,
-  facts: { canApprove: boolean; changed: boolean; rephrasing: boolean },
-): 'rephrasing' | 'unapprovable' | 'changed' | null {
+  facts: { canApprove: boolean; rephrasing: boolean },
+): 'rephrasing' | 'unapprovable' | null {
   if (facts.rephrasing) return 'rephrasing'
-  if (step === 'redraft') return facts.changed ? 'changed' : null
-  return facts.canApprove ? null : 'unapprovable'
+  return step !== 'redraft' && !facts.canApprove ? 'unapprovable' : null
 }
 
 /** The line under a moving step's button when outside findings are not on the board. */

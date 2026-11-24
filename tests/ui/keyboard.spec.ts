@@ -136,21 +136,15 @@ test('a repository, the board and a card work from the keyboard alone', async ({
   await page.keyboard.press('Shift+Tab')
   await expect(card.getByRole('combobox', { name: 'Version' })).toBeFocused()
 
-  // The card is in Spec review: Edit, the note for the planner, Approve, its two helps, the redraft note, Redraft.
+  // The card is in Spec review: Edit, then Go to Approvals; the decision is on the Approvals tab.
   await expect(card.getByText('OPS-2 · Spec review')).toBeVisible()
   await tabTo(page, edit)
   await page.keyboard.press('Tab')
-  await expect(card.getByRole('textbox', { name: 'Note for the planner' })).toBeFocused()
-  for (const name of ['Approve', 'Review spec', 'Explain simply']) {
-    await page.keyboard.press('Tab')
-    await expect(card.getByRole('button', { name })).toBeFocused()
-  }
+  await expect(card.getByRole('button', { name: 'Go to Approvals' })).toBeFocused()
   await page.keyboard.press('Tab')
-  await expect(card.getByRole('textbox', { name: 'What to change' })).toBeFocused()
-  await page.keyboard.press('Tab')
-  await expect(card.getByRole('button', { name: 'Redraft' })).toBeFocused()
+  await expect(card.getByRole('button', { name: 'Approve' })).toHaveCount(0)
 
-  // The editor opened on an unchanged text: no draft, so Save as is skipped and Redraft stops.
+  // The editor opened on an unchanged text: no draft, so Save as is skipped.
   await edit.focus()
   await page.keyboard.press('Enter')
   await expect(editor).toBeFocused()
@@ -159,9 +153,7 @@ test('a repository, the board and a card work from the keyboard alone', async ({
   await page.keyboard.press('Tab')
   await expect(card.getByRole('button', { name: 'Discard changes' })).toBeFocused()
   await page.keyboard.press('Tab')
-  await expect(card.getByRole('textbox', { name: 'What to change' })).toBeFocused()
-  await page.keyboard.press('Tab')
-  await expect(card.getByRole('button', { name: 'Redraft' })).toBeFocused()
+  await expect(card.getByRole('button', { name: 'Go to Approvals' })).toBeFocused()
 
   // With a draft, Save as is a stop and Redraft is not; Preview and Discard hand focus to Edit.
   await editor.focus()

@@ -80,15 +80,18 @@ test('a task drafted from its description, its questions answered, approved and 
     card.getByRole('status').filter({ hasText: `${key} answered. The run continues.` }),
   ).toBeVisible()
   await expect(card.getByText(`${key} · Spec review`)).toBeVisible(RUN)
-  await expect(card.getByRole('status').filter({ hasText: 'v1 is ready to review.' })).toBeVisible()
+  await expect(
+    card.getByRole('status').filter({ hasText: 'v1 is ready to review in Approvals.' }),
+  ).toBeVisible()
   // The batch's answers are a list inside the answered list: the inner one, last in order.
   await expect(
     approvals.getByRole('list').filter({ hasText: 'How many retries?' }).last(),
   ).toContainText('How many retries? Three')
   await expectAccessible(page)
 
-  await card.getByRole('tab', { name: 'Spec' }).click()
-  await spec.getByRole('button', { name: 'Approve' }).click()
+  // The decision is made on the Approvals tab, in the plan gate's form.
+  await approvals.getByRole('radio', { name: 'Approve spec' }).check()
+  await approvals.getByRole('button', { name: 'Send answer' }).click()
   await expect(card.getByText(`${key} · Review`)).toBeVisible(RUN)
   await expectAccessible(page)
 })
@@ -115,19 +118,27 @@ test('a spec redrafted with a note comes back as the next version', async ({ pag
   const created = await newTask(request, 'Redraft a spec', DESCRIPTION)
   await request.post(appUrl(`/api/tasks/${created.id}/specs`), { data: { body_md: SPEC } })
   const card = await openCard(page, created.key, 'Redraft a spec')
-  const spec = card.getByRole('tabpanel', { name: 'Spec' })
+  // A card in Spec review opens on Approvals.
+  await expect(card.getByRole('tab', { name: 'Approvals' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
+  const approvals = card.getByRole('tabpanel', { name: 'Approvals' })
 
-  // Sent empty, the note is refused where it was written.
-  await spec.getByRole('button', { name: 'Redraft' }).click()
-  const note = spec.getByRole('textbox', { name: 'What to change' })
+  // Sent with nothing, the form is refused where the words go.
+  await approvals.getByRole('button', { name: 'Send answer' }).click()
+  const note = approvals.getByRole('textbox', { name: 'What to change' })
   await expect(note).toBeFocused()
   await expect(note).toHaveAttribute('aria-invalid', 'true')
-  await expect(note).toHaveAccessibleDescription(/Say what to change\./)
+  await expect(note).toHaveAccessibleDescription(/Write what to change, or choose Approve spec\./)
   await expectAccessible(page)
 
   await note.fill('Say how long to wait between tries.')
-  await spec.getByRole('button', { name: 'Redraft' }).click()
+  await approvals.getByRole('button', { name: 'Send answer' }).click()
+  await expect.poll(() => focusedText(page)).toMatch(new RegExp(`^${created.key} · `))
   await expect(card.getByText(`${created.key} · Spec review`)).toBeVisible(RUN)
+  await card.getByRole('tab', { name: 'Spec' }).click()
+  const spec = card.getByRole('tabpanel', { name: 'Spec' })
   await expect(spec.getByRole('combobox', { name: 'Version' })).toContainText('v2 · draft')
   await expectAccessible(page)
 })
@@ -136,11 +147,13 @@ test('a note over 4,000 characters is refused where it was written', async ({ pa
   const created = await newTask(request, 'Redraft a long note', DESCRIPTION)
   await request.post(appUrl(`/api/tasks/${created.id}/specs`), { data: { body_md: SPEC } })
   const card = await openCard(page, created.key, 'Redraft a long note')
-  const spec = card.getByRole('tabpanel', { name: 'Spec' })
+  const approvals = card.getByRole('tabpanel', { name: 'Approvals' })
 
-  const note = spec.getByRole('textbox', { name: 'What to change' })
+  // With Approve spec chosen the words are the note for the planner.
+  await approvals.getByRole('radio', { name: 'Approve spec' }).check()
+  const note = approvals.getByRole('textbox', { name: 'Note for the planner' })
   await note.fill('x'.repeat(4_001))
-  await spec.getByRole('button', { name: 'Redraft' }).click()
+  await approvals.getByRole('button', { name: 'Send answer' }).click()
   await expect(note).toBeFocused()
   await expect(note).toHaveAttribute('aria-invalid', 'true')
   await expect(note).toHaveAccessibleDescription(/The note is longer than 4,000 characters\./)

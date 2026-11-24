@@ -57,7 +57,10 @@ test('a task goes from the board to a pull request, with its steps and costs on 
   await expect(card.getByRole('region', { name: 'Lint' })).toContainText(
     'The spec lints clean: 1 requirement, 1 criterion.',
   )
-  await card.getByRole('button', { name: 'Approve' }).click()
+  // The decision is made on the Approvals tab.
+  await card.getByRole('button', { name: 'Go to Approvals' }).click()
+  await card.getByRole('radio', { name: 'Approve spec' }).check()
+  await card.getByRole('button', { name: 'Send answer' }).click()
 
   // The runner claims it, runs three phases with the fake claude, pushes and opens the PR; the
   // open card hears of each move over the event stream, with no reload, and says so.

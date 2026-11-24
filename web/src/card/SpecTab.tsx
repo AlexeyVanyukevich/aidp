@@ -1,27 +1,12 @@
-import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Field, Input, Markdown, Notice, Select, Textarea } from '@zellige/react'
 import { api, ApiError } from '../api'
 import { useAnnouncer } from '../announce'
-import { invalidField, isConflict, NO_NOTE, NOTE_TOO_LONG, noteRefusal } from '../errors'
+import { invalidField, isConflict } from '../errors'
 import { Loaded } from '../Loaded'
-import type { HelpMode, ReviewStep, SpecView, TaskView } from '../types'
-import {
-  actionProblem,
-  decisionHelp,
-  fillApprovalNote,
-  fillNoteFromReview,
-  NO_HELP,
-  REVIEW_STEP_LABEL,
-  specStepLock,
-  specStepPresent,
-  specStepRequest,
-  type FindingPick,
-  type PlanReviewResult,
-  type ReviewResult,
-} from './approvals'
-import { decisionMode, decisionRenderers, HelpButtons, HelpResults } from './HelpPanel'
+import type { SpecView, TaskView } from '../types'
 import {
   DRAFT_LOCK,
   editable,
@@ -37,18 +22,40 @@ import {
   viewHeading,
 } from './lint'
 
-const NO_APPROVAL_NOTE = 'Write the note for the planner, or choose Approve as it stands.'
 const NO_DESCRIPTION = 'Write a description first; the spec-writer drafts from it.'
 const NO_TITLE = 'Enter a title.'
 const NO_DESCRIPTION_TO_REPHRASE = 'Write a description first; the rephraser works from it.'
 const NO_SUGGESTION = 'Write the text to accept, or discard the suggestion.'
 const WAIT_FOR_REPHRASE = 'Wait for the rephrase to finish, or cancel it.'
 
-export function SpecTab({ task, onFrozen }: { task: TaskView; onFrozen: () => void }) {
+export function SpecTab({
+  task,
+  onFrozen,
+  onGoToApprovals,
+  openEditor: openOnMount,
+  onEditorOpened,
+}: {
+  task: TaskView
+  onFrozen: () => void
+  /** Selects the Approvals tab and moves focus to it. */
+  onGoToApprovals: () => void
+  /** The card was sent here by Edit on the Spec tab: the editor opens, focus in its field. */
+  openEditor: boolean
+  onEditorOpened: () => void
+}) {
   const specs = useQuery({ queryKey: ['specs', task.id], queryFn: () => api.specs(task.id) })
   return (
     <Loaded query={specs} failure="The spec could not be loaded.">
-      {(list) => <SpecEditor task={task} specs={list} onFrozen={onFrozen} />}
+      {(list) => (
+        <SpecEditor
+          task={task}
+          specs={list}
+          onFrozen={onFrozen}
+          onGoToApprovals={onGoToApprovals}
+          openOnMount={openOnMount}
+          onEditorOpened={onEditorOpened}
+        />
+      )}
     </Loaded>
   )
 }
@@ -57,31 +64,35 @@ function SpecEditor({
   task,
   specs,
   onFrozen,
+  onGoToApprovals,
+  openOnMount,
+  onEditorOpened,
 }: {
   task: TaskView
   specs: SpecView[]
-  /**
-   * Approve, Draft spec and Redraft change the card's state and their buttons go; the card
-   * moves focus before they do.
-   */
+  /** Draft spec changes the card's state and its button goes; the card moves focus before it does. */
   onFrozen: () => void
+  onGoToApprovals: () => void
+  openOnMount: boolean
+  onEditorOpened: () => void
 }) {
   const client = useQueryClient()
   const lintId = useId()
   const headingId = useId()
   const hintId = useId()
   const lockId = useId()
-  const approveId = useId()
   const waitId = useId()
   const suggestionHeadingId = useId()
-  const helpHeadingId = useId()
   const controls = specControls(task.state)
   const [selected, setSelected] = useState<string | undefined>()
   const [draft, setDraft] = useState<string | undefined>()
-  const [editing, setEditing] = useState(false)
+  const [editing, setEditing] = useState(openOnMount)
   // Where focus goes once the control is on the page; kept until it is.
   type Target = 'edit' | 'write' | 'text' | 'stop' | 'rephrase' | 'cancelRephrase'
-  const pending = useRef<Target | undefined>(undefined)
+  const pending = useRef<Target | undefined>(openOnMount ? 'text' : undefined)
+  useEffect(() => {
+    if (openOnMount) onEditorOpened()
+  }, [openOnMount, onEditorOpened])
   const setFocus = (target: Target) => {
     pending.current = target
   }
@@ -109,36 +120,14 @@ function SpecEditor({
   const [suggestionMissing, setSuggestionMissing] = useState(false)
   const suggestionField = useRef<HTMLTextAreaElement>(null)
   const rephraseDescriptionButton = useRef<HTMLButtonElement>(null)
-  const [note, setNote] = useState('')
-  const [noteMissing, setNoteMissing] = useState<string | undefined>()
-  const [filled, setFilled] = useState(0)
-  // The note for the planner, sent with Approve; its own refusal, and a count like `filled`.
-  const [approvalNote, setApprovalNote] = useState('')
-  const [approvalNoteMissing, setApprovalNoteMissing] = useState<string | undefined>()
-  const [approvalFilled, setApprovalFilled] = useState(0)
-  const approvalNoteField = useRef<HTMLTextAreaElement>(null)
-  const { message, setMessage, announce } = useAnnouncer()
+  const { message, setMessage } = useAnnouncer()
   const [problem, setProblem] = useState<{ text: string } | undefined>()
   const problemBox = useRef<HTMLDivElement>(null)
   const descriptionField = useRef<HTMLTextAreaElement>(null)
-  const noteField = useRef<HTMLTextAreaElement>(null)
   // A new object each time, so the same failure twice still moves focus to the notice.
   useEffect(() => {
     if (problem) problemBox.current?.focus()
   }, [problem])
-  // A count, so each Use these findings moves focus once the filled note is on the page.
-  useEffect(() => {
-    if (filled === 0) return
-    const field = noteField.current
-    field?.focus()
-    field?.setSelectionRange(field.value.length, field.value.length)
-  }, [filled])
-  useEffect(() => {
-    if (approvalFilled === 0) return
-    const field = approvalNoteField.current
-    field?.focus()
-    field?.setSelectionRange(field.value.length, field.value.length)
-  }, [approvalFilled])
 
   const latest = specs[0]
   const shown = specs.find((s) => s.id === selected) ?? latest
@@ -190,33 +179,7 @@ function SpecEditor({
     wasRephrasing.current = rephrasing
   }, [rephrasing])
 
-  // The helps of Spec review: Review spec and Explain simply, asked of the latest version.
   const inReview = task.state === 'spec_review'
-  const helps = useQuery({
-    queryKey: ['helps', task.id],
-    queryFn: () => api.helps(task.id),
-    enabled: inReview,
-  })
-  const reviewHelp = decisionHelp(helps.data ?? [], 'spec_review')
-  const reviewModes = [
-    decisionMode('review', 'Review spec', reviewHelp.review ?? NO_HELP),
-    decisionMode('restate', 'Explain simply', reviewHelp.restate ?? NO_HELP),
-  ]
-  const reviewMode = reviewModes[0]!
-  const hasHelpResults = reviewModes.some(
-    (mode) => mode.state.shown !== undefined || mode.state.failure !== undefined,
-  )
-  const askReview = useMutation({
-    mutationFn: (mode: HelpMode) => api.askDecisionHelp(task.id, 'spec_review', mode),
-    onMutate: () => setProblem(undefined),
-    onError: (error) =>
-      setProblem({
-        text: isConflict(error)
-          ? 'This card changed meanwhile; its latest state is shown.'
-          : 'That did not work. Try again.',
-      }),
-    onSettled: () => client.invalidateQueries({ queryKey: ['helps', task.id] }),
-  })
 
   const refresh = () =>
     Promise.all([
@@ -224,28 +187,22 @@ function SpecEditor({
       client.invalidateQueries({ queryKey: ['task', task.id] }),
       client.invalidateQueries({ queryKey: ['board'] }),
     ])
-  const fail = (action: 'save' | 'approve' | 'describe' | 'draft') => (error: unknown) =>
+  const fail = (action: 'save' | 'describe' | 'draft') => (error: unknown) =>
     setProblem({
       text: isConflict(error)
         ? action === 'describe' || action === 'draft'
           ? 'This card changed meanwhile; its latest state is shown.'
           : 'This spec changed elsewhere; the latest version is shown.'
         : error instanceof ApiError && error.code === 'validation_error' && action !== 'draft'
-          ? action === 'approve'
-            ? 'The spec cannot be approved until it lints clean and has no open questions.'
-            : 'The spec could not be saved. Check it and try again.'
+          ? 'The spec could not be saved. Check it and try again.'
           : action === 'describe'
             ? 'The description was not saved. Try again.'
             : 'That did not work. Try again.',
     })
   /** The field's error is on the page before focus arrives, so it is read with the field. */
-  const markMissing = (which: 'description' | 'note', text?: string) => {
-    flushSync(() =>
-      which === 'description'
-        ? setDescriptionMissing(text ?? NO_DESCRIPTION)
-        : setNoteMissing(text ?? NO_NOTE),
-    )
-    ;(which === 'description' ? descriptionField : noteField).current?.focus()
+  const markMissing = (text?: string) => {
+    flushSync(() => setDescriptionMissing(text ?? NO_DESCRIPTION))
+    descriptionField.current?.focus()
   }
 
   const titleOf = title ?? task.title
@@ -354,26 +311,6 @@ function SpecEditor({
     onError: fail('save'),
     onSettled: refresh,
   })
-  const approve = useMutation({
-    mutationFn: ({ id, note: sent }: { id: string; note: string }) =>
-      api.approve(id, sent === '' ? undefined : sent),
-    onMutate: () => {
-      setProblem(undefined)
-      setApprovalNoteMissing(undefined)
-    },
-    onSuccess: () => {
-      setApprovalNote('')
-      onFrozen()
-    },
-    onError: (error) => {
-      if (invalidField(error) === 'note') {
-        flushSync(() => setApprovalNoteMissing(NOTE_TOO_LONG))
-        approvalNoteField.current?.focus()
-        announce(NOTE_TOO_LONG)
-      } else fail('approve')(error)
-    },
-    onSettled: refresh,
-  })
   const describe = useMutation({
     mutationFn: () => api.patchTask(task.id, { description_md: describedAs }),
     onMutate: () => setProblem(undefined),
@@ -396,7 +333,7 @@ function SpecEditor({
       onFrozen()
     },
     onError: (error) => {
-      if (invalidField(error) === 'description_md') markMissing('description')
+      if (invalidField(error) === 'description_md') markMissing()
       else fail('draft')(error)
     },
     onSettled: refresh,
@@ -414,8 +351,7 @@ function SpecEditor({
       setMessage('The rephraser is reading the code.')
     },
     onError: (error) => {
-      if (invalidField(error) === 'description_md')
-        markMissing('description', NO_DESCRIPTION_TO_REPHRASE)
+      if (invalidField(error) === 'description_md') markMissing(NO_DESCRIPTION_TO_REPHRASE)
       else fail('draft')(error)
     },
     onSettled: refresh,
@@ -455,7 +391,7 @@ function SpecEditor({
         ? suggestedDescription.text
         : pendingSuggestion.body_md
   const pressRephraseDescription = () => {
-    if (describedAs.trim() === '') markMissing('description', NO_DESCRIPTION_TO_REPHRASE)
+    if (describedAs.trim() === '') markMissing(NO_DESCRIPTION_TO_REPHRASE)
     else rephraseDescription.mutate()
   }
   // Focus moves to the Description field while the controls that will go are still on the page.
@@ -476,104 +412,16 @@ function SpecEditor({
     descriptionField.current?.focus()
     discardSuggestion.mutate()
   }
-  const redraft = useMutation({
-    mutationFn: (sent: string) => api.redraft(task.id, sent.trim()),
-    onMutate: () => setProblem(undefined),
-    onSuccess: () => {
-      setNote('')
-      onFrozen()
-    },
-    onError: (error) => {
-      const refusal = noteRefusal(error)
-      if (refusal !== undefined) markMissing('note', refusal)
-      else fail('draft')(error)
-    },
-    onSettled: refresh,
-  })
-
-  /** Findings go after the words already in the note; nothing is sent. */
-  const putFindingsInNote = (result: ReviewResult | PlanReviewResult, picks: FindingPick[]) => {
-    const next = fillNoteFromReview(note, result, picks)
-    setNote(next)
-    setNoteMissing(undefined)
-    setFilled((count) => count + 1)
-    announce(
-      next === note
-        ? 'Every finding is left out; What to change is unchanged.'
-        : 'Findings put in What to change.',
-    )
-  }
-
-  /** Findings go after the words already in the approval note; nothing is sent. */
-  const putFindingsInApprovalNote = (result: ReviewResult, picks: FindingPick[]) => {
-    const filledNote = fillApprovalNote(approvalNote, result, picks)
-    setApprovalNote(filledNote.note)
-    setApprovalNoteMissing(undefined)
-    setApprovalFilled((count) => count + 1)
-    announce(filledNote.message)
-  }
-
-  /** File on an outside finding: resolves true once it is filed. */
-  const fileFinding = async (helpId: string, index: number): Promise<boolean> => {
-    setProblem(undefined)
-    try {
-      const filed = await api.fileFinding(task.id, helpId, index)
-      await client.invalidateQueries({ queryKey: ['helps', task.id] })
-      announce(`Filed ${filed.key}: ${filed.title}.`)
-      return true
-    } catch (error) {
-      setProblem({ text: actionProblem(error) })
-      await client.invalidateQueries({ queryKey: ['helps', task.id] })
-      return false
-    }
-  }
-
-  /**
-   * A press of a step button: the step's field gets the picked lines after the owner's words, as
-   * Use these findings writes them, and the decision is sent. A field that would be blank is
-   * marked missing and nothing is sent.
-   */
-  const pressStep = (step: ReviewStep, result: ReviewResult, picks: FindingPick[]) => {
-    const request = specStepRequest(step, result, picks, { note, approvalNote })
-    if (!request.send) {
-      if (request.missing === 'note') markMissing('note')
-      else {
-        flushSync(() => setApprovalNoteMissing(NO_APPROVAL_NOTE))
-        approvalNoteField.current?.focus()
-      }
-      return
-    }
-    if (step === 'redraft') {
-      setNote(request.note)
-      redraft.mutate(request.note)
-    } else {
-      setApprovalNote(request.note)
-      if (shown !== undefined) approve.mutate({ id: shown.id, note: request.note })
-    }
-  }
-
   const startDraft = () => {
-    if (describedAs.trim() === '') markMissing('description')
+    if (describedAs.trim() === '') markMissing()
     else draftSpec.mutate()
   }
-  const submitRedraft = (event: FormEvent) => {
-    event.preventDefault()
-    if (note.trim() === '') markMissing('note')
-    else redraft.mutate(note)
-  }
-
   const canEdit = editable(task.state)
   const baseline = shown?.body_md ?? SPEC_TEMPLATE
   const text = draft ?? baseline
   const changed = isDraft(draft, baseline)
   const open = editing && canEdit
   const buttons = viewButtons(task.state, shown !== undefined, changed)
-  const canApprove =
-    shown !== undefined &&
-    shown.id === latest?.id &&
-    shown.status === 'draft' &&
-    shown.lint.approvable &&
-    !changed
   /** Back to the formatted view; Preview keeps the draft, Discard drops it. */
   const leaveEditor = (keep: boolean) => {
     if (!keep) setDraft(undefined)
@@ -797,57 +645,6 @@ function SpecEditor({
           )}
         </section>
       )}
-      {inReview && hasHelpResults && (
-        <section aria-labelledby={helpHeadingId} className="help-results">
-          <h3 id={helpHeadingId}>Help with v{latest?.version ?? '?'}</h3>
-          <HelpResults
-            level={4}
-            modes={reviewModes}
-            renderers={decisionRenderers(
-              null,
-              controls.redraft ? putFindingsInNote : undefined,
-              4,
-              canEdit && !open && buttons.approve ? putFindingsInApprovalNote : undefined,
-              {
-                ownProject: task.key.replace(/-\d+$/, ''),
-                onFile: fileFinding,
-                step: (result, helpId) => {
-                  if (result.mode !== 'review' || result.next_step === undefined) return undefined
-                  const step = result.next_step
-                  const resultVersion =
-                    (reviewMode.state.subject as { spec_version?: number } | null)?.spec_version ??
-                    null
-                  if (
-                    helpId === undefined ||
-                    !specStepPresent(step, {
-                      approveButton: buttons.approve,
-                      redraftControl: controls.redraft,
-                      resultVersion,
-                      latestVersion: latest?.version ?? null,
-                    })
-                  )
-                    return undefined
-                  const lock = specStepLock(step, { canApprove, changed, rephrasing })
-                  return {
-                    label: REVIEW_STEP_LABEL[step],
-                    disabled: lock !== null,
-                    busy: step === 'redraft' ? redraft.isPending : approve.isPending,
-                    describedBy:
-                      lock === 'rephrasing'
-                        ? waitId
-                        : lock === 'changed'
-                          ? lockId
-                          : lock === 'unapprovable'
-                            ? approveId
-                            : undefined,
-                    onPress: (picks) => pressStep(step, result, picks),
-                  }
-                },
-              },
-            )}
-          />
-        </section>
-      )}
       <Notice className="announce">{message}</Notice>
       <Notice tone="danger" className="announce" ref={problemBox} tabIndex={-1}>
         {problem?.text}
@@ -886,59 +683,25 @@ function SpecEditor({
               )}
             </div>
           )}
-          {buttons.approve && (
-            <Field
-              label="Note for the planner"
-              hint="The planner reads this with the approved spec. It does not change the spec."
-              error={approvalNoteMissing}
-            >
-              <Textarea
-                ref={approvalNoteField}
-                rows={3}
-                value={approvalNote}
-                onChange={(e) => {
-                  setApprovalNote(e.target.value)
-                  if (approvalNoteMissing !== undefined) setApprovalNoteMissing(undefined)
-                }}
-              />
-            </Field>
+          {buttons.draftSpec && (
+            <div className="actions" key="view">
+              {buttons.draftSpec && (
+                <Button
+                  busy={draftSpec.isPending}
+                  disabled={changed || rephrasing}
+                  aria-describedby={rephrasing ? waitId : changed ? lockId : undefined}
+                  onClick={startDraft}
+                >
+                  Draft spec
+                </Button>
+              )}
+              {buttons.draftSpec && changed && (
+                <span id={lockId} className="muted">
+                  {DRAFT_LOCK}
+                </span>
+              )}
+            </div>
           )}
-          <div className="actions" key="view">
-            {buttons.approve && (
-              <Button
-                variant="primary"
-                busy={approve.isPending}
-                disabled={!canApprove || rephrasing}
-                aria-describedby={rephrasing ? waitId : canApprove ? undefined : approveId}
-                onClick={() => shown && approve.mutate({ id: shown.id, note: approvalNote })}
-              >
-                Approve
-              </Button>
-            )}
-            {inReview && buttons.approve && (
-              <HelpButtons modes={reviewModes} onAsk={(mode) => askReview.mutate(mode)} />
-            )}
-            {buttons.draftSpec && (
-              <Button
-                busy={draftSpec.isPending}
-                disabled={changed || rephrasing}
-                aria-describedby={rephrasing ? waitId : changed ? lockId : undefined}
-                onClick={startDraft}
-              >
-                Draft spec
-              </Button>
-            )}
-            {buttons.draftSpec && changed && (
-              <span id={lockId} className="muted">
-                {DRAFT_LOCK}
-              </span>
-            )}
-            {buttons.approve && !canApprove && !rephrasing && (
-              <span id={approveId} className="muted">
-                Approve needs the latest version saved, linting clean, with no open questions.
-              </span>
-            )}
-          </div>
         </>
       ) : (
         shown?.status === 'approved' && (
@@ -948,39 +711,22 @@ function SpecEditor({
       {shown?.status === 'approved' && typeof shown.approval_note === 'string' && (
         <p className="muted approval-note">Note for the planner: {shown.approval_note}</p>
       )}
-      {controls.redraft && (
-        <form className="redraft" onSubmit={submitRedraft}>
-          <Field
-            label="What to change"
-            hint="The spec-writer reads this with the current version."
-            error={noteMissing}
+      {inReview && (
+        <div className="actions">
+          <span>Approve or redraft this spec on the Approvals tab.</span>
+          <Button
+            disabled={changed}
+            aria-describedby={changed ? lockId : undefined}
+            onClick={onGoToApprovals}
           >
-            <Textarea
-              ref={noteField}
-              rows={3}
-              value={note}
-              onChange={(e) => {
-                setNote(e.target.value)
-                if (noteMissing !== undefined) setNoteMissing(undefined)
-              }}
-            />
-          </Field>
-          <div className="actions">
-            <Button
-              type="submit"
-              busy={redraft.isPending}
-              disabled={changed || rephrasing}
-              aria-describedby={rephrasing ? waitId : changed ? lockId : undefined}
-            >
-              Redraft
-            </Button>
-            {changed && (
-              <span id={lockId} className="muted">
-                {DRAFT_LOCK}
-              </span>
-            )}
-          </div>
-        </form>
+            Go to Approvals
+          </Button>
+          {changed && (
+            <span id={lockId} className="muted">
+              {DRAFT_LOCK}
+            </span>
+          )}
+        </div>
       )}
     </div>
   )

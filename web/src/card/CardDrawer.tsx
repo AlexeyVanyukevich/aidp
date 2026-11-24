@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { useNavigate, useParams } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -55,6 +55,11 @@ export function CardDrawer() {
   const task = useQuery({ queryKey: ['task', taskId], queryFn: () => api.task(taskId) })
   const board = useQuery({ queryKey: ['board', key], queryFn: () => api.board(key) })
   const [tab, setTab] = useState('spec')
+  // Edit on the Spec tab and Go to Approvals cross tabs: the Spec tab opens its editor, or focus
+  // goes to the Approvals tab, once the tab they name is showing.
+  const [editOnSpec, setEditOnSpec] = useState(false)
+  const focusApprovals = useRef(false)
+  const tabs = useRef<HTMLDivElement>(null)
   const { message, setMessage, announce: announceAgain } = useAnnouncer()
   const [problem, setProblem] = useState<{ text: string } | undefined>()
   const stateLine = useRef<HTMLParagraphElement>(null)
@@ -185,6 +190,15 @@ export function CardDrawer() {
   // A button that changes the state removes itself; focus moves first to the state line, which
   // names the new state once it arrives.
   const leave = () => stateLine.current?.focus()
+  useEffect(() => {
+    if (!focusApprovals.current || tab !== 'approvals') return
+    focusApprovals.current = false
+    const tabButtons = tabs.current?.querySelectorAll<HTMLElement>('[role="tab"]') ?? []
+    Array.from(tabButtons)
+      .find((button) => button.textContent === 'Approvals')
+      ?.focus()
+  }, [tab])
+  const closeEditorRequest = useCallback(() => setEditOnSpec(false), [])
   const move = useMutation({
     mutationFn: (body: Patch) => api.patchTask(taskId, body),
     onMutate: () => setProblem(undefined),
@@ -257,7 +271,22 @@ export function CardDrawer() {
   })
 
   const items = (t: TaskView) => [
-    { id: 'spec', label: 'Spec', panel: <SpecTab task={t} onFrozen={leave} /> },
+    {
+      id: 'spec',
+      label: 'Spec',
+      panel: (
+        <SpecTab
+          task={t}
+          onFrozen={leave}
+          onGoToApprovals={() => {
+            focusApprovals.current = true
+            setTab('approvals')
+          }}
+          openEditor={editOnSpec}
+          onEditorOpened={closeEditorRequest}
+        />
+      ),
+    },
     { id: 'plan', label: 'Plan', panel: <PlanTab task={t} /> },
     { id: 'timeline', label: 'Timeline', panel: <TimelineTab task={t} /> },
     {
@@ -272,6 +301,11 @@ export function CardDrawer() {
           }}
           onProblem={(text) => setProblem({ text })}
           onAnnounce={announceAgain}
+          onSpecDecided={leave}
+          onEditOnSpec={() => {
+            setEditOnSpec(true)
+            setTab('spec')
+          }}
         />
       ),
     },
@@ -458,7 +492,13 @@ export function CardDrawer() {
                 task={t}
                 onChoose={(id, said) => choose.mutate(id, { onSuccess: () => setMessage(said) })}
               />
-              <Tabs label={`${t.key} sections`} items={items(t)} value={tab} onChange={setTab} />
+              <Tabs
+                ref={tabs}
+                label={`${t.key} sections`}
+                items={items(t)}
+                value={tab}
+                onChange={setTab}
+              />
             </div>
           )
         }}
