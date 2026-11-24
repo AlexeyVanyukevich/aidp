@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
-import { buildTestApp, closeTestDb, getTestDb, resetDb } from './helpers.js'
+import { buildTestApp, closeTestDb, getTestDb, resetDb, TEST_RUNNER_KEY } from './helpers.js'
 import {
   GOOD_SPEC,
   seedProject,
@@ -761,5 +761,326 @@ describe('Cancel with a title run', () => {
     await act(taskId, 'cancel')
     expect(await run(runId)).toMatchObject({ status: 'cancelled' })
     expect(await titleRuns(taskId)).toMatchObject([{ status: 'queued' }])
+  })
+})
+
+describe('Send back (AIDP-59)', () => {
+  const PLAN = {
+    confidence: 'high',
+    steps: [{ title: 's', requirements: ['R1'], files: ['a.ts'] }],
+  }
+  const sendBack = (taskId: string, payload: unknown) =>
+    app.inject({
+      method: 'POST',
+      url: `/api/tasks/${taskId}/actions/send-back`,
+      payload: payload as object,
+    })
+  const auth = { authorization: `Bearer ${TEST_RUNNER_KEY}` }
+  const stateOf = async (taskId: string) =>
+    (
+      await db()
+        .selectFrom('tasks')
+        .select('state')
+        .where('id', '=', taskId)
+        .executeTakeFirstOrThrow()
+    ).state
+  const deliveries = (taskId: string) =>
+    db()
+      .selectFrom('runs')
+      .selectAll()
+      .where('task_id', '=', taskId)
+      .where('kind', '=', 'delivery')
+      .orderBy('number')
+      .execute()
+
+  /** A card in Review whose run 1 holds pull request 7, a plan, an allowance and a migration. */
+  async function reviewed(options: { pr?: boolean; state?: 'review' | 'failed' } = {}) {
+    const seeded = await seedQueuedRun(db(), { state: options.state ?? 'review' })
+    await db()
+      .updateTable('runs')
+      .set({
+        status: 'succeeded',
+        queued_at: null,
+        branch: 'board/PAY-1-r1',
+        ...(options.pr === false
+          ? {}
+          : { pr_number: 7, pr_url: 'https://github.com/owner/pay/pull/7' }),
+      })
+      .where('id', '=', seeded.runId)
+      .execute()
+    await db()
+      .insertInto('artifacts')
+      .values({
+        run_id: seeded.runId,
+        phase_id: null,
+        kind: 'plan',
+        body_md: 'the plan',
+        data: JSON.stringify(PLAN),
+      })
+      .execute()
+    const answered = (kind: 'out_of_plan' | 'migration', files: string[], content: string | null) =>
+      db()
+        .insertInto('approval_requests')
+        .values({
+          run_id: seeded.runId,
+          kind,
+          question: 'q',
+          options: JSON.stringify([]),
+          context_md: content,
+          status: 'answered',
+          answer: JSON.stringify({ option_id: 'allow' }),
+          files: JSON.stringify(files),
+          answered_at: new Date(),
+        })
+        .execute()
+    await answered('out_of_plan', ['b.ts'], null)
+    await answered('migration', ['m/018.ts'], 'the migration')
+    return seeded
+  }
+
+  async function claimRun(): Promise<{
+    kind: string
+    run: { id: string; number: number; kept_plan: unknown; continues: unknown; note: string }
+    allowed_files?: string[]
+    approved_migrations?: unknown[]
+  }> {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/runner/claim',
+      headers: auth,
+      payload: { runner_id: 'r1', wait_ms: 0 },
+    })
+    return response.json().work
+  }
+
+  it('moves to Ready and queues run 2 tied to run 1 (AC2)', async () => {
+    const { taskId, runId } = await reviewed()
+    const response = await sendBack(taskId, { note: '  fix the comment  ' })
+    expect(response.statusCode).toBe(200)
+    expect(await stateOf(taskId)).toBe('ready')
+    const [, second] = await deliveries(taskId)
+    expect(second).toMatchObject({
+      number: 2,
+      status: 'queued',
+      note: 'fix the comment',
+      branch: 'board/PAY-1-r1',
+      pr_number: 7,
+      pr_url: 'https://github.com/owner/pay/pull/7',
+      continues_run: 1,
+    })
+    const listing = await app.inject({ method: 'GET', url: `/api/tasks/${taskId}/runs` })
+    expect(listing.json().find((r: { number: number }) => r.number === 2)).toMatchObject({
+      continues_run: 1,
+    })
+    expect(runId).not.toBe(second!.id)
+  })
+
+  it.each([
+    ['an empty body', {}, 'note'],
+    ['a blank note', { note: '   ' }, 'note'],
+    ['a note of 4001 characters', { note: 'n'.repeat(4_001) }, 'note'],
+    ['an unknown field', { note: 'x', extra: 1 }, 'extra'],
+  ])('refuses %s with 400 naming the field (AC3)', async (_name, payload, field) => {
+    const { taskId } = await reviewed()
+    const response = await sendBack(taskId, payload)
+    expect(response.statusCode).toBe(400)
+    expect(response.json().error).toBe('validation_error')
+    expect(JSON.stringify(response.json())).toContain(field)
+    expect(await deliveries(taskId)).toHaveLength(1)
+  })
+
+  it('answers 409 and queues nothing from Failed or with no pull request (AC3)', async () => {
+    const failed = await reviewed({ state: 'failed' })
+    expect((await sendBack(failed.taskId, { note: 'x' })).statusCode).toBe(409)
+    expect(await deliveries(failed.taskId)).toHaveLength(1)
+    await resetDb()
+    const bare = await reviewed({ pr: false })
+    expect((await sendBack(bare.taskId, { note: 'x' })).statusCode).toBe(409)
+    expect(await stateOf(bare.taskId)).toBe('review')
+    expect(await deliveries(bare.taskId)).toHaveLength(1)
+  })
+
+  describe('with a help (AC4)', () => {
+    async function withHelps(newestStep: string) {
+      const seeded = await reviewed()
+      const add = async (step: string, at: string) => {
+        const helpRun = await db()
+          .insertInto('runs')
+          .values({
+            task_id: seeded.taskId,
+            kind: 'help',
+            number: Math.floor(Math.random() * 1e6),
+            status: 'succeeded',
+          })
+          .returning('id')
+          .executeTakeFirstOrThrow()
+        return (
+          await db()
+            .insertInto('helps')
+            .values({
+              run_id: helpRun.id,
+              decision: 'pull_request',
+              mode: 'code_review',
+              status: 'succeeded',
+              subject: JSON.stringify({ pr_run_id: seeded.runId }),
+              result: JSON.stringify({
+                mode: 'code_review',
+                verdict: 'changes',
+                blockers: 1,
+                findings: [],
+                next_step: step,
+                reasoning: 'r',
+                unsure: 'u',
+                commit: 'abc',
+                skipped: [],
+              }),
+              created_at: new Date(at),
+            })
+            .returning('id')
+            .executeTakeFirstOrThrow()
+        ).id
+      }
+      const older = await add('fix_by_hand', '2026-11-20T09:00:00Z')
+      const newest = await add(newestStep, '2026-11-20T10:00:00Z')
+      return { ...seeded, older, newest }
+    }
+
+    it('queues for the standing fix_by_hand help', async () => {
+      const w = await withHelps('fix_by_hand')
+      expect((await sendBack(w.taskId, { note: 'x', help_id: w.newest })).statusCode).toBe(200)
+      expect(await stateOf(w.taskId)).toBe('ready')
+      expect(await deliveries(w.taskId)).toHaveLength(2)
+    })
+
+    it('refuses an older help and a help whose step is not fix_by_hand', async () => {
+      const w = await withHelps('fix_by_hand')
+      expect((await sendBack(w.taskId, { note: 'x', help_id: w.older })).statusCode).toBe(409)
+      expect(await stateOf(w.taskId)).toBe('review')
+      await resetDb()
+      const merge = await withHelps('merge')
+      expect((await sendBack(merge.taskId, { note: 'x', help_id: merge.newest })).statusCode).toBe(
+        409,
+      )
+      expect(await stateOf(merge.taskId)).toBe('review')
+      expect(await deliveries(merge.taskId)).toHaveLength(1)
+    })
+  })
+
+  it('copies the plan and hands the claim the inherited lists, through the chain (AC5)', async () => {
+    const { taskId, runId } = await reviewed()
+    await sendBack(taskId, { note: 'one' })
+    const second = await claimRun()
+    expect(second.run).toMatchObject({ number: 2, note: 'one' })
+    expect(second.run.continues).toMatchObject({ run: 1, branch: 'board/PAY-1-r1', pr_number: 7 })
+    expect(second.run.kept_plan).toMatchObject({ from_run: 1 })
+    expect(second.allowed_files).toEqual(['a.ts', 'b.ts', 'm/018.ts'])
+    expect(second.approved_migrations).toEqual([{ path: 'm/018.ts', content: 'the migration' }])
+    const plan = await db()
+      .selectFrom('artifacts')
+      .selectAll()
+      .where('run_id', '=', second.run.id)
+      .where('kind', '=', 'plan')
+      .executeTakeFirstOrThrow()
+    expect(plan).toMatchObject({ copied_from_run: 1, body_md: 'the plan', data: PLAN })
+    expect(runId).not.toBe(second.run.id)
+
+    // Run 2 ends in Review, and is sent back in turn.
+    await db()
+      .updateTable('runs')
+      .set({ status: 'succeeded' })
+      .where('id', '=', second.run.id)
+      .execute()
+    await db().updateTable('tasks').set({ state: 'review' }).where('id', '=', taskId).execute()
+    await sendBack(taskId, { note: 'two' })
+    const third = await claimRun()
+    expect(third.run).toMatchObject({ number: 3 })
+    expect(third.run.continues).toMatchObject({ run: 2 })
+    expect(third.allowed_files).toEqual(['a.ts', 'b.ts', 'm/018.ts'])
+    expect(third.approved_migrations).toEqual([{ path: 'm/018.ts', content: 'the migration' }])
+  })
+
+  describe('the end of a continuing run (AC19)', () => {
+    async function continuing() {
+      const w = await reviewed()
+      await sendBack(w.taskId, { note: 'x' })
+      return w
+    }
+    const end = async (runId: string, payload: Record<string, unknown>) => {
+      const token = (
+        await app.inject({ method: 'POST', url: `/api/runner/runs/${runId}/tokens`, headers: auth })
+      ).json().token as string
+      return app.inject({
+        method: 'POST',
+        url: '/api/runner/events',
+        headers: { authorization: `Bearer ${token}` },
+        payload: {
+          events: [
+            {
+              id: crypto.randomUUID(),
+              run_id: runId,
+              phase_id: null,
+              ts: new Date().toISOString(),
+              type: 'run_end',
+              agent: null,
+              model: null,
+              tool: null,
+              target: null,
+              status: null,
+              duration_ms: null,
+              usage: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
+              payload,
+            },
+          ],
+        },
+      })
+    }
+
+    it('returns the card to Review, keeping the pull request, when the run fails', async () => {
+      const w = await continuing()
+      const work = await claimRun()
+      expect(await stateOf(w.taskId)).toBe('running')
+      await end(work.run.id, { outcome: 'failed', reason: 'verify failed' })
+      expect(await stateOf(w.taskId)).toBe('review')
+      const latest = (await deliveries(w.taskId)).at(-1)!
+      expect(latest).toMatchObject({ status: 'failed', pr_number: 7, branch: 'board/PAY-1-r1' })
+      expect((await sendBack(w.taskId, { note: 'again' })).statusCode).toBe(200)
+    })
+
+    it.each(['ready', 'blocked'] as const)(
+      'returns the card to Review on Cancel from %s',
+      async (from) => {
+        const w = await continuing()
+        if (from === 'blocked') {
+          await claimRun()
+          await db()
+            .updateTable('runs')
+            .set({
+              status: 'blocked',
+              block: JSON.stringify({ cause: 'step_failed', stage: 'build' }),
+            })
+            .where('task_id', '=', w.taskId)
+            .where('number', '=', 2)
+            .execute()
+          await db()
+            .updateTable('tasks')
+            .set({ state: 'blocked' })
+            .where('id', '=', w.taskId)
+            .execute()
+        }
+        expect((await act(w.taskId, 'cancel')).json().state).toBe('review')
+      },
+    )
+
+    it('moves the card to Failed when the run ends because its pull request merged', async () => {
+      const w = await continuing()
+      const work = await claimRun()
+      await end(work.run.id, {
+        outcome: 'failed',
+        reason:
+          'pull request #7 was merged on GitHub while the changes were being made; nothing was pushed',
+        pr_state: 'MERGED',
+      })
+      expect(await stateOf(w.taskId)).toBe('failed')
+    })
   })
 })

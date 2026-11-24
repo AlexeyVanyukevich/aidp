@@ -6,7 +6,7 @@ import type { HelpResult, HelpSubject } from '../../shared/vocabulary.js'
 import { sameTitle } from '../proposals/proposal.rules.js'
 import type { Gh } from '../runs/pr-poller.js'
 import { planToKeepFor } from '../tasks/plan-history.queries.js'
-import { rerunCard } from '../tasks/task.actions.js'
+import { rerunCard, sendBackCard } from '../tasks/task.actions.js'
 import { moveTask } from '../tasks/task.moves.js'
 import { TaskRepository } from '../tasks/task.repository.js'
 import { stands, type CardDecision } from './decision-rules.js'
@@ -332,6 +332,21 @@ export class HelpActionsService {
       }
       await rerunCard(trx, taskId, step === 'rerun_keep' ? 'keep' : 'again', note, now)
     })
+    return { state: 'ready' }
+  }
+
+  /**
+   * Sends the card back to a builder with the owner's words. With a help, the help must be the
+   * review that stands and its step `fix_by_hand`; the checks are Close-and-re-run's.
+   */
+  async sendBack(taskId: string, helpId: string | null, note: string): Promise<{ state: 'ready' }> {
+    if (helpId !== null) {
+      const review = await this.pullRequestReview(taskId, helpId)
+      if (review.result.next_step !== 'fix_by_hand')
+        throw new ConflictError('This review does not offer a send-back', { reason: 'not_offered' })
+    }
+    const now = this.clock()
+    await this.db.transaction().execute((trx) => sendBackCard(trx, taskId, note, now))
     return { state: 'ready' }
   }
 

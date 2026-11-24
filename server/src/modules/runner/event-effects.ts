@@ -56,6 +56,8 @@ export type Effect =
       prNumber: number | null
       prUrl: string | null
       branch: string | null
+      /** A continuing run's end because its pull request was merged or closed. */
+      prState?: 'MERGED' | 'CLOSED'
       worktreePath: string | null
       at: Date
     }
@@ -224,6 +226,7 @@ export function effectOf(event: RunnerEvent): Effect | undefined {
         prNumber,
         prUrl,
         branch: text(p.branch),
+        ...(p.pr_state === 'MERGED' || p.pr_state === 'CLOSED' ? { prState: p.pr_state } : {}),
         worktreePath: text(p.worktree_path),
         at,
       }

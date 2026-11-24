@@ -34,6 +34,8 @@ export interface RunView {
   branch: string | null
   pr_number: number | null
   pr_url: string | null
+  /** The number of the run this one continues, for a send-back. */
+  continues_run: number | null
   failure_reason: string | null
   fix_loops: number
   created_at: Date
@@ -74,6 +76,7 @@ export class RunRepository {
         'branch',
         'pr_number',
         'pr_url',
+        'continues_run',
         'failure_reason',
         'fix_loops',
         'created_at',
