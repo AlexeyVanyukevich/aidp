@@ -1220,7 +1220,7 @@ describe('a spec run', () => {
 
 describe('claiming a re-run', () => {
   const PLAN = { confidence: 'high', steps: [{ files: ['src/a.ts'] }] }
-  async function failedRun1() {
+  async function failedRun1(confidence = 'high') {
     const seeded = await seedQueuedRun(db(), { state: 'failed' })
     await db()
       .updateTable('runs')
@@ -1234,7 +1234,7 @@ describe('claiming a re-run', () => {
         phase_id: null,
         kind: 'plan',
         body_md: 'plan one',
-        data: JSON.stringify(PLAN),
+        data: JSON.stringify({ ...PLAN, confidence }),
       })
       .execute()
     const ask = (kind: string, path: string) =>
@@ -1344,6 +1344,35 @@ describe('claiming a re-run', () => {
       { run: 1, approved: false, text: 'keep tests in tests/unit' },
     ])
     expect(run.previous_plans).toEqual([])
+  })
+
+  const approvePlanGate = (runId: string, text: string) =>
+    db()
+      .insertInto('approval_requests')
+      .values({
+        run_id: runId,
+        kind: 'plan',
+        question: 'Approve?',
+        options: '[]',
+        context_md: 'plan one',
+        status: 'answered',
+        answer: JSON.stringify({ option_id: 'approve', text }),
+        answered_at: now,
+      })
+      .execute()
+
+  it('hands a run its plan note, and a Re-run with this plan the same one', async () => {
+    const { taskId, runId } = await failedRun1('medium')
+    await approvePlanGate(runId, ' Keep tests in tests/unit. ')
+    expect((await rerun(taskId, 'keep')).statusCode).toBe(200)
+    const work = (await claim()).json().work
+    expect(work.run.plan_note).toBe('Keep tests in tests/unit.')
+  })
+
+  it('hands a run with a high-confidence plan no plan note', async () => {
+    const { taskId } = await failedRun1()
+    expect((await rerun(taskId, 'keep')).statusCode).toBe(200)
+    expect((await claim()).json().work.run.plan_note).toBeNull()
   })
 
   it('carries the current run own answers when it resumes', async () => {

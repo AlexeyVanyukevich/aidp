@@ -12,7 +12,7 @@ import {
 } from '../../shared/vocabulary.js'
 import { allowedFiles, approvedMigrations, type Answer } from '../approvals/approval-rules.js'
 import { openApproval } from '../approvals/approval.service.js'
-import { planAnswers, previousPlans } from '../tasks/plan-history.js'
+import { planAnswers, planNote, previousPlans } from '../tasks/plan-history.js'
 import { loadPlanHistory } from '../tasks/plan-history.queries.js'
 import { moveFacts, moveTask } from '../tasks/task.moves.js'
 import { effectOf, type Effect } from './event-effects.js'
@@ -70,6 +70,8 @@ export interface RunWork {
    */
   previous_plans: { run: number; accepted: boolean; body_md: string }[]
   plan_answers: { run: number; approved: boolean; text: string }[]
+  /** The owner’s note on the plan this run builds from, given with Approve plan; else null. */
+  plan_note: string | null
   /** The plan a Re-run copied into this run; the run starts no planner. */
   kept_plan: { artifact_id: string; from_run: number } | null
   /** A send-back's: the run it continues, and the branch and pull request it works on. */
@@ -434,6 +436,7 @@ export class RunnerService {
         : undefined
     let previous: RunWork['previous_plans'] = []
     let answers: RunWork['plan_answers'] = []
+    let note: string | null = null
     if (row.kind === 'delivery' && row.spec_version !== null) {
       const { plans, approvals } = await loadPlanHistory(trx, row.task_id)
       if (kept === undefined)
@@ -441,6 +444,7 @@ export class RunnerService {
           ({ plan, accepted }) => ({ run: plan.runNumber, accepted, body_md: plan.bodyMd }),
         )
       answers = planAnswers(approvals, row.spec_version)
+      note = planNote(plans, approvals, runId)
     }
     const links = await trx
       .selectFrom('project_links')
@@ -490,6 +494,7 @@ export class RunnerService {
       links,
       previous_plans: previous,
       plan_answers: answers,
+      plan_note: note,
       kept_plan:
         kept === undefined || kept.copied_from_run === null
           ? null
