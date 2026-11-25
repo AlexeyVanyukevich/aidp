@@ -3,6 +3,7 @@ import {
   acceptedPlanOf,
   isAccepted,
   planAnswers,
+  planNote,
   planToKeep,
   previousPlans,
   type PlanApprovalRecord,
@@ -284,5 +285,91 @@ const ACCEPTED: AcceptedCase[] = [
 describe('acceptedPlanOf', () => {
   it.each(ACCEPTED)('$name', ({ plans, approvals, expected }) => {
     expect(acceptedPlanOf(plans, approvals, 'r1')?.id).toBe(expected)
+  })
+})
+
+interface NoteCase {
+  name: string
+  plans: PlanRecord[]
+  approvals: PlanApprovalRecord[]
+  runId: string
+  expected: string | null
+}
+const noted = (
+  runId: string,
+  contextMd: string,
+  answerText: string | null,
+  optionId: string | null = 'approve',
+  seconds = 1,
+): PlanApprovalRecord => ({
+  ...approve(runId, contextMd, optionId),
+  answerText,
+  answeredAt: new Date(2026, 0, 1, 0, 0, seconds),
+})
+const NOTES: NoteCase[] = [
+  {
+    name: 'an approval with words whose context equals the plan gives the trimmed words',
+    plans: [plan({ id: 'a' })],
+    approvals: [noted('r1', 'body a', '  Keep tests in tests/unit.\n')],
+    runId: 'r1',
+    expected: 'Keep tests in tests/unit.',
+  },
+  {
+    name: 'an approval with blank words gives null',
+    plans: [plan({ id: 'a' })],
+    approvals: [noted('r1', 'body a', '  \n')],
+    runId: 'r1',
+    expected: null,
+  },
+  {
+    name: 'a high-confidence plan with no approval gives null',
+    plans: [plan({ id: 'a', confidence: 'high' })],
+    approvals: [],
+    runId: 'r1',
+    expected: null,
+  },
+  {
+    name: 'an approval whose context differs from the plan gives null',
+    plans: [plan({ id: 'a' })],
+    approvals: [noted('r1', 'another body', 'Note.')],
+    runId: 'r1',
+    expected: null,
+  },
+  {
+    name: 'a copy of run 1’s plan gives the note approved there',
+    plans: [
+      plan({ id: 'a' }),
+      plan({ id: 'b', runId: 'r2', runNumber: 2, bodyMd: 'body a', copiedFromRun: 1 }),
+    ],
+    approvals: [noted('r1', 'body a', 'Keep tests in tests/unit.')],
+    runId: 'r2',
+    expected: 'Keep tests in tests/unit.',
+  },
+  {
+    name: 'a copy of a copy gives run 1’s note',
+    plans: [
+      plan({ id: 'a' }),
+      plan({ id: 'b', runId: 'r2', runNumber: 2, bodyMd: 'body a', copiedFromRun: 1 }),
+      plan({ id: 'c', runId: 'r3', runNumber: 3, bodyMd: 'body a', copiedFromRun: 2 }),
+    ],
+    approvals: [noted('r1', 'body a', 'Keep tests in tests/unit.')],
+    runId: 'r3',
+    expected: 'Keep tests in tests/unit.',
+  },
+  {
+    name: 'an earlier words-only answer and a later approval give the note only',
+    plans: [plan({ id: 'a' })],
+    approvals: [
+      noted('r1', 'body a', 'Split step 2.', null, 1),
+      noted('r1', 'body a', 'Keep tests in tests/unit.', 'approve', 2),
+    ],
+    runId: 'r1',
+    expected: 'Keep tests in tests/unit.',
+  },
+]
+
+describe('planNote', () => {
+  it.each(NOTES)('$name', ({ plans, approvals, runId, expected }) => {
+    expect(planNote(plans, approvals, runId)).toBe(expected)
   })
 })
