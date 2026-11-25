@@ -77,18 +77,19 @@ test('a plan the planner is not sure of waits for approval, and builds once appr
   await expect(changes).toHaveAccessibleDescription(/Write an answer, or choose one of the options/)
   await expectAccessible(page)
 
-  // Approving carries no words: a radio like any other, sent with Send answer.
+  // Approving takes a note for the builder, in the same field, sent with Send answer.
   const approve = panel.getByRole('radio', { name: 'Approve plan' })
   await approve.check()
-  await changes.fill('but split step 2')
+  const note = panel.getByRole('textbox', { name: 'Note for the builder' })
+  await expect(note).toBeVisible()
+  await expectAccessible(page)
+  await note.fill('Keep tests in tests/unit/.')
   await panel.getByRole('button', { name: 'Send answer' }).click()
-  await expect(changes).toBeFocused()
-  await expect(changes).toHaveAttribute('aria-invalid', 'true')
-  await expect(changes).toHaveAccessibleDescription(/Approving the plan carries no words/)
-
-  await changes.fill('')
-  await panel.getByRole('button', { name: 'Send answer' }).click()
+  await expect(note).not.toHaveAttribute('aria-invalid', 'true')
   await expect(card.getByText(`${key} · Review`)).toBeVisible(RUN)
+  await expect(
+    panel.getByRole('list').filter({ hasText: 'Approve plan — Keep tests in tests/unit/.' }),
+  ).toBeVisible()
 })
 
 test('a run blocked by a refused push says why, and finishes on Resume', async ({
@@ -384,7 +385,7 @@ const PLAN_REQUEST = {
   options: [{ id: 'approve', label: 'Approve plan' }],
 }
 
-test('Clear choice withdraws Approve plan, and an approval with words is refused before sending', async ({
+test('Clear choice withdraws Approve plan and gives the words field back its name', async ({
   page,
   request,
 }) => {
@@ -392,29 +393,21 @@ test('Clear choice withdraws Approve plan, and an approval with words is refused
   const clear = panel.getByRole('button', { name: 'Clear choice' })
   const approve = panel.getByRole('radio', { name: 'Approve plan' })
   const changes = panel.getByRole('textbox', { name: 'Changes to ask for' })
+  const note = panel.getByRole('textbox', { name: 'Note for the builder' })
   await expect(clear).toHaveCount(0)
   await expect(panel.getByRole('button', { name: 'Suggest an answer' })).toBeVisible()
   await expect(panel.getByRole('button', { name: 'Explain simply' })).toBeVisible()
   await approve.check()
   await expect(clear).toBeVisible()
+  await expect(changes).toHaveCount(0)
   await expectAccessible(page)
 
-  let posted = 0
-  await page.route('**/api/approvals/*/answer', (route) => {
-    posted += 1
-    return route.abort()
-  })
-  await changes.fill('but split step 2')
-  await panel.getByRole('button', { name: 'Send answer' }).click()
-  expect(posted).toBe(0)
-  await expect(changes).toBeFocused()
-  await expect(changes).toHaveAttribute('aria-invalid', 'true')
-  await expect(changes).toHaveAccessibleDescription(/press Clear choice to ask for changes/)
-
+  await note.fill('but split step 2')
   await clear.click()
   await expect(approve).not.toBeChecked()
   await expect(approve).toBeFocused()
   await expect(clear).toHaveCount(0)
+  await expect(note).toHaveCount(0)
   await expect(changes).toHaveValue('but split step 2')
   await expect(changes).not.toHaveAttribute('aria-invalid', 'true')
 })
@@ -436,7 +429,7 @@ test('the keyboard reaches Clear choice after the radio group, and Enter on it c
   await page.keyboard.press('Tab')
   await expect(panel.getByRole('button', { name: 'Clear choice' })).toBeFocused()
   await page.keyboard.press('Tab')
-  await expect(panel.getByRole('textbox', { name: 'Changes to ask for' })).toBeFocused()
+  await expect(panel.getByRole('textbox', { name: 'Note for the builder' })).toBeFocused()
   await page.keyboard.press('Tab')
   await expect(panel.getByRole('button', { name: 'Send answer' })).toBeFocused()
   await panel.getByRole('button', { name: 'Clear choice' }).focus()
@@ -490,7 +483,7 @@ test('a batch question has no Clear choice, even with an option chosen', async (
   await expect(panel.getByRole('button', { name: 'Clear choice' })).toHaveCount(0)
 })
 
-test('Use this answer with words at a plan gate unchecks Approve plan and clears the error', async ({
+test('Use this answer with words at a plan gate unchecks Approve plan', async ({
   page,
   request,
 }) => {
@@ -512,14 +505,51 @@ test('Use this answer with words at a plan gate unchecks Approve plan and clears
   const approve = panel.getByRole('radio', { name: 'Approve plan' })
   const changes = panel.getByRole('textbox', { name: 'Changes to ask for' })
   await approve.check()
-  await changes.fill('but something')
-  await panel.getByRole('button', { name: 'Send answer' }).click()
-  await expect(changes).toHaveAttribute('aria-invalid', 'true')
+  await panel.getByRole('textbox', { name: 'Note for the builder' }).fill('but something')
   await panel.getByRole('button', { name: 'Suggest an answer' }).click()
   await panel.getByRole('button', { name: 'Use this answer' }).click()
   await expect(approve).not.toBeChecked()
   await expect(changes).toHaveValue('split step 2')
-  await expect(changes).not.toHaveAttribute('aria-invalid', 'true')
+})
+
+test('Use this answer with approve and a note at a plan gate keeps both', async ({
+  page,
+  request,
+}) => {
+  const panel = await openApprovals(page, request, 'Use plan note', [PLAN_REQUEST])
+  const view = {
+    id: '00000000-0000-4000-8000-0000000000a3',
+    approval_id: PLAN_REQUEST.id,
+    decision: 'question',
+    subject: null,
+    question_index: null,
+    mode: 'suggest',
+    status: 'succeeded',
+    result: {
+      mode: 'suggest',
+      option_id: 'approve',
+      text: 'Keep tests in tests/unit/.',
+      reasoning: 'r',
+      unsure: 'u',
+    },
+    reason: null,
+    created_at: '2026-10-20T10:00:00Z',
+  }
+  await page.route('**/api/approvals/*/helps', (route) => route.fulfill({ json: view }))
+  await page.route('**/api/tasks/*/helps', (route) => route.fulfill({ json: [view] }))
+  await panel.getByRole('button', { name: 'Suggest an answer' }).click()
+  await expect(panel.getByText('Not sent with Approve plan')).toHaveCount(0)
+  await panel.getByRole('button', { name: 'Use this answer' }).click()
+  await expect(panel.getByRole('radio', { name: 'Approve plan' })).toBeChecked()
+  await expect(panel.getByRole('textbox', { name: 'Note for the builder' })).toHaveValue(
+    'Keep tests in tests/unit/.',
+  )
+  await expect(
+    page
+      .getByRole('status')
+      .filter({ hasText: 'Approve plan chosen, with the suggested note for the builder.' }),
+  ).toBeVisible()
+  await expectAccessible(page)
 })
 
 /** A Review plan result with a blocker that offers choices and a point for the next gate. */
@@ -594,7 +624,7 @@ test('Use these findings of a plan review fills the words, unchecks Approve plan
   await expect(changes).toBeFocused()
   expect(await changes.evaluate((el: HTMLTextAreaElement) => el.selectionStart)).toBe(words.length)
   await expect(
-    page.getByRole('status').filter({ hasText: 'Findings put in the words.' }),
+    page.getByRole('status').filter({ hasText: 'Findings put in Changes to ask for.' }),
   ).toBeVisible()
   expect(sent).toEqual([])
   await expectAccessible(page)
@@ -605,6 +635,60 @@ test('Use these findings of a plan review fills the words, unchecks Approve plan
   await use.click()
   await expect(changes).toHaveValue('- next gate, risk (Step 2): The dead-letter path has no test')
   expect(sent).toEqual([])
+})
+
+test('Use these findings of a plan review with next-gate findings only chooses Approve plan', async ({
+  page,
+  request,
+}) => {
+  const panel = await openApprovals(page, request, 'Review plan note', [PLAN_REQUEST])
+  const result = {
+    mode: 'review_plan',
+    verdict: 'ready',
+    blockers: 0,
+    findings: [
+      {
+        kind: 'risk',
+        where: 'Step 2',
+        text: 'The dead-letter path has no test',
+        destination: 'next_gate',
+        evidence: 'not checked',
+      },
+    ],
+    unsure: 'None.',
+  }
+  const view = {
+    id: '00000000-0000-4000-8000-0000000000a4',
+    approval_id: PLAN_REQUEST.id,
+    decision: 'question',
+    subject: null,
+    question_index: null,
+    mode: 'review_plan',
+    status: 'succeeded',
+    result,
+    reason: null,
+    created_at: '2026-11-17T10:00:00Z',
+  }
+  await page.route('**/api/approvals/*/helps', (route) => route.fulfill({ json: view }))
+  await page.route('**/api/tasks/*/helps', (route) => route.fulfill({ json: [view] }))
+  await panel.getByRole('button', { name: 'Review plan' }).click()
+  await expect(panel.getByText('Goes into the note for the builder')).toBeVisible()
+  const sent: string[] = []
+  page.on('request', (req) => {
+    if (req.url().includes('/api/') && req.method() !== 'GET') sent.push(req.url())
+  })
+  await panel.getByRole('button', { name: 'Use these findings' }).click()
+  const line = '- next gate, risk (Step 2): The dead-letter path has no test'
+  const note = panel.getByRole('textbox', { name: 'Note for the builder' })
+  await expect(panel.getByRole('radio', { name: 'Approve plan' })).toBeChecked()
+  await expect(note).toHaveValue(line)
+  await expect(note).toBeFocused()
+  expect(await note.evaluate((el: HTMLTextAreaElement) => el.selectionStart)).toBe(line.length)
+  await expect(
+    page.getByRole('status').filter({ hasText: 'Findings put in Note for the builder.' }),
+  ).toBeVisible()
+  expect(sent).toEqual([])
+  await expectAccessible(page)
 })
 
 test('after Clear choice, words ask the planner for a second plan', async ({ page, request }) => {
