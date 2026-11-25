@@ -267,7 +267,7 @@ describe('a help through its life', () => {
     expect((await helpRow(queued.id)).result).toEqual({ mode: 'explain', ...parts })
   })
 
-  it('refuses approve with words on a plan request, then accepts approve alone', async () => {
+  it('accepts approve with a note on a plan request', async () => {
     const plan = await open({
       kind: 'plan',
       options: [{ id: 'approve', label: 'Approve plan' }],
@@ -277,17 +277,9 @@ describe('a help through its life', () => {
     const queued = (await ask(plan.approvalId, { mode: 'suggest' })).json()
     await claim()
     const { call } = await tools(plan.runId, plan.taskId, queued.id)
-    const refused = await call('save_help_result', {
-      option_id: 'approve',
-      text: 'Approve. A note for the builder.',
-      reasoning: 'r',
-      unsure: 'u',
-    })
-    expect(refused.isError).toBe(true)
-    expect(refused.content[0]!.text).toContain('- text: not allowed')
-    expect(await helpRow(queued.id)).toMatchObject({ status: 'running', result: null })
     const saved = await call('save_help_result', {
       option_id: 'approve',
+      text: 'Keep tests in tests/unit/.',
       reasoning: 'r',
       unsure: 'u',
     })

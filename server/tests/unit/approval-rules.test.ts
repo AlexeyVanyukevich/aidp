@@ -305,6 +305,12 @@ describe('resumeMessage', () => {
       'The owner asked for changes to the plan:\n\nSplit step 2.\n\nSave the revised plan with save_plan.',
     ],
     [
+      'a plan approved with a note: Build starts, no session resumes',
+      { kind: 'plan', options: optionsFor('plan', []), files: null },
+      { option_id: 'approve', text: 'Keep tests in tests/unit/.' },
+      null,
+    ],
+    [
       'a plan approved: Build starts, no session resumes',
       { kind: 'plan', options: optionsFor('plan', []), files: null },
       { option_id: 'approve' },
@@ -378,9 +384,15 @@ describe('checkAnswer', () => {
     ['approving the plan', { option_id: 'approve' }, []],
     ['changes asked in words', { text: 'Split step 2' }, []],
     [
-      'approving the plan with words',
-      { option_id: 'approve', text: 'but split step 2' },
-      [{ field: 'text', code: 'not_allowed' }],
+      'approving the plan with a note',
+      { option_id: 'approve', text: 'Keep tests in tests/unit/.' },
+      [],
+    ],
+    ['neither an option nor words', {}, [{ field: 'text', code: 'required' }]],
+    [
+      'approving the plan with words over 4 000 characters',
+      { option_id: 'approve', text: 'x'.repeat(4001) },
+      [{ field: 'text', code: 'too_long' }],
     ],
   ])('a plan request: %s', (_name, answer, findings) => {
     const plan = { kind: 'plan' as const, options: [{ id: 'approve', label: 'Approve plan' }] }

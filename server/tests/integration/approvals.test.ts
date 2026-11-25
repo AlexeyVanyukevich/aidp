@@ -277,6 +277,25 @@ describe('POST /api/approvals/:id/answer', () => {
     expect(await runRow(runId)).toMatchObject({ pending: 'resume', resume_message: null })
   })
 
+  it('approves a plan with a note: both stored, the run queued to resume', async () => {
+    const { approvalId, runId } = await open({ kind: 'plan', options: [], recommendation: null })
+    const response = await answer(approvalId, {
+      option_id: 'approve',
+      text: 'Keep tests in tests/unit/.',
+    })
+    expect(response.statusCode).toBe(200)
+    expect(await runRow(runId)).toMatchObject({ pending: 'resume', resume_message: null })
+    const stored = await db()
+      .selectFrom('approval_requests')
+      .select('answer')
+      .where('id', '=', approvalId)
+      .executeTakeFirstOrThrow()
+    expect(stored.answer).toMatchObject({
+      option_id: 'approve',
+      text: 'Keep tests in tests/unit/.',
+    })
+  })
+
   it('answers 404 for an approval that does not exist', async () => {
     expect((await answer('00000000-0000-4000-8000-0000000000ff', { text: 'x' })).statusCode).toBe(
       404,
