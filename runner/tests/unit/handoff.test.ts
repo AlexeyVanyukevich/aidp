@@ -390,6 +390,31 @@ describe('buildHandoff with plan answers', () => {
   })
 })
 
+describe('buildHandoff with a plan note', () => {
+  const NOTE = 'a < b & c'
+  const ELEMENT = '<plan_note>\na &lt; b &amp; c\n</plan_note>'
+  it.each([
+    ['build', true],
+    ['verify', true],
+    ['plan', false],
+  ] as const)('a %s handoff given a plan note carries the element: %s', (phase, carries) => {
+    const text = buildHandoff({ ...BASE, phase, planNote: NOTE })
+    if (carries) expect(text).toContain(ELEMENT)
+    else expect(text).not.toContain('<plan_note')
+  })
+  it.each([undefined, null])('a build handoff given %j carries no element', (planNote) => {
+    expect(buildHandoff({ ...BASE, planNote })).not.toContain('<plan_note')
+  })
+  it('a build handoff with a note still carries no plan answer', () => {
+    const text = buildHandoff({
+      ...BASE,
+      planNote: NOTE,
+      planAnswers: [{ run: 1, approved: true, text: 'ok' }],
+    })
+    expect(text).not.toContain('<plan_answer')
+  })
+})
+
 // A run's linked projects: read-only checkouts, listed for every phase.
 describe('buildHandoff with linked projects', () => {
   const LINKED = [

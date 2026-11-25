@@ -281,6 +281,9 @@ export async function carryOut(
       specVersion: specOf().version,
       specMd: specOf().body_md,
       budgetUsd: task.budget_usd,
+      ...(name === 'plan' || run.plan_note === undefined || run.plan_note === null
+        ? {}
+        : { planNote: run.plan_note }),
       phase: name,
       attempt: state.attempt,
       summaries: await summaries(),
