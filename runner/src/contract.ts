@@ -170,6 +170,8 @@ export interface RunWork {
   previous_plans?: { run: number; accepted: boolean; body_md: string }[]
   /** The owner's words at earlier plan gates on this spec version; absent from an older board. */
   plan_answers?: { run: number; approved: boolean; text: string }[]
+  /** The owner's note on the approved plan, given with Approve plan; absent from an older board. */
+  plan_note?: string | null
   /** The plan a Re-run copied into this run: no planner starts. Absent from an older board. */
   kept_plan?: { artifact_id: string; from_run: number } | null
   /**
