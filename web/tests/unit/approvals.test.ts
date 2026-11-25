@@ -23,7 +23,6 @@ import {
   type PrReviewResult,
   type FindingPick,
   preSendProblem,
-  NO_WORDS_WITH_PLAN,
   failureText,
   fillEveryAnswer,
   hasWholeAnswers,
@@ -46,6 +45,8 @@ import {
   specRefusal,
   specStepPress,
   specFindings,
+  planFindings,
+  type PlanReviewResult,
   wordsField,
   unfiledNotice,
 } from '../../src/card/approvals'
@@ -380,18 +381,18 @@ describe('applySuggestion', () => {
       { text: 'Use four.' },
     ],
     [
-      'a plan suggestion of approve and words chooses approve and empties the words',
+      'a plan suggestion of approve and words chooses approve and sets the words',
       'plan' as const,
       { text: '' },
       { ...result, option_id: 'approve' },
-      { option: 'approve', text: '' },
+      { option: 'approve', text: 'Use four.' },
     ],
     [
       'a plan suggestion of approve and words replaces typed words',
       'plan' as const,
       { text: 'typed' },
       { ...result, option_id: 'approve' },
-      { option: 'approve', text: '' },
+      { option: 'approve', text: 'Use four.' },
     ],
     [
       'a plan suggestion of approve alone empties typed words',
@@ -426,14 +427,21 @@ describe('suggestionMessage', () => {
       'plan' as const,
       { text: '' },
       { ...approve, text: 'Note.' },
-      'Approve plan chosen. An approval carries no words: the suggested words are not sent, and the words field is empty.',
+      'Approve plan chosen, with the suggested note for the builder.',
+    ],
+    [
+      'approve with words over typed words',
+      'plan' as const,
+      { text: 'typed' },
+      { ...approve, text: 'Note.' },
+      'Approve plan chosen, with the suggested note for the builder.',
     ],
     [
       'approve alone over typed words',
       'plan' as const,
       { text: 'typed' },
       approve,
-      'Approve plan chosen. An approval carries no words: the words field is empty.',
+      'Approve plan chosen. The words field is empty.',
     ],
     [
       'approve alone over an empty field',
@@ -464,10 +472,10 @@ describe('suggestionMessage', () => {
 describe('preSendProblem', () => {
   it.each([
     [
-      'plan with approve and words',
+      'plan with approve and a note',
       'plan' as const,
-      { option: 'approve', text: 'x' },
-      NO_WORDS_WITH_PLAN,
+      { option: 'approve', text: 'note' },
+      undefined,
     ],
     [
       'plan with approve and blank words',
@@ -603,13 +611,11 @@ const refused = (details?: Record<string, unknown>) =>
 
 describe('answerRefusal', () => {
   const LENGTH = 'The answer is longer than 4,000 characters.'
-  const NOT_ALLOWED =
-    'Approving the plan carries no words. Clear them, or press Clear choice to ask for changes.'
   it.each([
     [
       'a service not_allowed',
       refused({ field: 'text', findings: [{ field: 'text', code: 'not_allowed' }] }),
-      NOT_ALLOWED,
+      undefined,
     ],
     [
       'a service too_long',
@@ -1101,7 +1107,20 @@ describe('wordsField (R4, AC2)', () => {
   it.each<[string, 'spec' | 'plan' | 'question', string | undefined, string, string | undefined]>([
     ['the spec gate with no option', 'spec', undefined, 'What to change', spec],
     ['the spec gate with Approve spec', 'spec', 'approve', 'Note for the planner', planner],
-    ['a plan request', 'plan', undefined, 'Changes to ask for', undefined],
+    [
+      'a plan request',
+      'plan',
+      undefined,
+      'Changes to ask for',
+      'Sent to the agent as you write it.',
+    ],
+    [
+      'a plan request with Approve plan',
+      'plan',
+      'approve',
+      'Note for the builder',
+      'The builder reads this with the approved plan. It does not change the plan or the spec.',
+    ],
     ['a question request', 'question', undefined, 'Your answer', undefined],
   ])('%s', (_name, gate, option, label, hint) => {
     const field = wordsField(gate, option)
@@ -1173,6 +1192,62 @@ describe('specFindings (R8, AC3)', () => {
     expect(specFindings(row.choice, row.result, row.picks ?? [], row.enabled ?? true)).toEqual(
       row.expected,
     )
+  })
+})
+
+describe('planFindings (R12, AC15)', () => {
+  const res = (findings: object[], blockers: number): PlanReviewResult =>
+    ({ ...REVIEW_BASE, blockers, findings }) as unknown as PlanReviewResult
+  const blockerLine = '- blocker, missing (R1): No retry limit'
+  const nextLine = '- next gate, missing (R1): Vague wording'
+  const rows: {
+    name: string
+    result: PlanReviewResult
+    choice: { option?: string; text: string }
+    picks?: FindingPick[]
+    expected: { choice: { option?: string; text: string }; message: string }
+  }[] = [
+    {
+      name: 'a blocker with Approve plan chosen',
+      result: res([BLOCK], 1),
+      choice: { option: 'approve', text: 'Mine' },
+      expected: {
+        choice: { text: `Mine\n\n${blockerLine}` },
+        message: 'Findings put in Changes to ask for.',
+      },
+    },
+    {
+      name: 'next-gate findings only, no option',
+      result: res([NEXT], 0),
+      choice: { text: '' },
+      expected: {
+        choice: { option: 'approve', text: nextLine },
+        message: 'Findings put in Note for the builder.',
+      },
+    },
+    {
+      name: 'every finding left out, no option',
+      result: res([BLOCK], 1),
+      choice: { text: 'Mine' },
+      picks: ['out'],
+      expected: {
+        choice: { text: 'Mine' },
+        message: 'Every finding is left out; Changes to ask for is unchanged.',
+      },
+    },
+    {
+      name: 'every finding left out, Approve plan',
+      result: res([NEXT], 0),
+      choice: { option: 'approve', text: 'Mine' },
+      picks: ['out'],
+      expected: {
+        choice: { option: 'approve', text: 'Mine' },
+        message: 'Every finding is left out; Note for the builder is unchanged.',
+      },
+    },
+  ]
+  it.each(rows)('$name', (row) => {
+    expect(planFindings(row.choice, row.result, row.picks ?? [])).toEqual(row.expected)
   })
 })
 
