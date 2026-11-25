@@ -83,7 +83,12 @@ describe('checkHelpResult by request kind', () => {
       { option_id: 'a', text: 'Also rename it.', ...SUGGEST },
       [],
     ],
-    ['a plan suggestion of neither', 'plan', { ...SUGGEST }, [{ field: 'option_id', code: 'required' }]],
+    [
+      'a plan suggestion of neither',
+      'plan',
+      { ...SUGGEST },
+      [{ field: 'option_id', code: 'required' }],
+    ],
     ['a plan suggestion of approve alone', 'plan', { option_id: 'a', ...SUGGEST }, []],
     ['a plan suggestion of words alone', 'plan', { text: 'Add a step.', ...SUGGEST }, []],
     [
