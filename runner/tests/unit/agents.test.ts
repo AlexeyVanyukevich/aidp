@@ -77,6 +77,27 @@ describe('the agents', () => {
     expect(prompt).toContain('The list sets no verdict')
   })
 
+  const NOTE_PHRASES: [string, string, string][] = [
+    ['builder', '<plan_note>', 'names the element'],
+    ['builder', 'condition on the approved plan', 'says what it is'],
+    ['builder', 'never overrides the spec', 'keeps the spec above it'],
+    ['builder', 'out_of_plan', 'sends a file the plan lacks to the owner'],
+    ['builder', 'Decision:', 'follows a decision line'],
+    ['builder', 'Open choice, ask me:', 'asks about an open choice'],
+    ['verifier', '<plan_note>', 'names the element'],
+    ['verifier', 'each point of the note', 'lists the points'],
+    ['verifier', 'sets no verdict', 'changes no verdict'],
+    ['verifier', 'context only', 'treats another run’s note as context'],
+    ['helper', 'Approve plan with a short note', 'suggests a note'],
+    ['helper', 'goes into the note for the builder', 'writes a next-gate finding for the builder'],
+  ]
+  it.each(NOTE_PHRASES)('the %s prompt contains “%s” (%s)', (agent, phrase) => {
+    expect(AGENTS[agent]!.prompt.toLowerCase()).toContain(phrase.toLowerCase())
+  })
+  it('no longer tells the helper “never both”', () => {
+    expect(AGENTS.helper!.prompt.toLowerCase()).not.toContain('never both')
+  })
+
   it('tells the helper that fix_by_hand sends the blockers to a builder on the same branch (AC15)', () => {
     expect(AGENTS.helper!.prompt).toContain(
       'fix_by_hand sends the blockers to a builder on the same branch and pull request, keeping the plan',
