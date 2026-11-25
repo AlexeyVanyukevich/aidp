@@ -120,3 +120,39 @@ export function previousPlans(
     ...(older === undefined ? [] : [{ plan: older, accepted: true }]),
   ]
 }
+
+/**
+ * The owner's note on the plan a run builds from: the trimmed words of the Approve plan answer
+ * that accepted it. A copied plan follows `copiedFromRun` back to the run whose gate approved
+ * it. `null` when no approval exists (a high-confidence plan) or its words are blank.
+ */
+export function planNote(
+  plans: PlanRecord[],
+  approvals: PlanApprovalRecord[],
+  runId: string,
+): string | null {
+  const seen = new Set<string>()
+  let current = runId
+  for (;;) {
+    if (seen.has(current)) return null
+    seen.add(current)
+    const plan = acceptedPlanOf(plans, approvals, current)
+    if (plan === undefined) return null
+    if (plan.copiedFromRun === null) {
+      const approval = approvals
+        .filter(
+          (a) => a.optionId === 'approve' && a.runId === plan.runId && a.contextMd === plan.bodyMd,
+        )
+        .sort(
+          (x, y) =>
+            y.answeredAt.getTime() - x.answeredAt.getTime() ||
+            (x.id < y.id ? 1 : x.id > y.id ? -1 : 0),
+        )[0]
+      const text = (approval?.answerText ?? '').trim()
+      return text === '' ? null : text
+    }
+    const source = plans.find((p) => p.runNumber === plan.copiedFromRun && p.runId !== plan.runId)
+    if (source === undefined) return null
+    current = source.runId
+  }
+}
