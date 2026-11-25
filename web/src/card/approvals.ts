@@ -320,8 +320,6 @@ export interface Choice {
   text: string
 }
 
-export const NO_WORDS_WITH_PLAN =
-  'Approving the plan carries no words. Clear them, or press Clear choice to ask for changes.'
 export const ANSWER_TOO_LONG = 'The answer is longer than 4,000 characters.'
 
 /** The words-field message for an answer the board refused, or undefined for any other failure. */
@@ -333,7 +331,6 @@ export function answerRefusal(error: unknown): string | undefined {
     const first = Array.isArray(findings)
       ? (findings[0] as { code?: unknown } | undefined)
       : undefined
-    if (first?.code === 'not_allowed') return NO_WORDS_WITH_PLAN
     if (first?.code === 'too_long') return ANSWER_TOO_LONG
     return undefined
   }
@@ -348,14 +345,14 @@ export function answerRefusal(error: unknown): string | undefined {
 
 /**
  * Use this answer: the suggested option when it has one, and the suggested words, replacing.
- * At a plan gate an approve suggestion chooses Approve plan and empties the words field: an
- * approval carries no words, so the suggested notes are shown as not sent and never reach the
- * run. Words with no option fill the words and clear any chosen option.
+ * At a plan gate an approve suggestion chooses Approve plan and sets the words field to the
+ * suggested note for the builder, or empties it when there is none. Words with no option fill
+ * the words and clear any chosen option.
  */
 export function applySuggestion(kind: ApprovalKind, current: Choice, result: HelpResult): Choice {
   if (result.mode !== 'suggest') return current
   if (kind === 'plan') {
-    if (result.option_id === 'approve') return { option: 'approve', text: '' }
+    if (result.option_id === 'approve') return { option: 'approve', text: result.text ?? '' }
     if (result.text !== undefined && result.text.trim() !== '') return { text: result.text }
     const option = result.option_id ?? current.option
     return {
@@ -379,9 +376,8 @@ export function suggestionMessage(
   if (kind !== 'plan' || result.mode !== 'suggest' || result.option_id !== 'approve')
     return undefined
   if (result.text !== undefined && result.text.trim() !== '')
-    return 'Approve plan chosen. An approval carries no words: the suggested words are not sent, and the words field is empty.'
-  if (current.text.trim() !== '')
-    return 'Approve plan chosen. An approval carries no words: the words field is empty.'
+    return 'Approve plan chosen, with the suggested note for the builder.'
+  if (current.text.trim() !== '') return 'Approve plan chosen. The words field is empty.'
   return 'Approve plan chosen.'
 }
 
@@ -480,11 +476,9 @@ export function fillRerunNote(
   return words === '' ? block : `${words}\n\n${block}`
 }
 
-/** A refusal the form can give before sending: an approval carries no words. */
-export function preSendProblem(kind: ApprovalKind, choice: Choice): string | undefined {
-  return kind === 'plan' && choice.option === 'approve' && choice.text.trim() !== ''
-    ? NO_WORDS_WITH_PLAN
-    : undefined
+/** A refusal the form can give before sending. None today: the board's own refusals come back on the words field. */
+export function preSendProblem(_kind: ApprovalKind, _choice: Choice): string | undefined {
+  return undefined
 }
 
 /** What a single request sends: the chosen option, the words, or both; null with neither. */
@@ -619,6 +613,11 @@ export function wordsField(
   gate: 'spec' | ApprovalKind,
   option?: string,
 ): { label: string; hint: string } {
+  if (gate === 'plan' && option !== undefined)
+    return {
+      label: 'Note for the builder',
+      hint: 'The builder reads this with the approved plan. It does not change the plan or the spec.',
+    }
   if (gate !== 'spec')
     return { label: fieldLabel(gate), hint: 'Sent to the agent as you write it.' }
   return option === undefined
@@ -664,6 +663,26 @@ export function specFindings(
   return toNote
     ? { choice: { option: 'approve', text }, message: 'Findings put in Note for the planner.' }
     : { choice: { text }, message: 'Findings put in What to change.' }
+}
+
+/**
+ * Use these findings at the plan gate: the lines go after the words. A blocker clears Approve
+ * plan; next-gate findings alone choose it. Nothing is sent.
+ */
+export function planFindings(
+  choice: Choice,
+  result: PlanReviewResult,
+  picks: readonly FindingPick[],
+): { choice: Choice; message: string } {
+  const text = fillNoteFromReview(choice.text, result, picks)
+  if (text === choice.text)
+    return {
+      choice,
+      message: `Every finding is left out; ${wordsField('plan', choice.option).label} is unchanged.`,
+    }
+  return result.blockers === 0
+    ? { choice: { option: 'approve', text }, message: 'Findings put in Note for the builder.' }
+    : { choice: { text }, message: 'Findings put in Changes to ask for.' }
 }
 
 /**

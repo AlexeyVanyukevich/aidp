@@ -673,7 +673,7 @@ describe('the shared review shape on the card (AC5, AC8, AC13, AC15)', () => {
     ['review', true, 'Goes into the note with the blockers'],
     ['review', false, 'Goes into the approval note'],
     ['review_plan', true, 'Goes into the words with the blockers'],
-    ['review_plan', false, 'Waits for the pull request gate'],
+    ['review_plan', false, 'Goes into the note for the builder'],
   ] as const)('%s with a blocker %s heads its next-gate group "%s"', (mode, blocker, heading) => {
     expect(html(mixed(mode, blocker))).toContain(`<h4>${heading}</h4>`)
   })
@@ -706,12 +706,19 @@ describe('the shared review shape on the card (AC5, AC8, AC13, AC15)', () => {
     expect(outside).not.toContain('Use these findings')
   })
 
-  it('offers Use these findings only with a blocker, and none on a ready plan review', () => {
+  it('offers Use these findings on a plan review with a blocker, or a next-gate finding', () => {
     expect(html(mixed('review_plan', true))).toContain('Use these findings')
     const ready = html(mixed('review_plan', false))
-    expect(ready).not.toContain('Use these findings')
-    expect(ready).not.toContain('<button')
-    expect(ready).not.toContain('radiogroup')
+    expect(ready).toContain('Use these findings')
+    expect(ready).toContain('<h4>Goes into the note for the builder</h4>')
+  })
+
+  it('offers no Use these findings on a plan review of outside findings only, or without a handler', () => {
+    const ready = mixed('review_plan', false) as never as { findings: unknown[] }
+    const outside = html({ ...ready, findings: [ready.findings[1]] } as never)
+    expect(outside).not.toContain('Use these findings')
+    expect(outside).not.toContain('<button')
+    expect(html(mixed('review_plan', false), false)).not.toContain('Use these findings')
   })
 
   it('shows the next step and why of a pull request review, and no button', () => {
@@ -724,8 +731,8 @@ describe('the shared review shape on the card (AC5, AC8, AC13, AC15)', () => {
   })
 })
 
-describe('HelpPanel: the not-sent line', () => {
-  const NOT_SENT = 'Not sent with Approve plan: an approval carries no words.'
+describe('HelpPanel: an approve suggestion with a note', () => {
+  const NOT_SENT = 'Not sent with Approve plan'
   const shown = (result: HelpResult) => ({
     suggest: { busy: false, shown: result, failure: undefined, id: 'h1' },
     explain: NO_HELP,
@@ -739,7 +746,6 @@ describe('HelpPanel: the not-sent line', () => {
         level={4}
         onAsk={() => {}}
         onUse={() => {}}
-        {...(kind === undefined ? {} : { requestKind: kind })}
       />,
     )
   const both: HelpResult = {
@@ -750,7 +756,7 @@ describe('HelpPanel: the not-sent line', () => {
     unsure: 'u',
   }
   it.each<[string, 'plan' | 'question', HelpResult, boolean]>([
-    ['approve with words at a plan', 'plan', both, true],
+    ['approve with words at a plan', 'plan', both, false],
     [
       'approve alone at a plan',
       'plan',
@@ -767,7 +773,9 @@ describe('HelpPanel: the not-sent line', () => {
   ])('%s', (_name, kind, result, line) => {
     const html = render(kind, result)
     expect(html.includes(NOT_SENT)).toBe(line)
-    if (result.mode === 'suggest' && result.text !== undefined) expect(html).toContain('A note.')
+    if (result.mode === 'suggest' && result.text !== undefined) {
+      expect(html).toContain('<strong>Words:</strong> A note.')
+    }
   })
 })
 

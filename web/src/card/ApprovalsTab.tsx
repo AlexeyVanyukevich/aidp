@@ -33,6 +33,8 @@ import {
   specStepPress,
   specStepPresent,
   specFindings,
+  preSendProblem,
+  planFindings,
   wordsField,
   type SpecSend,
   headingFor,
@@ -43,11 +45,9 @@ import {
   answerRefusal,
   applySuggestion,
   suggestionMessage,
-  fillNoteFromReview,
   type FindingPick,
   type PlanReviewResult,
   type ReviewResult,
-  preSendProblem,
   type Choice,
 } from './approvals'
 import { BatchForm } from './BatchForm'
@@ -347,19 +347,15 @@ function SingleForm({
               planReview: {
                 onAsk: onReviewPlan,
                 onUseFindings: (result: ReviewResult | PlanReviewResult, picks: FindingPick[]) => {
-                  const next = fillNoteFromReview(form.choice.text, result, picks)
-                  form.put({ text: next })
-                  onAnnounce(
-                    next === form.choice.text
-                      ? 'Every finding is left out; the words are unchanged.'
-                      : 'Findings put in the words.',
-                  )
+                  if (result.mode !== 'review_plan') return
+                  const used = planFindings(form.choice, result, picks)
+                  form.put(used.choice)
+                  onAnnounce(used.message)
                 },
                 actions: { ownProject, onFile },
               },
             }
           : {})}
-        requestKind={approval.kind}
         onUse={(result) => {
           const message = suggestionMessage(approval.kind, form.choice, result)
           form.edit((now) => applySuggestion(approval.kind, now, result))

@@ -164,15 +164,12 @@ export function HelpPanel({
   onAsk,
   onUse,
   planReview,
-  requestKind,
 }: {
   help: QuestionHelp
   options: ApprovalOption[]
   level: 4 | 5
   onAsk: (mode: AskedHelpMode) => void
   onUse: (result: Suggestion) => void
-  /** The request's kind: a plan request shows an approve suggestion's words as not sent. */
-  requestKind?: ApprovalKind
   /** A plan request's Review plan: asking it, and Use these findings on its result. */
   planReview?: {
     onAsk: () => void
@@ -248,11 +245,6 @@ export function HelpPanel({
                   <strong>Words:</strong> {suggestion.text}
                 </p>
               )}
-              {requestKind === 'plan' &&
-                suggestion.option_id !== undefined &&
-                suggestion.text !== undefined && (
-                  <p>Not sent with Approve plan: an approval carries no words.</p>
-                )}
               <p>
                 <strong>Why:</strong> {suggestion.reasoning}
               </p>
@@ -353,7 +345,7 @@ export interface ReviewActions {
 export function nextGateHeading(gate: Gate, hasBlocker: boolean): string {
   if (gate === 'spec')
     return hasBlocker ? 'Goes into the note with the blockers' : 'Goes into the approval note'
-  return hasBlocker ? 'Goes into the words with the blockers' : 'Waits for the pull request gate'
+  return hasBlocker ? 'Goes into the words with the blockers' : 'Goes into the note for the builder'
 }
 
 /**
@@ -399,8 +391,16 @@ function ReviewView({
     result.mode === 'review' &&
     result.blockers === 0 &&
     result.findings.some((finding) => finding.destination === 'next_gate')
+  // The plan gate's: with no blocker, next-gate findings go into the note for the builder.
+  const toBuilder =
+    onUseFindings !== undefined &&
+    result.mode === 'review_plan' &&
+    result.blockers === 0 &&
+    result.findings.some((finding) => finding.destination === 'next_gate')
   const picking =
-    toNote || (onUseFindings !== undefined && result.blockers > 0 && result.mode !== 'code_review')
+    toNote ||
+    toBuilder ||
+    (onUseFindings !== undefined && result.blockers > 0 && result.mode !== 'code_review')
   const Heading = `h${level + 1}` as 'h4' | 'h5' | 'h6'
   const stepButton = actions?.step?.(result, helpId)
   // Merge, then file never shows the line: it files them itself.
