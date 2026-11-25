@@ -86,6 +86,7 @@ test('a plan the planner is not sure of waits for approval, and builds once appr
   await note.fill('Keep tests in tests/unit/.')
   await panel.getByRole('button', { name: 'Send answer' }).click()
   await expect(note).not.toHaveAttribute('aria-invalid', 'true')
+  await expect.poll(() => focusedText(page)).toMatch(new RegExp(`^${key} · `))
   await expect(card.getByText(`${key} · Review`)).toBeVisible(RUN)
   await expect(
     panel.getByRole('list').filter({ hasText: 'Approve plan — Keep tests in tests/unit/.' }),
