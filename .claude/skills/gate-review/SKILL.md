@@ -36,12 +36,12 @@ Give each finding exactly one destination, and say which:
   another round at this gate.
 - **Next gate**: wording, small gaps, or anything the next agent can settle without a decision.
   Never send it through a redraft round of its own. A note for a later gate needs a place on the
-  board that takes the owner's words, and most gates have none: today Approve plan takes no
-  words, and a plan saved at high confidence skips its gate. Approve spec takes a note for the
-  planner. Check the board, and
+  board that takes the owner's words, and most gates have none: a plan saved at high confidence
+  skips its gate. Approve spec takes a note for the planner, and Approve plan takes a note for
+  the builder, which Build and Verify read. Check the board, and
   when the next gate cannot take the note, hand the point on in the first of these that applies:
   - this gate already needs a redraft: add the point to that redraft's note, at no extra round;
-  - the gate takes a note for the next agent (Approve spec's note for the planner): write the
+  - the gate takes a note for the next agent (Approve spec's note for the planner, Approve plan's note for the builder): write the
     point for that agent, in that note;
   - the owner can edit the work before approving it: give the edit, ready to paste;
   - otherwise: leave it to the pull request gate, and say that it waits there.

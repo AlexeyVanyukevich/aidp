@@ -52,9 +52,9 @@ version the asking run works to, or null), and the helper raises a dropped or pa
 as a blocker quoting it. No Build or Verify handoff carries it, and `get_spec` never returns it.
 The spec gate's words field is the "Note for the planner" while Approve spec is chosen, and the Spec
 tab shows "Note for the planner:" with the note wherever it shows an approved version that has one.
-Approve spec takes words and Approve plan does not, for one reason: the planner has a place for a
-note on the approved spec, and the builder has none for a note on the approved plan until a plan
-note is built.
+Approve spec and Approve plan both take words: the planner reads the spec's note, and the builder
+and the verifier read the plan's (see "The plan gate"). The plan gate's words field is the "Note
+for the builder" while Approve plan is chosen, and "Changes to ask for" with no option chosen.
 
 Every move runs in a transaction: `moveTask` takes only a `Transaction`, locks the task row with
 `for update` before it checks the move is legal, and holds the lock to the commit, so a move that
@@ -1044,7 +1044,11 @@ returns null or the diff is longer than the text), `answer` (the owner's words) 
 partly taken is a blocker quoting it, a change nobody asked for is a `risk`, and a settled point
 is not raised again. Use these findings puts the blocker and next-gate lines (as at Review spec,
 with `Decision:` and `Open choice, ask me:` lines under a finding with choices) into the words
-field, clears Approve plan, and sends nothing; it is offered only when a blocker stands.
+field after any words already there, and sends nothing. With a blocker it clears Approve plan and
+"Findings put in Changes to ask for." is announced; with no blocker and a next-gate finding it
+chooses Approve plan and the lines go into the note for the builder ("Goes into the note for the
+builder" group, "Findings put in Note for the builder." announced). Focus moves to the words
+field with the caret at its end. A result of outside findings only offers no Use these findings.
 
 **Where a next-gate point goes.** At the spec gate with a blocker it joins What to change; with
 no blocker it goes into the Note for the planner (the "Goes into the approval note" group), which
@@ -1052,12 +1056,12 @@ the planner and the Review plan helper read; the result offers Use these finding
 picks as with a blocker, and the lines fill that field, after any words already there, with focus
 moving to it and "Findings put in Note for the planner." announced. A result with only outside
 findings offers no control. At the plan gate
-with a blocker it joins the words; with no blocker it waits for the pull request gate, where
-`get_decision` hands the `code_review` helper `plan_review_points`: the next-gate findings, with
+with a blocker it joins the words; with no blocker it goes into the note for the builder. Where a
+point is not taken there, `get_decision` hands the `code_review` helper `plan_review_points`: the next-gate findings, with
 kind, where, text and evidence, of the newest succeeded plan review (retired or not) on the pull
 request run's newest `plan` request answered with Approve plan, and none for a high-confidence
 plan or a plan kept by a Re-run. The helper raises a point the pull request leaves unsettled as a
-blocker or an outside finding. Approve plan takes no note, so nothing else carries a point forward.
+blocker or an outside finding. That function is unchanged.
 
 For a `pull_request` help `get_decision` also returns `test_output`, read from the newest
 (`ts`, then `id`, descending) runner `test_command` event of the pull request's run:
@@ -1253,10 +1257,25 @@ and the leftovers wait for a later start.
 
 **The plan gate.** A plan not marked `confidence: high` stops at the end of the planner's process:
 the runner raises a `plan` approval with the plan as its context, inside the still-open Plan
-phase. Approve plan ends the phase and starts Build; an answer in words resumes the planner's
-session, and its revised plan meets the gate again. The gate's Suggest an answer saves either
-Approve plan alone or words alone, and words only for a change the plan must make before Build;
-small notes stay in its reasoning. A plan's rendered text is limited to 20,000
+phase. Approve plan, with or without a note, ends the phase and starts Build and resumes no session; an
+answer in words alone resumes the planner's session, and its revised plan meets the gate again.
+The gate's Suggest an answer saves Approve plan alone, Approve plan with a short note for the
+builder (small conditions Build should keep), or words alone, and words alone only for a change
+the plan must make before Build.
+
+_The plan note._ The words of the Approve plan answer are the plan's note. The claim of a delivery
+run carries `plan_note: string | null`, computed by `planNote` in `plan-history.ts`: the trimmed
+words of the answered `plan` approval of option `approve` whose `context_md` equals the text of the
+plan the run builds from, as for "accepted" below. For a run holding a copied plan the note comes
+from the run the copy was made from (`copied_from_run`), and a copy of a copy follows the chain
+back to the run whose gate approved the plan. It is `null` when no approval exists (a
+high-confidence plan) or its words are blank; an older board's absent field reads as `null`. No
+migration: the note is the stored answer's `text`, at most 4,000 characters. Every Build handoff of
+the run, on every attempt, and every Verify handoff carries it in one escaped `<plan_note>`
+element; the Plan handoff never does. The builder keeps each point while following the plan; the
+note is not a criterion and never overrides the spec, and a point that needs a file the plan does
+not list goes through an `out_of_plan` request. The verifier judges the criteria as always, and its
+summary lists each point of the note and whether the branch kept it; the list sets no verdict. A plan's rendered text is limited to 20,000
 characters, the most a `plan` approval's `context_md` holds: `save_plan` refuses a longer plan,
 whatever its confidence, and asks the planner to shorten it. The rendered text escapes each `|` in a
 check as `\|` and writes a line break as a space, so the table holds its columns, and the limit
@@ -1337,7 +1356,7 @@ characters, or unknown>:". It sends nothing.
   empty. The Plan phase's handoff leaves out the answers of the current run, which the planner's
   resume message already carries; the Verify phase's handoff carries every one, with the same
   `<plan_answer>` tags, so the verifier can read the words behind a withdrawal. Build's handoff
-  carries none. Each is one `<plan_answer run="<n>" approved="yes|no">` tag,
+  carries no `<plan_answer>` tag; it carries the approved plan's note as `<plan_note>`. Each is one `<plan_answer run="<n>" approved="yes|no">` tag,
   after the `<previous_plan>` tags. Their trimmed texts total at most 20,000 characters,
   counted before escaping: the runner keeps the newest whole, stops at the first that would
   overflow, leaves every older one out, and adds
@@ -1927,8 +1946,7 @@ options as the kit's `RadioGroup` named by the question — the recommended one'
 "(recommended)", an option's impact is its description — a field for an answer in words, and one
 Send answer. Choosing sends nothing. While an option of a single request is chosen, a Clear choice
 button after the group withdraws it, keeps the words and moves focus to the group's first radio. The
-form explains an approval sent with words before sending anything, and a refusal on length says the
-4,000-character limit. Send answer sends the option, the words or both; with neither it
+form sends an approval with its words, and a refusal on length says the 4,000-character limit. Send answer sends the option, the words or both; with neither it
 marks the words field invalid and focuses it. Answering, Resume and Cancel move focus to the card's
 state line before their controls go. A request's context is rendered Markdown, headings starting at
 `h4` (`h5` for a batch question's); a plan's checks read as a table. A migration's stays plain code.
@@ -1962,10 +1980,10 @@ Each question carries the buttons Suggest an answer and Explain simply (busy whi
 still focusable), and under them a section "Suggested answer" (option label, words, reasoning, what
 the helper is unsure of, and **Use this answer**, which selects the option and fills the words and
 sends nothing) and "In plain words". At a plan gate Use this answer on an approve suggestion
-chooses Approve plan and empties the words field, whatever the suggestion carried and whatever the
-owner had typed; the suggested words stay shown, followed by "Not sent with Approve plan: an
-approval carries no words.", and never reach the run, and the status region says what happened
-("Approve plan chosen." with, when there were words, that they are not sent). A suggestion of
+chooses Approve plan and sets the words field to the suggested note for the builder, or empties it
+when the suggestion has none; the status region says which ("Approve plan chosen, with the suggested
+note for the builder.", "Approve plan chosen. The words field is empty." or "Approve plan
+chosen."). A suggestion of
 words alone fills the words and clears the choice. A result that arrives, or a help that fails with its reason, is
 written into the card's status region as "Suggested answer ready for question 2 of 3", "Explanation
 ready for the open question" or the failure, whichever tab is showing.
