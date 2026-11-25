@@ -1,7 +1,6 @@
 import { Fragment, useId, useRef, useState, type ReactNode } from 'react'
 import { Badge, Button, Radio, RadioGroup } from '@zellige/react'
 import type {
-  ApprovalKind,
   ApprovalOption,
   HelpMode,
   HelpResult,
