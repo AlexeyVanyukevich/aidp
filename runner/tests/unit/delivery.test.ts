@@ -335,6 +335,29 @@ describe('a re-planning run', () => {
   })
 })
 
+describe('a run with a plan note', () => {
+  const ELEMENT = '<plan_note>\nKeep tests in tests/unit.\n</plan_note>'
+  it('AC7: both Build handoffs and the Verify handoff carry it, through a failed Verify', async () => {
+    const h = harness({ verdicts: ['fail', 'pass'] })
+    const work = {
+      kind: 'start',
+      run: { ...RUN, plan_note: 'Keep tests in tests/unit.' },
+    } as Extract<Work, { kind: 'start' }>
+    await carryOut(work, h.deps)
+    expect(h.handoffs['build-1']).toContain(ELEMENT)
+    expect(h.handoffs['verify-1']).toContain(ELEMENT)
+    expect(h.handoffs['build-2']).toContain(ELEMENT)
+    expect(h.handoffs['verify-2']).toContain(ELEMENT)
+    expect(h.handoffs['plan-1']).not.toContain('<plan_note')
+  })
+  it('a claim without the field gives handoffs without it', async () => {
+    const h = harness({})
+    await carryOut(START as Extract<Work, { kind: 'start' }>, h.deps)
+    expect(h.handoffs['build-1']).not.toContain('<plan_note')
+    expect(h.handoffs['verify-1']).not.toContain('<plan_note')
+  })
+})
+
 describe('a re-planning run with plan answers', () => {
   // RUN is run 2: the planner sees run 1's answer, the verifier sees both.
   const answers = [

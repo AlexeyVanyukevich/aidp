@@ -29,6 +29,8 @@ export interface HandoffInput {
   base?: { branch: string; commit?: string }
   /** The owner's words at plan gates on this spec version, oldest first; Plan and Verify only. */
   planAnswers?: { run: number; approved: boolean; text: string }[] | undefined
+  /** Build and Verify: the owner's note on the approved plan, given with Approve plan. */
+  planNote?: string | null | undefined
   /** Build only: the migrations the owner approved, each with the text they reviewed. */
   approvedMigrations?: { path: string; content: string }[] | undefined
   verifyReport?: string
@@ -250,6 +252,12 @@ export function buildHandoff(input: HandoffInput): string {
   if (input.phase === 'plan' || input.phase === 'verify')
     parts.push(...planAnswerTags(input.planAnswers ?? []))
   if (input.plan !== undefined) parts.push(`<plan>\n${escape(input.plan)}\n</plan>`)
+  if (
+    (input.phase === 'build' || input.phase === 'verify') &&
+    input.planNote !== undefined &&
+    input.planNote !== null
+  )
+    parts.push(`<plan_note>\n${escape(input.planNote)}\n</plan_note>`)
   if (input.phase === 'build')
     for (const entry of [...(input.approvedMigrations ?? [])].sort((a, b) =>
       a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
