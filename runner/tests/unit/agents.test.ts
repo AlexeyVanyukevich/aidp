@@ -1025,6 +1025,32 @@ describe('the helper’s instructions for a pull request review', () => {
   })
 })
 
+// The kit's specs made `chore: release X.Y.Z` a requirement, and its builds committed one: a
+// release is the owner's, cut after the merge.
+const NO_RELEASE: { agent: string; clause: string }[] = [
+  ...['spec-writer', 'planner', 'builder'].map((agent) => ({
+    agent,
+    clause:
+      'A task never releases its project: releasing is the owner’s act, after the merge. No requirement, criterion, plan step or commit bumps the project’s version, writes a `chore: release` commit or makes a tag, even when another task waits on a release of this work, and even when the repository’s rules or skills say how a release is cut.',
+  })),
+  {
+    agent: 'spec-writer',
+    clause:
+      'When another task waits on a release of this work, say in ## Out of scope that the owner releases after the merge.',
+  },
+  ...['planner', 'builder'].map((agent) => ({
+    agent,
+    clause:
+      'When the spec or the plan asks for a release, do not carry that part out: ask the owner through request_approval with kind question, then end your turn.',
+  })),
+]
+
+describe('the release, which no run makes', () => {
+  it.each(NO_RELEASE)('the $agent prompt says: $clause', ({ agent, clause }) => {
+    expect(AGENTS[agent]!.prompt).toContain(clause)
+  })
+})
+
 describe('the verifier’s reading of the cuts', () => {
   const prompt = AGENTS.verifier!.prompt
   const clauses = [

@@ -194,6 +194,17 @@ const ASK =
   'If the spec leaves you a choice you cannot settle yourself — an ambiguity, two approaches with real trade-offs — do not guess: call request_approval with the question, up to five options, the one you recommend, and the context the owner needs. When it answers that the run is paused, end your turn at once; the owner’s answer arrives as your next message.'
 
 /**
+ * The kit's spec-writer, reading the commit rule's account of a release, made `chore: release
+ * X.Y.Z` a requirement of a task another project waited on, and its builds committed one.
+ */
+const NO_RELEASE =
+  'A task never releases its project: releasing is the owner’s act, after the merge. No requirement, criterion, plan step or commit bumps the project’s version, writes a `chore: release` commit or makes a tag, even when another task waits on a release of this work, and even when the repository’s rules or skills say how a release is cut.'
+
+/** For a spec written before the rule, or one that slipped past it. */
+const NO_RELEASE_ASKED =
+  'When the spec or the plan asks for a release, do not carry that part out: ask the owner through request_approval with kind question, then end your turn.'
+
+/**
  * How a run puts a finding on the board: it proposes, and only the owner files (the word "file"
  * is the owner's). The four phases that work on the task share it, each with its own ending.
  */
@@ -280,6 +291,7 @@ export const AGENTS: Record<
       'Under Requirements and Acceptance criteria write only items, with no lead-in sentence, and indent a line that continues an item under that item; any other line fails the lint.',
       'Prefer a criterion a run can check: write it so that a test, a command or a line of the diff settles it. A criterion no agent in a run can check, such as one that needs eyes on a screen, a browser or a device, carries owner inside its parentheses, as in `- AC5 (R3, owner): Given … When … Then …`. The owner checks it by hand at the pull request. Write owner exactly so, in lower case; any other word in the parentheses fails the lint.',
       'A criterion’s evidence is something a run holds while Verify runs: the branch’s files and diff, the test command’s output, a command run on the branch’s tree, the build’s closing paragraph, or the board. A criterion that needs a run on the base’s code or the base commit says that the builder makes the run and reports it in its closing paragraph, with the criterion id, the command, the base commit, the counts and the quoted result lines. Never write a criterion whose Then holds only by chance, such as a flaky failure showing in some number of runs. An attempt to reproduce one is a requirement the builder reports on, with no criterion, and the criterion goes on a deterministic proof. Never write a criterion on the session’s review, which no run writes. Ask for the build’s closing paragraph instead.',
+      `${NO_RELEASE} When another task waits on a release of this work, say in ## Out of scope that the owner releases after the merge.`,
       'Save it with save_spec. It answers with the lint: fix what it names and save again until it is clean. Leave ## Open questions empty.',
       PROPOSING('the closing paragraph'),
       PROPOSING_RELATED,
@@ -301,6 +313,8 @@ export const AGENTS: Record<
       'The handoff may also carry <plan_answer> tags: the owner’s answers at earlier plan gates of this task on this spec version, oldest first. approved="yes" means the owner approved that plan while writing them. Your new plan keeps every correction they make. Where the spec or the code rules a correction out, the plan names that correction and says why. Where two answers conflict, the newer one wins, and the plan need not argue against the older one. A <plan_answers_left_out> tag means older answers from the runs it names were not shown.',
       'A correction in the owner’s answers that withdraws or changes one of the approved spec’s criteria goes into `withdrawn` in save_plan, as { criterion, answer }, and not only into prose. A changed criterion counts as withdrawn. `answer` quotes the owner’s words, whole or as an excerpt, and save_plan refuses it otherwise. A withdrawn criterion gets no row in the checks table. A plan with any withdrawal never has confidence high, because the withdrawal takes effect only once the owner approves the plan at the plan gate.',
       'The check for a criterion that carries owner in its parentheses (an owner check) names the hand check the owner will do, plus anything a run can still check for that criterion, for example that a focus style exists in the CSS.',
+      NO_RELEASE,
+      NO_RELEASE_ASKED,
       APPROVAL_NOTE,
       RERUN_NOTE,
       ASK,
@@ -329,6 +343,8 @@ export const AGENTS: Record<
       'A test that cannot fail on the base is saved with a reason instead of a failing run: guards_base, for guards behaviour the base already has, or refactor, for changed only by a refactor, with why it holds.',
       'When a criterion asks for a run on the base’s code or on the base commit, make that run once the code is committed, by the against-the-base procedure above. Put back the base’s version of the files the criterion puts at the base or, for a run on the base commit, of every file the branch changes, and remove a file the base does not have. Run the command the criterion names as many times as the criterion asks. Then restore every file with `git checkout HEAD -- <file>` at once, before any further edit or commit, as above. Then report each such run in your closing paragraph: the criterion’s id, the command, the base commit’s hash, the counts (runs made, passed and failed) and the quoted output lines that show the result. On a later attempt, report every such criterion that no summary in <context> already reports. When a criterion asks for something in your closing paragraph or in “the session’s review”, your closing paragraph gives it.',
       'Commit by the commit rules that CLAUDE.md and the rules it loads give: the message’s form, and splitting the work into commits as they say. Never bypass git hooks: no --no-verify, no -n, no core.hooksPath override. When the commit-msg hook refuses a message, rewrite the message and commit again.',
+      NO_RELEASE,
+      NO_RELEASE_ASKED,
       RERUN_NOTE,
       CHANGES_NOTE_BUILD,
       PLAN_NOTE_BUILD,
