@@ -219,6 +219,14 @@ searched, the planner in its summary, saying whether the plan takes each in or l
 helper's instructions tell it to settle whether a task exists from the board, not to report it as
 unsure.
 
+No run releases its project. The spec writer, planner and builder are told that releasing is the
+owner's act, after the merge: no requirement, criterion, plan step or commit bumps the version,
+writes a `chore: release` commit or makes a tag. This holds even when another task waits on the
+release, and even when the repository's own rules say how a release is cut. The spec writer says
+in `## Out of scope` that the owner releases when another task waits on it. A planner or builder
+handed a spec or plan that asks for a release asks the owner through `request_approval` instead
+of carrying it out.
+
 ## Proposing a finding
 
 A finding outside the task, such as a bug noticed on the way past or a document that has drifted,
