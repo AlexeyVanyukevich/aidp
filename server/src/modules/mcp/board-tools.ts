@@ -27,7 +27,7 @@ import { lintReply, lintText } from '../specs/spec-lint-text.js'
 import { lineDiff } from '../specs/line-diff.js'
 import { parseSpec } from '../specs/spec-parser.js'
 import { SpecRepository } from '../specs/spec.repository.js'
-import { acceptedPlanOf, planAnswers } from '../tasks/plan-history.js'
+import { acceptedPlanOf, answersOn, planAnswers } from '../tasks/plan-history.js'
 import { loadPlanHistory, planToKeepFor } from '../tasks/plan-history.queries.js'
 import { foldKey, filterPattern, parseTaskKey } from './board-read.js'
 import { proposalsOf } from '../proposals/proposal.repository.js'
@@ -1117,7 +1117,7 @@ function registerRunTools(server: McpServer, ctx: ToolContext): void {
       const plan: PlanInput = { ...(input as PlanInput), withdrawn: input.withdrawn ?? [] }
       const spec = await frozenSpec(ctx)
       const { approvals } = await loadPlanHistory(ctx.db, ctx.taskId)
-      const answers = planAnswers(approvals, spec.version).map((a) => a.text)
+      const answers = answersOn(planAnswers(approvals), spec.version).map((a) => a.text)
       const findings = checkPlan(plan, spec, answers)
       if (findings.length > 0) return reply(findingsText('The plan was not saved:', findings), true)
       const body = renderPlan(plan)

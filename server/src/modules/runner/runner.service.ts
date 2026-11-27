@@ -68,8 +68,8 @@ export interface RunWork {
    * A delivery run's earlier plans for a planner starting again: the newest on this spec
    * version, and the newest accepted one when that was not. Empty for a run holding a copied plan.
    */
-  previous_plans: { run: number; accepted: boolean; body_md: string }[]
-  plan_answers: { run: number; approved: boolean; text: string }[]
+  previous_plans: { run: number; spec_version: number; accepted: boolean; body_md: string }[]
+  plan_answers: { run: number; spec_version: number; approved: boolean; text: string }[]
   /** The owner’s note on the plan this run builds from, given with Approve plan; else null. */
   plan_note: string | null
   /** The plan a Re-run copied into this run; the run starts no planner. */
@@ -441,9 +441,19 @@ export class RunnerService {
       const { plans, approvals } = await loadPlanHistory(trx, row.task_id)
       if (kept === undefined)
         previous = previousPlans(plans, approvals, row.spec_version, runId).map(
-          ({ plan, accepted }) => ({ run: plan.runNumber, accepted, body_md: plan.bodyMd }),
+          ({ plan, accepted, specVersion }) => ({
+            run: plan.runNumber,
+            spec_version: specVersion ?? row.spec_version!,
+            accepted,
+            body_md: plan.bodyMd,
+          }),
         )
-      answers = planAnswers(approvals, row.spec_version)
+      answers = planAnswers(approvals).map((a) => ({
+        run: a.run,
+        spec_version: a.specVersion ?? row.spec_version!,
+        approved: a.approved,
+        text: a.text,
+      }))
       note = planNote(plans, approvals, runId)
     }
     const links = await trx
