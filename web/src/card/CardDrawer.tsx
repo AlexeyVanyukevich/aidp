@@ -229,6 +229,42 @@ export function CardDrawer() {
     },
     onSettled: refresh,
   })
+  // Redraft spec: the same note goes to the spec-writer. A blank note sends nothing.
+  const redraft = useMutation({
+    mutationFn: () => api.redraft(taskId, rerunNote),
+    onMutate: () => {
+      setProblem(undefined)
+      setNoteError(undefined)
+    },
+    onError: (error) => {
+      if (
+        error instanceof ApiError &&
+        error.code === 'validation_error' &&
+        JSON.stringify(error.details ?? {}).includes('note')
+      ) {
+        const text = 'The note is longer than 4,000 characters.'
+        setNoteError(text)
+        announceAgain(`Redraft was refused: ${text}`)
+        noteField.current?.focus()
+      } else fail(error)
+    },
+    onSettled: refresh,
+  })
+  const askRedraft = (key: string) => {
+    if (rerunNote.trim() === '') {
+      const text = 'Say what to change in the spec.'
+      setNoteError(text)
+      announceAgain(text)
+      noteField.current?.focus()
+      return
+    }
+    redraft.mutate(undefined, {
+      onSuccess: () => {
+        leave()
+        announce(`${key} goes back to the spec-writer.`)
+      },
+    })
+  }
   const act = useMutation({
     mutationFn: (action: 'cancel' | 'resume') => api.action(taskId, action),
     onMutate: () => setProblem(undefined),
@@ -441,6 +477,11 @@ export function CardDrawer() {
                     Re-run and plan again
                   </Button>
                 )}
+                {offered.redraft && (
+                  <Button busy={redraft.isPending} onClick={() => askRedraft(t.key)}>
+                    Redraft spec
+                  </Button>
+                )}
                 {decisions.includes('stopped_run') && (
                   <HelpButtons modes={[recommend]} onAsk={ask('stopped_run')} />
                 )}
@@ -533,7 +574,7 @@ function RerunNote({
     <div className="rerun-note">
       <Field
         label="Note for the next run"
-        hint="Optional. Sent with either Re-run button."
+        hint="Sent with either Re-run button, or with Redraft spec, which needs it."
         error={error}
       >
         <Textarea

@@ -295,6 +295,7 @@ export const ACTION_LABEL: Record<StoppedRunAction, string> = {
   rerun_again: 'Re-run and plan again',
   rerun_keep: 'Re-run with this plan',
   mark_done: 'Mark done',
+  redraft: 'Redraft spec',
 }
 
 const Part = ({ title, children }: { title: string; children: ReactNode }) => (
