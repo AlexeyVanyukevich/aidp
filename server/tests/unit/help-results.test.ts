@@ -255,6 +255,19 @@ const rows: Row[] = [
     expected: ['action:not_offered'],
   },
   {
+    name: 'redraft, offered on a Failed card',
+    mode: 'recommend',
+    input: { why_stopped: 'w', action: 'redraft', reasoning: 'r', unsure: 'u' },
+    facts: { recommendable: ['rerun_again', 'mark_done', 'redraft'] },
+    expected: [],
+  },
+  {
+    name: 'redraft, not offered on a Blocked card',
+    mode: 'recommend',
+    input: { why_stopped: 'w', action: 'redraft', reasoning: 'r', unsure: 'u' },
+    expected: ['action:not_offered'],
+  },
+  {
     name: 'resume with no checkpoint',
     mode: 'recommend',
     input: { why_stopped: 'w', action: 'resume', reasoning: 'r', unsure: 'u' },

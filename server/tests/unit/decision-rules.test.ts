@@ -134,6 +134,32 @@ describe('stands', () => {
       expected: false,
     },
     {
+      name: 'a Failed card whose redraft ran since: the delivery run is still the subject',
+      decision: 'stopped_run',
+      subject: { run_id: 'd1', task_state: 'failed', block: null },
+      facts: {
+        ...base,
+        taskState: 'failed',
+        latestRunId: 's2',
+        latestDeliveryRunId: 'd1',
+        approvedSpecVersion: 1,
+      },
+      expected: true,
+    },
+    {
+      name: 'a Failed card after a new delivery run failed',
+      decision: 'stopped_run',
+      subject: { run_id: 'd1', task_state: 'failed', block: null },
+      facts: {
+        ...base,
+        taskState: 'failed',
+        latestRunId: 'd2',
+        latestDeliveryRunId: 'd2',
+        approvedSpecVersion: 1,
+      },
+      expected: false,
+    },
+    {
       name: 'Mark done after a new delivery run',
       decision: 'mark_done',
       subject: { task_state: 'review', spec_version: 2, delivery_run_id: 'a' },

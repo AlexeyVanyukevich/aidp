@@ -193,6 +193,60 @@ describe('get_decision for a stopped run', () => {
   })
 })
 
+describe('redraft as a stopped-run action (AC17)', () => {
+  const result = {
+    why_stopped: 'w',
+    action: 'redraft',
+    reasoning: 'AC4 can never pass: the spec must change',
+    unsure: 'u',
+  }
+
+  it('AC17: save_help_result accepts redraft on a Failed card', async () => {
+    const s = await seed({ state: 'failed', run: { status: 'failed' } }, 'stopped_run', 'recommend')
+    const call = await tools(s.taskId, s.helpRunId, s.helpId)
+    const record = JSON.parse((await call('get_decision')).text)
+    expect(record.actions).toContain('redraft')
+    expect(record.recommendable_actions).toContain('redraft')
+    expect((await call('save_help_result', result)).isError).toBe(false)
+  })
+
+  it('AC17: save_help_result refuses redraft on a Blocked card as not offered', async () => {
+    const s = await seed(
+      {
+        state: 'blocked',
+        run: { status: 'blocked', block: { cause: 'runner_lost', stage: 'build' } },
+      },
+      'stopped_run',
+      'recommend',
+    )
+    const call = await tools(s.taskId, s.helpRunId, s.helpId)
+    const saved = await call('save_help_result', result)
+    expect(saved.isError).toBe(true)
+    expect(saved.text).toContain('action: not offered')
+  })
+
+  it('AC17: a Failed card whose redraft failed still reads the delivery run, with the redraft reason', async () => {
+    const s = await seed({ state: 'failed', run: { status: 'failed' } }, 'stopped_run', 'recommend')
+    await db()
+      .insertInto('runs')
+      .values({
+        task_id: s.taskId,
+        kind: 'spec',
+        number: 1,
+        spec_version: 1,
+        status: 'failed',
+        failure_reason: 'the spec phase failed',
+        created_at: new Date(Date.now() + 60_000),
+      })
+      .execute()
+    const call = await tools(s.taskId, s.helpRunId, s.helpId)
+    const record = JSON.parse((await call('get_decision')).text)
+    expect(record.run).toEqual({ kind: 'delivery', number: 1 })
+    expect(record.failure_reason).toBe('tests failed')
+    expect(record.later_spec_run).toEqual({ number: 1, failure_reason: 'the spec phase failed' })
+  })
+})
+
 describe('get_phase_record for a stopped run', () => {
   const rows = [
     { name: 'no entries', count: 0, leftOut: 0, first: null },

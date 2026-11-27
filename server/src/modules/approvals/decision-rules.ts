@@ -37,6 +37,7 @@ export const STOPPED_RUN_ACTIONS = [
   'rerun_again',
   'rerun_keep',
   'mark_done',
+  'redraft',
 ] as const
 export type StoppedRunAction = (typeof STOPPED_RUN_ACTIONS)[number]
 
@@ -86,7 +87,12 @@ export function stoppedRunActions(facts: DecisionFacts): StoppedRunAction[] {
   if (facts.taskState === 'blocked')
     return facts.blockCause === 'approval_expired' ? ['cancel'] : ['resume', 'cancel']
   if (facts.taskState === 'failed')
-    return ['rerun_again', 'mark_done', ...(facts.planToKeep ? (['rerun_keep'] as const) : [])]
+    return [
+      'rerun_again',
+      'mark_done',
+      ...(facts.planToKeep ? (['rerun_keep'] as const) : []),
+      'redraft',
+    ]
   return []
 }
 
@@ -126,7 +132,9 @@ export function subjectOf(
   if (decision === 'spec_review') return { spec_version: facts.latestSpecVersion ?? 0 }
   if (decision === 'stopped_run')
     return {
-      run_id: facts.latestRunId ?? '',
+      // A Failed card's stopped run is its newest delivery run, even when a redraft ran since.
+      run_id:
+        (facts.taskState === 'failed' ? facts.latestDeliveryRunId : facts.latestRunId) ?? '',
       task_state: facts.taskState,
       block: facts.taskState === 'failed' ? null : facts.runBlock,
     }
