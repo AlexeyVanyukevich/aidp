@@ -33,17 +33,19 @@ export interface PlanApprovalRecord {
 /** What the owner wrote at an earlier plan gate. */
 export interface PlanAnswer {
   run: number
+  /** The spec version the answer was given on. */
+  specVersion: number | null
   approved: boolean
   text: string
 }
 
 /**
- * The owner's worded answers at plan gates of any run of this task on this spec version, oldest answered
- * first, ties by approval id. Blank answers are left out; the current run's own are kept.
+ * The owner's worded answers at plan gates of any run of this task on any spec version, oldest
+ * answered first, ties by approval id. Blank answers are left out; the current run's own are
+ * kept. Each carries the version it was given on.
  */
-export function planAnswers(approvals: PlanApprovalRecord[], specVersion: number): PlanAnswer[] {
+export function planAnswers(approvals: PlanApprovalRecord[]): PlanAnswer[] {
   return approvals
-    .filter((a) => a.specVersion === specVersion)
     .map((a) => ({ a, text: (a.answerText ?? '').trim() }))
     .filter(({ text }) => text !== '')
     .sort(
@@ -51,7 +53,17 @@ export function planAnswers(approvals: PlanApprovalRecord[], specVersion: number
         x.a.answeredAt.getTime() - y.a.answeredAt.getTime() ||
         (x.a.id < y.a.id ? -1 : x.a.id > y.a.id ? 1 : 0),
     )
-    .map(({ a, text }) => ({ run: a.runNumber, approved: a.optionId === 'approve', text }))
+    .map(({ a, text }) => ({
+      run: a.runNumber,
+      specVersion: a.specVersion,
+      approved: a.optionId === 'approve',
+      text,
+    }))
+}
+
+/** The answers given on one spec version: what Verify and a withdrawal may rely on. */
+export function answersOn(answers: PlanAnswer[], specVersion: number): PlanAnswer[] {
+  return answers.filter((a) => a.specVersion === specVersion)
 }
 
 /**
@@ -95,12 +107,14 @@ export function acceptedPlanOf(
 export interface PreviousPlan {
   plan: PlanRecord
   accepted: boolean
+  specVersion: number | null
 }
 
 /**
  * What a planner starting again is shown: the newest plan saved on this spec version, and, when
  * that one was never accepted, the newest accepted one before it. The current run's own plans
- * are left out.
+ * are left out. When no earlier run saved a plan on this version, the same rule applies to the
+ * newest earlier version on which one did (AIDP-55).
  */
 export function previousPlans(
   plans: PlanRecord[],
@@ -108,16 +122,25 @@ export function previousPlans(
   specVersion: number,
   excludeRunId?: string,
 ): PreviousPlan[] {
-  const sorted = newestFirst(
-    plans.filter((p) => p.specVersion === specVersion && p.runId !== excludeRunId),
-  )
-  const newest = sorted[0]
-  if (newest === undefined) return []
-  if (isAccepted(newest, approvals)) return [{ plan: newest, accepted: true }]
+  const others = plans.filter((p) => p.runId !== excludeRunId)
+  let version = specVersion
+  let sorted = newestFirst(others.filter((p) => p.specVersion === version))
+  if (sorted.length === 0) {
+    const earlier = others
+      .flatMap((p) =>
+        p.specVersion !== null && p.specVersion < specVersion ? [p.specVersion] : [],
+      )
+      .sort((x, y) => y - x)[0]
+    if (earlier === undefined) return []
+    version = earlier
+    sorted = newestFirst(others.filter((p) => p.specVersion === version))
+  }
+  const newest = sorted[0]!
+  if (isAccepted(newest, approvals)) return [{ plan: newest, accepted: true, specVersion: version }]
   const older = sorted.slice(1).find((p) => isAccepted(p, approvals))
   return [
-    { plan: newest, accepted: false },
-    ...(older === undefined ? [] : [{ plan: older, accepted: true }]),
+    { plan: newest, accepted: false, specVersion: version },
+    ...(older === undefined ? [] : [{ plan: older, accepted: true, specVersion: version }]),
   ]
 }
 

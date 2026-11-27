@@ -3,6 +3,7 @@ import {
   acceptedPlanOf,
   isAccepted,
   planAnswers,
+  answersOn,
   planNote,
   planToKeep,
   previousPlans,
@@ -106,6 +107,12 @@ describe('planToKeep', () => {
   })
 })
 
+describe('planToKeep, across versions', () => {
+  it('AIDP-55: an accepted plan on v1 is not kept for v2', () => {
+    expect(planToKeep([plan({ id: 'a', confidence: 'high' })], [], 2)).toBeUndefined()
+  })
+})
+
 describe('isAccepted', () => {
   it('accepts a high plan', () => {
     expect(isAccepted(plan({ id: 'a', confidence: 'high' }), [])).toBe(true)
@@ -161,6 +168,52 @@ const PREV: PrevCase[] = [
 ]
 
 describe('previousPlans', () => {
+  interface AcrossCase {
+    name: string
+    plans: PlanRecord[]
+    version: number
+    expected: [string, number, boolean][]
+  }
+  const ACROSS: AcrossCase[] = [
+    {
+      name: 'AIDP-55: plans on v1 only, asked for a v2 run: both v1 plans, the newer first',
+      plans: [plan({ id: 'a', confidence: 'high' }), plan({ id: 'b', runId: 'r2', runNumber: 2 })],
+      version: 2,
+      expected: [
+        ['b', 1, false],
+        ['a', 1, true],
+      ],
+    },
+    {
+      name: 'AIDP-55: an earlier run saved a plan on v2: only v2 plans',
+      plans: [
+        plan({ id: 'a', confidence: 'high' }),
+        plan({ id: 'c', specVersion: 2, runId: 'r3', runNumber: 3, confidence: 'high' }),
+      ],
+      version: 2,
+      expected: [['c', 2, true]],
+    },
+    {
+      name: 'AIDP-55: the newest earlier version with a plan is used, not the oldest',
+      plans: [
+        plan({ id: 'a', confidence: 'high' }),
+        plan({ id: 'b', specVersion: 2, runId: 'r2', runNumber: 2, confidence: 'high' }),
+      ],
+      version: 3,
+      expected: [['b', 2, true]],
+    },
+    {
+      name: 'AIDP-55: a later version is never shown to an earlier run',
+      plans: [plan({ id: 'a', specVersion: 3, confidence: 'high' })],
+      version: 2,
+      expected: [],
+    },
+  ]
+  it.each(ACROSS)('$name', ({ plans, version, expected }) => {
+    const found = previousPlans(plans, [], version)
+    expect(found.map((p) => [p.plan.id, p.specVersion, p.accepted])).toEqual(expected)
+  })
+
   it.each(PREV)('$name', ({ plans, approvals, exclude, expected }) => {
     const found = previousPlans(plans, approvals, 1, exclude)
     expect(found.map((p) => [p.plan.id, p.accepted])).toEqual(expected)
@@ -188,11 +241,11 @@ interface AnswerCase {
   name: string
   approvals: PlanApprovalRecord[]
   version: number
-  expected: { run: number; approved: boolean; text: string }[]
+  expected: { run: number; specVersion: number; approved: boolean; text: string }[]
 }
 const ANSWERS: AnswerCase[] = [
   {
-    name: 'AC1: spec version, approve flag, blank answers; every run, the current one included',
+    name: 'AC1: spec version, approve flag, blank answers; every run and version, the current one included',
     approvals: [
       answer('i1', 2, { answerText: 'two' }),
       answer('i2', 3, { optionId: 'approve', answerText: 'three' }),
@@ -202,9 +255,10 @@ const ANSWERS: AnswerCase[] = [
     ],
     version: 1,
     expected: [
-      { run: 2, approved: false, text: 'two' },
-      { run: 3, approved: true, text: 'three' },
-      { run: 4, approved: false, text: 'four' },
+      { run: 2, specVersion: 1, approved: false, text: 'two' },
+      { run: 3, specVersion: 1, approved: true, text: 'three' },
+      { run: 4, specVersion: 1, approved: false, text: 'four' },
+      { run: 5, specVersion: 2, approved: false, text: 'five' },
     ],
   },
   {
@@ -215,8 +269,8 @@ const ANSWERS: AnswerCase[] = [
     ],
     version: 1,
     expected: [
-      { run: 3, approved: false, text: 'early' },
-      { run: 2, approved: false, text: 'late' },
+      { run: 3, specVersion: 1, approved: false, text: 'early' },
+      { run: 2, specVersion: 1, approved: false, text: 'late' },
     ],
   },
   {
@@ -227,8 +281,8 @@ const ANSWERS: AnswerCase[] = [
     ],
     version: 1,
     expected: [
-      { run: 2, approved: false, text: 'lesser' },
-      { run: 3, approved: false, text: 'greater' },
+      { run: 2, specVersion: 1, approved: false, text: 'lesser' },
+      { run: 3, specVersion: 1, approved: false, text: 'greater' },
     ],
   },
   {
@@ -241,13 +295,26 @@ const ANSWERS: AnswerCase[] = [
     name: 'AC4: text is trimmed',
     approvals: [answer('i1', 2, { answerText: '\n\n keep it \n\n' })],
     version: 1,
-    expected: [{ run: 2, approved: false, text: 'keep it' }],
+    expected: [{ run: 2, specVersion: 1, approved: false, text: 'keep it' }],
   },
 ]
 
 describe('planAnswers', () => {
-  it.each(ANSWERS)('$name', ({ approvals, version, expected }) => {
-    expect(planAnswers(approvals, version)).toEqual(expected)
+  it.each(ANSWERS)('$name', ({ approvals, expected }) => {
+    expect(planAnswers(approvals)).toEqual(expected)
+  })
+
+  it('AIDP-55: answers on v1 and v2, oldest first; answersOn keeps only the asked version', () => {
+    const approvals = [
+      answer('i2', 3, { specVersion: 2, answerText: 'on two' }),
+      answer('i1', 2, { specVersion: 1, answerText: 'on one', optionId: 'approve' }),
+    ]
+    const all = planAnswers(approvals)
+    expect(all).toEqual([
+      { run: 2, specVersion: 1, approved: true, text: 'on one' },
+      { run: 3, specVersion: 2, approved: false, text: 'on two' },
+    ])
+    expect(answersOn(all, 2)).toEqual([{ run: 3, specVersion: 2, approved: false, text: 'on two' }])
   })
 })
 

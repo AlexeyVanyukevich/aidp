@@ -1306,7 +1306,7 @@ describe('claiming a re-run', () => {
     expect(work.run).toMatchObject({
       number: 2,
       kept_plan: null,
-      previous_plans: [{ run: 1, accepted: true, body_md: 'plan one' }],
+      previous_plans: [{ run: 1, spec_version: 1, accepted: true, body_md: 'plan one' }],
     })
   })
 
@@ -1331,7 +1331,7 @@ describe('claiming a re-run', () => {
     expect((await rerun(taskId, 'again')).statusCode).toBe(200)
     const work = (await claim()).json().work
     expect(work.run.plan_answers).toEqual([
-      { run: 1, approved: false, text: 'keep tests in tests/unit' },
+      { run: 1, spec_version: 1, approved: false, text: 'keep tests in tests/unit' },
     ])
   })
 
@@ -1341,7 +1341,7 @@ describe('claiming a re-run', () => {
     expect((await rerun(taskId, 'keep')).statusCode).toBe(200)
     const run = (await claim()).json().work.run
     expect(run.plan_answers).toEqual([
-      { run: 1, approved: false, text: 'keep tests in tests/unit' },
+      { run: 1, spec_version: 1, approved: false, text: 'keep tests in tests/unit' },
     ])
     expect(run.previous_plans).toEqual([])
   })
@@ -1402,8 +1402,8 @@ describe('claiming a re-run', () => {
     const resumed = (await claim()).json().work
     expect(resumed.kind).toBe('resume')
     expect(resumed.run.plan_answers).toEqual([
-      { run: 1, approved: false, text: 'from run one' },
-      { run: 2, approved: false, text: 'from run two' },
+      { run: 1, spec_version: 1, approved: false, text: 'from run one' },
+      { run: 2, spec_version: 1, approved: false, text: 'from run two' },
     ])
   })
 })
