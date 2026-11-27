@@ -24,11 +24,17 @@ export interface HandoffInput {
   summaries: { phase: string; attempt: number; text: string; run?: number }[]
   plan?: string
   /** A planner starting again: the plans of earlier runs, newest first. Never a `<plan>`. */
-  previousPlans?: { run: number; accepted: boolean; text: string }[] | undefined
+  previousPlans?:
+    | { run: number; spec_version?: number | undefined; accepted: boolean; text: string }[]
+    | undefined
   /** Spec phase: the base branch and the commit the worktree reads. Build phase: the branch alone. */
   base?: { branch: string; commit?: string }
   /** The owner's words at plan gates on this spec version, oldest first; Plan and Verify only. */
-  planAnswers?: { run: number; approved: boolean; text: string }[] | undefined
+  planAnswers?:
+    | { run: number; spec_version?: number | undefined; approved: boolean; text: string }[]
+    | undefined
+  /** Spec phase of a run queued from Failed: the delivery run that failed, and why. */
+  failedRun?: { run: number; reason: string } | null | undefined
   /** Build and Verify: the owner's note on the approved plan, given with Approve plan. */
   planNote?: string | null | undefined
   /** Build only: the migrations the owner approved, each with the text they reviewed. */
@@ -141,8 +147,14 @@ export function testOutputCut(text: string, path: string): string {
 
 const PLAN_ANSWERS_MAX = 20_000
 
+const versionAttr = (version: number | undefined) =>
+  version === undefined ? '' : ` spec_version="${version}"`
+
 /** The newest answers that fit whole in the bound; the first that does not fit ends the walk. */
-function planAnswerTags(answers: { run: number; approved: boolean; text: string }[]): string[] {
+function planAnswerTags(
+  answers: { run: number; spec_version?: number | undefined; approved: boolean; text: string }[],
+  own: number | undefined,
+): string[] {
   let total = 0
   let kept = answers.length
   for (let i = answers.length - 1; i >= 0; i--) {
@@ -157,7 +169,7 @@ function planAnswerTags(answers: { run: number; approved: boolean; text: string 
     .slice(kept)
     .map(
       (a) =>
-        `<plan_answer run="${a.run}" approved="${a.approved ? 'yes' : 'no'}">\n${escape(a.text)}\n</plan_answer>`,
+        `<plan_answer run="${a.run}"${versionAttr(a.spec_version ?? own)} approved="${a.approved ? 'yes' : 'no'}">\n${escape(a.text)}\n</plan_answer>`,
     )
   const left = answers.slice(0, kept)
   if (left.length > 0) {
@@ -220,6 +232,10 @@ export function buildHandoff(input: HandoffInput): string {
     parts.push(`<spec version="${input.specVersion}">\n${escape(input.specMd)}\n</spec>`)
   if (input.phase === 'plan' && input.approvalNote !== undefined)
     parts.push(`<approval_note>\n${escape(input.approvalNote)}\n</approval_note>`)
+  if (input.phase === 'spec' && input.failedRun !== undefined && input.failedRun !== null)
+    parts.push(
+      `<failed_run run="${input.failedRun.run}">\n${escape(input.failedRun.reason)}\n</failed_run>`,
+    )
   if (input.note !== undefined) parts.push(`<note>\n${escape(input.note)}\n</note>`)
   if (input.rerunNote !== undefined)
     parts.push(`<rerun_note>\n${escape(input.rerunNote)}\n</rerun_note>`)
@@ -247,10 +263,10 @@ export function buildHandoff(input: HandoffInput): string {
     )
   for (const previous of input.previousPlans ?? [])
     parts.push(
-      `<previous_plan run="${previous.run}" accepted="${previous.accepted ? 'yes' : 'no'}">\n${escape(cut('previous plan', previous.text, 20_000))}\n</previous_plan>`,
+      `<previous_plan run="${previous.run}"${versionAttr(previous.spec_version ?? input.specVersion)} accepted="${previous.accepted ? 'yes' : 'no'}">\n${escape(cut('previous plan', previous.text, 20_000))}\n</previous_plan>`,
     )
   if (input.phase === 'plan' || input.phase === 'verify')
-    parts.push(...planAnswerTags(input.planAnswers ?? []))
+    parts.push(...planAnswerTags(input.planAnswers ?? [], input.specVersion))
   if (input.plan !== undefined) parts.push(`<plan>\n${escape(input.plan)}\n</plan>`)
   if (
     (input.phase === 'build' || input.phase === 'verify') &&

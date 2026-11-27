@@ -29,6 +29,7 @@ export async function draftSpec(
       description: task.description_md,
       ...(run.spec === null ? {} : { specVersion: run.spec.version, specMd: run.spec.body_md }),
       ...(run.note === null ? {} : { note: run.note }),
+      failedRun: run.failed_run ?? null,
       budgetUsd: task.budget_usd,
       summaries: [],
       linked: linkedForHandoff(runDir),

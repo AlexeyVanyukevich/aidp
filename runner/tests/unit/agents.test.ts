@@ -115,6 +115,27 @@ describe('the agents', () => {
 })
 
 // Slice 3 spec §5: the spec-writer reads and asks; it writes nothing but the spec.
+describe('the prompts of AIDP-55', () => {
+  it('AC9: the spec-writer reads <failed_run> as context, never a requirement', () => {
+    const prompt = AGENTS['spec-writer']!.prompt
+    expect(prompt).toContain('<failed_run run="n">')
+    expect(prompt).toContain('why the last delivery run failed')
+    expect(prompt).toContain('never a requirement')
+  })
+  it('AC9: the planner weighs an earlier version’s plan or answer against the current spec', () => {
+    const prompt = AGENTS.planner!.prompt
+    expect(prompt).toContain('spec_version')
+    expect(prompt).toContain('The current spec wins')
+    expect(prompt).toContain('a withdrawal can quote only an answer on the current version')
+    expect(prompt).not.toContain('saved on this spec version')
+  })
+  it('AC18: the helper says when to recommend redraft', () => {
+    const prompt = AGENTS.helper!.prompt
+    expect(prompt).toContain('recommend redraft when the spec itself is wrong')
+    expect(prompt).toContain('names what the spec must change')
+  })
+})
+
 describe('the spec-writer', () => {
   const TOOLS = [
     'Read',

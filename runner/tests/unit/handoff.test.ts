@@ -263,7 +263,9 @@ describe('buildHandoff with previous plans', () => {
     {
       name: 'AC9: one accepted plan',
       previous: [{ run: 1, accepted: true, text: 'plan <one>' }],
-      tags: ['<previous_plan run="1" accepted="yes">\nplan &lt;one&gt;\n</previous_plan>'],
+      tags: [
+        '<previous_plan run="1" spec_version="3" accepted="yes">\nplan &lt;one&gt;\n</previous_plan>',
+      ],
     },
     {
       name: 'AC10: an unaccepted newest and an accepted older one, in that order',
@@ -272,8 +274,8 @@ describe('buildHandoff with previous plans', () => {
         { run: 1, accepted: true, text: 'one' },
       ],
       tags: [
-        '<previous_plan run="2" accepted="no">\ntwo\n</previous_plan>',
-        '<previous_plan run="1" accepted="yes">\none\n</previous_plan>',
+        '<previous_plan run="2" spec_version="3" accepted="no">\ntwo\n</previous_plan>',
+        '<previous_plan run="1" spec_version="3" accepted="yes">\none\n</previous_plan>',
       ],
     },
   ]
@@ -364,8 +366,8 @@ describe('buildHandoff with plan answers', () => {
     })
     const at = [
       '<previous_plan',
-      '<plan_answer run="2" approved="no">\nuse &lt;tests&gt;\n</plan_answer>',
-      '<plan_answer run="3" approved="yes">\nok\n</plan_answer>',
+      '<plan_answer run="2" spec_version="3" approved="no">\nuse &lt;tests&gt;\n</plan_answer>',
+      '<plan_answer run="3" spec_version="3" approved="yes">\nok\n</plan_answer>',
       '<constraints>',
     ].map((t) => text.indexOf(t))
     expect(at.every((i) => i >= 0)).toBe(true)
@@ -387,6 +389,49 @@ describe('buildHandoff with plan answers', () => {
     const text = buildHandoff({ ...BASE, phase: 'verify', planAnswers: answers })
     expect(tagRuns(text)).toEqual([1, 2, 3, 4, 5])
     expect(text).toContain('<plan_answers_left_out count="1" runs="1"/>')
+  })
+})
+
+describe('buildHandoff with spec versions on earlier plans and answers (AIDP-55)', () => {
+  const PLANNER = { ...BASE, phase: 'plan' as const, attempt: 1, summaries: [], specVersion: 2 }
+  it('AC13: tags carry the version they were given on', () => {
+    const text = buildHandoff({
+      ...PLANNER,
+      previousPlans: [{ run: 1, spec_version: 1, accepted: true, text: 'p' }],
+      planAnswers: [{ run: 1, spec_version: 1, approved: false, text: 'a' }],
+    })
+    expect(text).toContain('<previous_plan run="1" spec_version="1" accepted="yes">')
+    expect(text).toContain('<plan_answer run="1" spec_version="1" approved="no">')
+  })
+  it('AC13: a verify handoff tags its answer with its own version', () => {
+    const text = buildHandoff({
+      ...BASE,
+      phase: 'verify',
+      specVersion: 2,
+      planAnswers: [{ run: 2, spec_version: 2, approved: true, text: 'a' }],
+    })
+    expect(text).toContain('<plan_answer run="2" spec_version="2" approved="yes">')
+  })
+  it('AC13: an entry without a version is tagged with the handoff’s own', () => {
+    const text = buildHandoff({
+      ...PLANNER,
+      previousPlans: [{ run: 1, accepted: true, text: 'p' }],
+      planAnswers: [{ run: 1, approved: false, text: 'a' }],
+    })
+    expect(text).toContain('<previous_plan run="1" spec_version="2" accepted="yes">')
+    expect(text).toContain('<plan_answer run="1" spec_version="2" approved="no">')
+  })
+})
+
+describe('buildHandoff with a failed delivery run (AIDP-55)', () => {
+  const SPEC = { ...BASE, phase: 'spec' as const, attempt: 1, summaries: [] }
+  it('AC8: one escaped <failed_run> element when the run is given', () => {
+    const text = buildHandoff({ ...SPEC, failedRun: { run: 4, reason: 'AC4 <b>&' } })
+    expect(text.match(/<failed_run/g)).toHaveLength(1)
+    expect(text).toContain('<failed_run run="4">\nAC4 &lt;b&gt;&amp;\n</failed_run>')
+  })
+  it.each([undefined, null])('AC8: %j adds no element', (failedRun) => {
+    expect(buildHandoff({ ...SPEC, failedRun })).not.toContain('<failed_run')
   })
 })
 
