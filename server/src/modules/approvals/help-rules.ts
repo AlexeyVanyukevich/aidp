@@ -8,6 +8,7 @@ import type {
   QuestionHelpMode,
 } from '../../shared/vocabulary.js'
 import { missingLabels, TITLE_LIMIT } from '../proposals/proposal.rules.js'
+import { STOPPED_RUN_ACTIONS } from './decision-rules.js'
 import type { ApprovalOption, BatchQuestion, Finding } from './approval-rules.js'
 
 /**
@@ -336,7 +337,7 @@ const ALL_RESULT_FIELDS = [
   'answers',
 ] as const
 
-const ACTION_IDS = ['resume', 'cancel', 'rerun_again', 'rerun_keep', 'mark_done']
+const ACTION_IDS: readonly string[] = STOPPED_RUN_ACTIONS
 const FINDING_KINDS = ['missing', 'contradiction', 'uncheckable', 'risk']
 const PLAN_FINDING_KINDS = ['uncovered', 'missing_file', 'risk', 'simpler']
 const DESTINATIONS = ['blocker', 'next_gate', 'outside']

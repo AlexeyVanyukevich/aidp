@@ -612,8 +612,28 @@ async function decisionRecord(ctx: ToolContext, helpId: string, head: HelpHead) 
             .where('id', '=', kept.id)
             .executeTakeFirstOrThrow()
     const resumable = run.checkpoint !== null
+    // A redraft that ran since this delivery run stopped is context for the owner's choice.
+    const newer = await ctx.db
+      .selectFrom('runs')
+      .select(['number', 'failure_reason'])
+      .where('task_id', '=', ctx.taskId)
+      .where('kind', '=', 'spec')
+      .where('created_at', '>', (eb) =>
+        eb.selectFrom('runs as r').select('r.created_at').where('r.id', '=', run.id),
+      )
+      .orderBy('created_at', 'desc')
+      .executeTakeFirst()
+    const newerReason = newer?.failure_reason?.trim() ?? ''
     return {
       ...common,
+      ...(newer === undefined
+        ? {}
+        : {
+            later_spec_run: {
+              number: newer.number,
+              ...(newerReason === '' ? {} : { failure_reason: newerReason }),
+            },
+          }),
       run: { kind: run.kind, number: run.number },
       block: run.block,
       failure_reason: run.failure_reason,
