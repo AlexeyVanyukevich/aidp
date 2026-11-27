@@ -85,8 +85,7 @@ const TABLE: Record<
   // task whose latest version is approved came from Failed (AIDP-55).
   drop_draft: {
     from: ['spec_draft', 'needs_approval', 'blocked'],
-    to: (facts) =>
-      !facts.hasSpec ? 'backlog' : facts.latestApproved ? 'failed' : 'spec_review',
+    to: (facts) => (!facts.hasSpec ? 'backlog' : facts.latestApproved ? 'failed' : 'spec_review'),
   },
 }
 

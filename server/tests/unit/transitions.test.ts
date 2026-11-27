@@ -7,7 +7,13 @@ const FIRST_DRAFT: Facts = { run: 'spec', hasSpec: false, latestApproved: false 
 const REDRAFT: Facts = { run: 'spec', hasSpec: true, latestApproved: false }
 const FROM_FAILED: Facts = { run: 'spec', hasSpec: true, latestApproved: true }
 const CONTINUING: Facts = { run: 'delivery', hasSpec: true, latestApproved: true, continuing: true }
-const PR_CLOSED: Facts = { run: 'delivery', hasSpec: true, latestApproved: true, continuing: true, prClosed: true }
+const PR_CLOSED: Facts = {
+  run: 'delivery',
+  hasSpec: true,
+  latestApproved: true,
+  continuing: true,
+  prClosed: true,
+}
 
 /**
  * The rows of the MVP spec's §5 table that slices 1 to 3 build — slice 2's from its own spec's
