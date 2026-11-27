@@ -26,6 +26,11 @@ export interface RunWork {
   spec_version: number | null
   /** What the owner asked a redraft to change. */
   note: string | null
+  /**
+   * A spec run queued from Failed: the task's newest delivery run and why it failed; else null.
+   * Such a run's base version is approved.
+   */
+  failed_run: { run: number; reason: string } | null
   /** A rephrase run's: the description as it stood when the run was queued. */
   base_md: string | null
   task: {
@@ -420,6 +425,7 @@ export class RunnerService {
         'specs.body_md',
         'specs.criteria',
         'specs.approval_note',
+        'specs.status as spec_status',
       ])
       .where('runs.id', '=', runId)
       .executeTakeFirstOrThrow()
@@ -437,6 +443,18 @@ export class RunnerService {
     let previous: RunWork['previous_plans'] = []
     let answers: RunWork['plan_answers'] = []
     let note: string | null = null
+    let failedRun: RunWork['failed_run'] = null
+    if (row.kind === 'spec' && row.spec_status === 'approved') {
+      const failed = await trx
+        .selectFrom('runs')
+        .select(['number', 'failure_reason'])
+        .where('task_id', '=', row.task_id)
+        .where('kind', '=', 'delivery')
+        .orderBy('number', 'desc')
+        .executeTakeFirst()
+      const reason = failed?.failure_reason?.trim() ?? ''
+      if (failed !== undefined && reason !== '') failedRun = { run: failed.number, reason }
+    }
     if (row.kind === 'delivery' && row.spec_version !== null) {
       const { plans, approvals } = await loadPlanHistory(trx, row.task_id)
       if (kept === undefined)
@@ -476,6 +494,7 @@ export class RunnerService {
       kind: row.kind,
       spec_version: row.spec_version,
       note: row.note,
+      failed_run: failedRun,
       base_md: row.base_md,
       task: {
         id: row.task_id,
