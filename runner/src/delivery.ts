@@ -296,6 +296,7 @@ export async function carryOut(
         ...(approvalNote === null || approvalNote === undefined ? {} : { approvalNote }),
         previousPlans: (run.previous_plans ?? []).map((p) => ({
           run: p.run,
+          spec_version: p.spec_version,
           accepted: p.accepted,
           text: p.body_md,
         })),
@@ -376,7 +377,10 @@ export async function carryOut(
       plan: plan.body_md,
       testOutput: { text: output, path: resolve(runDir, TEST_OUTPUT_FILE) },
       diff: { text: diff, path: resolve(runDir, VERIFY_DIFF_FILE) },
-      planAnswers: run.plan_answers ?? [],
+      // Verify relies only on the answers given on the version it checks.
+      planAnswers: (run.plan_answers ?? []).filter(
+        (a) => a.spec_version === undefined || a.spec_version === run.spec_version,
+      ),
     })
   }
 

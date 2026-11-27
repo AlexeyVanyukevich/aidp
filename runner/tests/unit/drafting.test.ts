@@ -160,3 +160,33 @@ describe('a spec run resumed at the spec stage', () => {
     expect(readFileSync(join(dir, 'spec-base.txt'), 'utf8')).toBe(written)
   })
 })
+
+describe('a spec run queued from Failed (AIDP-55)', () => {
+  const FAILED = { run: 3, reason: 'verify failed on attempt 3: AC4 <b>' }
+  const withFailed: RunWork = { ...SPEC_RUN, failed_run: FAILED }
+  const element = '<failed_run run="3">\nverify failed on attempt 3: AC4 &lt;b&gt;\n</failed_run>'
+
+  it('AC8: a new run’s handoff carries one <failed_run> element', async () => {
+    const h = harness({})
+    await draft({ kind: 'start', run: withFailed }, h)
+    expect(h.handoffs['spec-1']).toContain(element)
+    expect(h.handoffs['spec-1']?.match(/<failed_run/g)).toHaveLength(1)
+  })
+
+  it('AC8: a resume whose session is gone restarts with the element too', async () => {
+    const h = harness({ acts: { 'spec-1': ['gone', 'ok'] } })
+    await draft({ ...(specResume(INTERRUPTED) as object), run: withFailed } as Work, h)
+    expect(h.restarts).toHaveLength(1)
+    expect(h.restarts[0]?.handoff).toContain(element)
+    expect(h.restarts[0]?.handoff.match(/<failed_run/g)).toHaveLength(1)
+  })
+
+  it.each([
+    ['null', { ...SPEC_RUN, failed_run: null }],
+    ['absent', SPEC_RUN],
+  ])('AC8: a run with failed_run %s carries none', async (_name, run) => {
+    const h = harness({})
+    await draft({ kind: 'start', run }, h)
+    expect(h.handoffs['spec-1']).not.toContain('<failed_run')
+  })
+})

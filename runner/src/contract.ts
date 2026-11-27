@@ -135,6 +135,8 @@ export interface RunWork {
   spec_version: number | null
   /** What the owner asked a redraft to change. */
   note: string | null
+  /** A spec run queued from Failed: the newest delivery run and why it failed; absent from an older board. */
+  failed_run?: { run: number; reason: string } | null
   /** A rephrase run's: the description as it stood when queued; absent from an older board. */
   base_md?: string | null
   task: {
@@ -167,9 +169,9 @@ export interface RunWork {
   /** The projects this one links to, read-only, ordered by key; absent from an older board. */
   links?: LinkedProject[]
   /** Earlier plans for a planner starting again; absent from an older board. */
-  previous_plans?: { run: number; accepted: boolean; body_md: string }[]
+  previous_plans?: { run: number; spec_version?: number; accepted: boolean; body_md: string }[]
   /** The owner's words at earlier plan gates on this spec version; absent from an older board. */
-  plan_answers?: { run: number; approved: boolean; text: string }[]
+  plan_answers?: { run: number; spec_version?: number; approved: boolean; text: string }[]
   /** The owner's note on the approved plan, given with Approve plan; absent from an older board. */
   plan_note?: string | null
   /** The plan a Re-run copied into this run: no planner starts. Absent from an older board. */

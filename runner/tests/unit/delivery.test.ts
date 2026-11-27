@@ -328,7 +328,7 @@ describe('a re-planning run', () => {
     } as Extract<Work, { kind: 'start' }>
     await carryOut(work, h.deps)
     expect(h.handoffs['plan-1']).toContain(
-      '<previous_plan run="1" accepted="yes">\nold plan\n</previous_plan>',
+      '<previous_plan run="1" spec_version="1" accepted="yes">\nold plan\n</previous_plan>',
     )
     expect(h.handoffs['plan-1']).not.toContain('<plan>')
     expect(h.of('approval_requested')).toHaveLength(1)
@@ -371,8 +371,10 @@ describe('a re-planning run with plan answers', () => {
       { kind: 'start' }
     >
     await carryOut(work, h.deps)
-    const one = '<plan_answer run="1" approved="no">\nkeep tests in tests/unit\n</plan_answer>'
-    const two = '<plan_answer run="2" approved="no">\nDrop AC2: the file is gone.\n</plan_answer>'
+    const one =
+      '<plan_answer run="1" spec_version="1" approved="no">\nkeep tests in tests/unit\n</plan_answer>'
+    const two =
+      '<plan_answer run="2" spec_version="1" approved="no">\nDrop AC2: the file is gone.\n</plan_answer>'
     expect(h.handoffs['plan-1']).toContain(one)
     expect(h.handoffs['plan-1']).not.toContain('run="2"')
     expect(h.handoffs['verify-1']).toContain(one)
@@ -389,6 +391,25 @@ describe('a re-planning run with plan answers', () => {
     >
     await carryOut(work, h.deps)
     expect(h.handoffs['verify-1']).toContain('<plan_answers_left_out count="1" runs="1"/>')
+  })
+
+  it('AIDP-55: the planner is handed answers of every version, the verifier only its own', async () => {
+    const h = harness({})
+    const mixed = [
+      { run: 1, spec_version: 0, approved: false, text: 'on an earlier spec' },
+      { run: 1, spec_version: 1, approved: true, text: 'on this spec' },
+    ]
+    const work = { kind: 'start', run: { ...RUN, plan_answers: mixed } } as Extract<
+      Work,
+      { kind: 'start' }
+    >
+    await carryOut(work, h.deps)
+    expect(h.handoffs['plan-1']).toContain('<plan_answer run="1" spec_version="0" approved="no">')
+    expect(h.handoffs['plan-1']).toContain('<plan_answer run="1" spec_version="1" approved="yes">')
+    expect(h.handoffs['verify-1']).not.toContain('on an earlier spec')
+    expect(h.handoffs['verify-1']).toContain(
+      '<plan_answer run="1" spec_version="1" approved="yes">',
+    )
   })
 
   it('AC8: a claim without the field gives a handoff without the tag', async () => {
