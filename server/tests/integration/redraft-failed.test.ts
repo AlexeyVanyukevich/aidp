@@ -112,6 +112,54 @@ describe('Redraft from Failed', () => {
   })
 })
 
+describe('Re-run with the plan kept, after a new version is approved', () => {
+  it('answers 409 and moves nothing when the accepted plan is on an earlier version', async () => {
+    const taskId = await failedTask()
+    const run1 = await db()
+      .selectFrom('runs')
+      .select('id')
+      .where('task_id', '=', taskId)
+      .where('number', '=', 1)
+      .executeTakeFirstOrThrow()
+    await db()
+      .insertInto('artifacts')
+      .values({
+        run_id: run1.id,
+        phase_id: null,
+        kind: 'plan',
+        body_md: 'the plan',
+        data: JSON.stringify({
+          confidence: 'high',
+          steps: [{ title: 's', requirements: ['R1'], files: ['a.ts'] }],
+        }),
+      })
+      .execute()
+    expect((await getTask(taskId)).plan_to_keep).toEqual({ run: 1 })
+    await db()
+      .insertInto('specs')
+      .values({
+        task_id: taskId,
+        version: 2,
+        body_md: GOOD_SPEC,
+        status: 'approved',
+        approved_at: new Date(),
+        criteria: JSON.stringify([]),
+      })
+      .execute()
+    const before = await runsOf(taskId)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/tasks/${taskId}/actions/rerun`,
+      payload: { plan: 'keep' },
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json().error).toBe('conflict')
+    expect(await stateOf(taskId)).toBe('failed')
+    expect((await getTask(taskId)).plan_to_keep).toBeNull()
+    expect(await runsOf(taskId)).toEqual(before)
+  })
+})
+
 describe('Save by hand from Failed', () => {
   it('writes a draft v2, keeps v1 approved and moves the card to Spec review', async () => {
     const taskId = await failedTask()
