@@ -22,7 +22,12 @@ Backlog → (Draft spec, or the owner saves a spec) → Spec draft → Spec revi
 - Backlog → Spec draft on **Draft spec**, which needs a description; Spec review → Spec draft on
   **Redraft**, which needs a note. Spec draft → Spec review when the spec run ends having saved a
   version. A spec run that fails, saves nothing or is cancelled sends its card back where it came
-  from: Spec review if the task has a version, Backlog if not.
+  from: Spec review if the task has a version whose latest is a draft, Backlog if it has none.
+  Failed → Spec draft on **Redraft spec** (the same action and note rules as from Spec review), and
+  Failed → Spec review when the owner saves a spec by hand. A redraft from Failed starts from the
+  approved version, so when its run fails, is cancelled or saves nothing (`drop_draft`) the card
+  returns to Failed, because the task's latest version is approved; a run that saved a version
+  first leaves a draft, and the card goes to Spec review.
 - Spec review → Ready on **Approve spec**, which takes an optional note for the planner (below);
   both Approve spec and Redraft are decided on the Approvals tab (see "The spec gate").
 - Running or Spec draft → Needs approval when an agent asks, or the plan gate stops a plan its
@@ -366,7 +371,13 @@ owner's note, which may be at most 4,000 characters: a longer one is refused wit
 longer than 4,000 characters." beside the field, a blank one with "Say what to change.", and focus
 goes to the field. Spec runs and delivery runs are numbered apart: "Draft 2", "Run 1", and the
 delivery branch `board/<KEY>-r<n>` counts delivery runs only. Claiming a spec run moves no card,
-and one whose card has left Spec draft is cancelled at claim.
+and one whose card has left Spec draft is cancelled at claim. A spec run queued from Failed has
+an approved base version; its claim carries `failed_run: { run, reason }`, the number and trimmed
+`failure_reason` of the task's newest delivery run (`null` when the reason is blank, and for every
+other spec run; an older board's absent field reads as `null`). Every Spec handoff of that run, a
+resume that restarts included, holds one `<failed_run run="<n>">` element with the escaped
+reason. The spec-writer's instructions call it context on why the last delivery run failed: the
+owner's note decides what changes, and the reason is never a requirement in itself.
 
 In a redraft note, a line that begins after its indent with "Open choice, ask me:" leaves the choice
 under the line before it to the owner: the spec-writer asks about it in its batch of questions,
@@ -940,8 +951,8 @@ result is `{ mode: 'suggest_all', answers }`, in the batch's order, each answer 
 `server/src/modules/approvals/decision-rules.ts`, pure and free of the database; it lists each
 decision, its modes and when it is offered, and `tests/fixtures/decisions.json` is the table that
 the server's rules and the web's `actionsFor` and `decisionsFor` are all tested against.
-`spec_review` (modes `review`, `restate`) is offered in Spec review; `stopped_run` (`recommend`)
-on a Failed card, or a Blocked one whose cause is not `approval_expired`; `mark_done` (`check`) in
+`spec_review` (modes `review`, `restate`) is offered in Spec review; `stopped_run` (`recommend`; its actions are `resume`, `cancel`, `rerun_again`, `rerun_keep`,
+`mark_done` and `redraft`, `redraft` for every Failed card and never a Blocked one) on a Failed card, or a Blocked one whose cause is not `approval_expired`; `mark_done` (`check`) in
 Backlog, Spec review, Review and Failed; `pull_request` (`code_review`) in Review when the latest
 delivery run has a pull request (`hasPullRequest`, shown to the web as `has_pull_request`). `POST /api/tasks/:id/helps` takes `{ decision, mode }`:
 inside one transaction it takes the task row lock that `moveTask` takes, checks the decision is
@@ -1338,7 +1349,12 @@ resumed run reads it from there. With plan again the Plan handoff carries it in 
 Verify handoff of the run carries it. It is the owner's word on the earlier run and no
 criterion: the planner's, builder's and verifier's prompts say it never overrides the spec, a
 change to a criterion still goes through the plan gate's withdrawn list, and Verify reads it as
-context only. On a Failed card the Re-run buttons sit beside the field "Note for the next run".
+context only. On a Failed card the Re-run buttons sit beside the field "Note for the next run", whose hint reads
+"Sent with either Re-run button, or with Redraft spec, which needs it." **Redraft spec** sends
+that note to the spec-writer: a note blank after trimming sends nothing and shows "Say what to
+change in the spec." on the field (`aria-invalid`, announced, focus in the field); a note over 4,000
+characters shows "The note is longer than 4,000 characters."; on success focus moves to the state
+line and "<key> goes back to the spec-writer." is announced.
 Use the pull request review appears when a succeeded `code_review` help of the new shape, retired
 or not, names the latest delivery run as its `pr_run_id`; the helps listing returns the newest
 such help for a Failed card. Each finding is put in the note or left out (blockers start in,
@@ -1348,30 +1364,37 @@ characters, or unknown>:". It sends nothing.
 
 - **Re-run and plan again** queues a run whose planner is handed the earlier plans. The
   handoff carries the newest plan any earlier delivery run saved on the same spec version in a
-  `<previous_plan run="<n>" accepted="yes|no">` tag; when that plan was not accepted and an older
-  accepted one exists on the same version, both are carried, the newer first. Each holds the
+  `<previous_plan run="<n>" spec_version="<v>" accepted="yes|no">` tag; when that plan was not
+  accepted and an older accepted one exists on the same version, both are carried, the newer
+  first. When no earlier run saved a plan on the run's own version, the same rule applies to the
+  newest earlier version on which one did. Each holds the
   plan's rendered text (at most 20,000 characters), escaped like the other tags, and is separate
   from the `<plan>` tag Build and Verify get. The planner's instructions call a previous plan a
   starting point to check against the spec and the code and to revise, never to carry out, and
   say `accepted="no"` was never approved. Its new plan meets the plan gate like any plan. With no
   earlier plan on that version the handoff is unchanged.
 
-  The claim also carries `plan_answers: { run, approved, text }[]`, the owner's words at plan
-  gates: the answered `plan` approvals of the task's delivery runs on the same spec version
+  The claim also carries `plan_answers: { run, spec_version, approved, text }[]`, the owner's words
+  at plan gates: the answered `plan` approvals of the task's delivery runs on every spec version
   whose answer text is not blank, the run's own included and a run that holds a kept plan
   included, oldest answered first (ties by approval id), with the text trimmed; `approved` is
   true exactly when the answer chose Approve plan. An older board's absent field counts as
   empty. The Plan phase's handoff leaves out the answers of the current run, which the planner's
-  resume message already carries; the Verify phase's handoff carries every one, with the same
+  resume message already carries; the Verify phase's handoff carries those on the run's own version, with the same
   `<plan_answer>` tags, so the verifier can read the words behind a withdrawal. Build's handoff
-  carries no `<plan_answer>` tag; it carries the approved plan's note as `<plan_note>`. Each is one `<plan_answer run="<n>" approved="yes|no">` tag,
+  carries no `<plan_answer>` tag; it carries the approved plan's note as `<plan_note>`. Each is one `<plan_answer run="<n>" spec_version="<v>" approved="yes|no">` tag,
   after the `<previous_plan>` tags. Their trimmed texts total at most 20,000 characters,
   counted before escaping: the runner keeps the newest whole, stops at the first that would
   overflow, leaves every older one out, and adds
   `<plan_answers_left_out count="<k>" runs="<r1>,<r2>,…"/>` after the last tag. The planner's
   instructions say the new plan keeps every correction, or names the one the spec or the code
   rules out and says why; the newer of two conflicting answers wins; and the left-out tag means
-  older answers were not shown.
+  older answers were not shown. A previous plan or answer whose `spec_version` differs from the
+  `<spec>` element's version was given on an earlier spec: the planner's instructions say the
+  current spec wins over it, a correction is kept where the spec still leaves room and otherwise
+  named with the reason it no longer applies, and `save_plan` accepts a withdrawal only when it
+  quotes an answer on the current version. An older board's entry without `spec_version` reads as
+  the run's own version.
 
 - **Re-run with this plan** is offered, as the primary button, only when the task has a plan to
   keep; the task view reports it as `plan_to_keep: { run }`. In one transaction the run is queued
@@ -1384,8 +1407,11 @@ A plan is **accepted** when its confidence is `high`, when it is a copied plan, 
 chose Approve plan on a `plan` approval of the same run whose context equals the plan's text
 exactly. Only the text ties an approval to a plan; neither the phase nor the time does, and
 whether Build ever started does not matter. The plan to keep is the newest accepted plan of any
-earlier delivery run whose spec version equals the new run's. A Failed card cannot change its
-spec, so every run since the approval carries the same version.
+earlier delivery run whose spec version equals the latest approved version, never a plan saved on
+an earlier one. A Failed card can go back to its spec (Redraft spec, or Edit on the Spec tab); a
+new version, once approved, has no plan to keep until a run saves one, and Re-run with this plan
+then answers `409 conflict`. A planner starting with no kept plan is shown earlier plans across
+versions (below).
 
 A run holding a copied plan starts no planner: it has no Plan phase and raises no plan gate, and
 after `prepare` it goes to Build, whose allowed files are the copied plan's. Its checkpoints name
@@ -2044,8 +2070,8 @@ included. When every finding is left out the words and the choice stay as they w
 finding is left out; <the field's current label> is unchanged." is announced instead.
 
 The card's action bar reads Move up, Move down, Mark done,
-Check what is unfinished, Resume, Cancel run, Re-run with this plan, Re-run and plan again, Suggest
-what to do, each where it is shown. Their results ("Suggested next step", "What is unfinished") sit
+Check what is unfinished, Resume, Cancel run, Re-run with this plan, Re-run and plan again, Redraft
+spec, Suggest what to do, each where it is shown. Their results ("Suggested next step", "What is unfinished") sit
 in one region after the status region and problem notice and before the Test command field, each
 under an `h3`, with no control in them and no button that acts on a result. In Review a card with a pull request shows, on the PR tab right after the paragraph with the
 pull request link, the button Review pull request, then its result before the Files changed
@@ -2090,6 +2116,9 @@ Write spec and Draft spec. In Spec review the formatted view is followed by the 
 section and the action Edit, then the line "Approve or redraft this spec on the Approvals tab." with
 the button "Go to Approvals", which selects the Approvals tab and moves focus to its tab; while the
 editor holds unsaved changes it is disabled and described by "Save or discard your changes first."
+On a Failed card that has a version the formatted view is followed by the action Edit alone: no
+Lint section, no Approvals line, and no "Approved v<n>; frozen for its runs." line, because the card
+can be edited. A hand save from Failed moves the card to Spec review; the description stays fixed.
 The Spec tab holds no decision control: Approve, the note fields, Redraft and the helps are on the
 Approvals tab. Edit (or Write spec)
 opens the editor, a textarea holding the unsaved draft or the shown version, with Save as
