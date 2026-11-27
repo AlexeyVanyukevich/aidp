@@ -2,11 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { MOVES, nextState, type Facts, type Move } from '../../src/modules/tasks/transitions.js'
 import { TASK_STATES, type TaskState } from '../../src/shared/vocabulary.js'
 
-const DELIVERY: Facts = { run: 'delivery', hasSpec: true }
-const FIRST_DRAFT: Facts = { run: 'spec', hasSpec: false }
-const REDRAFT: Facts = { run: 'spec', hasSpec: true }
-const CONTINUING: Facts = { run: 'delivery', hasSpec: true, continuing: true }
-const PR_CLOSED: Facts = { run: 'delivery', hasSpec: true, continuing: true, prClosed: true }
+const DELIVERY: Facts = { run: 'delivery', hasSpec: true, latestApproved: true }
+const FIRST_DRAFT: Facts = { run: 'spec', hasSpec: false, latestApproved: false }
+const REDRAFT: Facts = { run: 'spec', hasSpec: true, latestApproved: false }
+const FROM_FAILED: Facts = { run: 'spec', hasSpec: true, latestApproved: true }
+const CONTINUING: Facts = { run: 'delivery', hasSpec: true, latestApproved: true, continuing: true }
+const PR_CLOSED: Facts = { run: 'delivery', hasSpec: true, latestApproved: true, continuing: true, prClosed: true }
 
 /**
  * The rows of the MVP spec's §5 table that slices 1 to 3 build — slice 2's from its own spec's
@@ -16,6 +17,9 @@ const PR_CLOSED: Facts = { run: 'delivery', hasSpec: true, continuing: true, prC
 const ALLOWED: [TaskState, Move, TaskState, Facts?][] = [
   ['backlog', 'save_spec', 'spec_review'],
   ['spec_review', 'save_spec', 'spec_review'],
+  // AIDP-55: a Failed card goes back to its spec.
+  ['failed', 'save_spec', 'spec_review'],
+  ['failed', 'redraft', 'spec_draft', FROM_FAILED],
   ['spec_review', 'approve', 'ready'],
   ['ready', 'claim', 'running'],
   ['running', 'finish_review', 'review'],
@@ -49,6 +53,9 @@ const ALLOWED: [TaskState, Move, TaskState, Facts?][] = [
   ['needs_approval', 'drop_draft', 'spec_review', REDRAFT],
   ['blocked', 'drop_draft', 'backlog', FIRST_DRAFT],
   ['blocked', 'drop_draft', 'spec_review', REDRAFT],
+  ['spec_draft', 'drop_draft', 'failed', FROM_FAILED],
+  ['needs_approval', 'drop_draft', 'failed', FROM_FAILED],
+  ['blocked', 'drop_draft', 'failed', FROM_FAILED],
   ['spec_draft', 'request_approval', 'needs_approval', FIRST_DRAFT],
   ['spec_draft', 'block', 'blocked', FIRST_DRAFT],
   ['needs_approval', 'answer', 'spec_draft', FIRST_DRAFT],

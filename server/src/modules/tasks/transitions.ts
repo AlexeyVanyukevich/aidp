@@ -36,6 +36,8 @@ export type Move = (typeof MOVES)[number]
 export interface Facts {
   run: 'spec' | 'delivery'
   hasSpec: boolean
+  /** The task's highest spec version is approved: a draft that saved nothing returns to Failed. */
+  latestApproved: boolean
   /** The latest delivery run continues a reviewed run (a send-back): its end goes to Review. */
   continuing?: boolean
   /** A continuing run ended because its pull request is no longer open. */
@@ -43,7 +45,7 @@ export interface Facts {
 }
 
 /** A delivery run on a task with a spec: every move before slice 3 assumes it. */
-export const DELIVERY_FACTS: Facts = { run: 'delivery', hasSpec: true }
+export const DELIVERY_FACTS: Facts = { run: 'delivery', hasSpec: true, latestApproved: true }
 
 /** A run's working state: a spec run drafts, a delivery run runs. */
 const working = (facts: Facts): TaskState => (facts.run === 'spec' ? 'spec_draft' : 'running')
@@ -56,7 +58,7 @@ const TABLE: Record<
   Move,
   { from: readonly TaskState[]; to: TaskState | ((facts: Facts) => TaskState) }
 > = {
-  save_spec: { from: ['backlog', 'spec_review'], to: 'spec_review' },
+  save_spec: { from: ['backlog', 'spec_review', 'failed'], to: 'spec_review' },
   approve: { from: ['spec_review'], to: 'ready' },
   claim: { from: ['ready'], to: 'running' },
   finish_review: { from: ['running'], to: 'review' },
@@ -77,12 +79,14 @@ const TABLE: Record<
   close_pr: { from: ['review'], to: 'failed' },
   send_back: { from: ['review'], to: 'ready' },
   draft_spec: { from: ['backlog'], to: 'spec_draft' },
-  redraft: { from: ['spec_review'], to: 'spec_draft' },
+  redraft: { from: ['spec_review', 'failed'], to: 'spec_draft' },
   finish_draft: { from: ['spec_draft'], to: 'spec_review' },
-  // A draft that failed or was cancelled goes back where it came from (slice 3 spec, §2).
+  // A draft that failed or was cancelled goes back where it came from (slice 3 spec, §2): a
+  // task whose latest version is approved came from Failed (AIDP-55).
   drop_draft: {
     from: ['spec_draft', 'needs_approval', 'blocked'],
-    to: (facts) => (facts.hasSpec ? 'spec_review' : 'backlog'),
+    to: (facts) =>
+      !facts.hasSpec ? 'backlog' : facts.latestApproved ? 'failed' : 'spec_review',
   },
 }
 

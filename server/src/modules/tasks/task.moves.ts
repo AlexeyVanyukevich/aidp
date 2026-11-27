@@ -29,13 +29,15 @@ export async function moveFacts(
     .executeTakeFirst()
   const spec = await db
     .selectFrom('specs')
-    .select('id')
+    .select(['id', 'status'])
     .where('task_id', '=', taskId)
+    .orderBy('version', 'desc')
     .limit(1)
     .executeTakeFirst()
   return {
     run: run?.kind === 'spec' ? 'spec' : 'delivery',
     hasSpec: spec !== undefined,
+    latestApproved: spec?.status === 'approved',
     continuing: run?.kind === 'delivery' && run.continues_run !== null,
   }
 }
