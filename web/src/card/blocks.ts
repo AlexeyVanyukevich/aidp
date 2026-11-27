@@ -27,7 +27,14 @@ export function actionsFor(
   state: TaskState,
   block: Block | null,
   planToKeep: TaskView['plan_to_keep'] = null,
-): { markDone: boolean; resume: boolean; cancel: boolean; rerun: boolean; rerunKeep: boolean } {
+): {
+  markDone: boolean
+  resume: boolean
+  cancel: boolean
+  rerun: boolean
+  rerunKeep: boolean
+  redraft: boolean
+} {
   return {
     markDone: ['review', 'backlog', 'spec_review', 'failed'].includes(state),
     // An expired question is answered in Approvals, not resumed past (spec §2).
@@ -36,6 +43,8 @@ export function actionsFor(
     // "Re-run and plan again" is always there on a Failed card; keeping needs a plan to keep.
     rerun: state === 'failed',
     rerunKeep: state === 'failed' && planToKeep !== null,
+    // A spec found wrong after a failed run goes back to the spec-writer (AIDP-55).
+    redraft: state === 'failed',
   }
 }
 

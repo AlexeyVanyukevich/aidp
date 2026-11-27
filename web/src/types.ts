@@ -150,7 +150,8 @@ export type HelpMode =
 export type HelpDecision =
   'question' | 'spec_review' | 'stopped_run' | 'mark_done' | 'proposal' | 'pull_request'
 export type HelpStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'stopped'
-export type StoppedRunAction = 'resume' | 'cancel' | 'rerun_again' | 'rerun_keep' | 'mark_done'
+export type StoppedRunAction =
+  'resume' | 'cancel' | 'rerun_again' | 'rerun_keep' | 'mark_done' | 'redraft'
 export type FindingDestination = 'blocker' | 'next_gate' | 'outside'
 export type ReviewStep = 'approve' | 'approve_with_note' | 'redraft'
 export type NextStep = 'merge' | 'merge_and_file' | 'fix_by_hand' | 'rerun_keep' | 'rerun_again'

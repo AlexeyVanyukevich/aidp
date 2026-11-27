@@ -25,9 +25,12 @@ export function lintMessage(finding: LintFinding): string {
   }
 }
 
-/** Where `save_spec` is allowed (spec §5); everywhere else the spec is frozen or not yet due. */
+/**
+ * Where `save_spec` is allowed (spec §5, and Failed since AIDP-55); everywhere else the spec is
+ * frozen or not yet due.
+ */
 export function editable(state: TaskState): boolean {
-  return state === 'backlog' || state === 'spec_review'
+  return state === 'backlog' || state === 'spec_review' || state === 'failed'
 }
 
 /** A draft exists while the editor's text differs from its baseline. */

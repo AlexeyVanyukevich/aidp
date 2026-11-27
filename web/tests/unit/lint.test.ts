@@ -53,6 +53,7 @@ describe('editable', () => {
   it.each([
     ['backlog', true],
     ['spec_review', true],
+    ['failed', true],
     ['ready', false],
     ['running', false],
     ['review', false],
@@ -154,6 +155,12 @@ describe('viewHeading', () => {
   })
 })
 
+describe('specControls in Failed', () => {
+  it('AIDP-55: the description stays fixed', () => {
+    expect(specControls('failed').describe).toBe(false)
+  })
+})
+
 describe('viewButtons', () => {
   const none = { edit: false, writeSpec: false, draftSpec: false }
   const rows: {
@@ -189,6 +196,13 @@ describe('viewButtons', () => {
       state: 'spec_review',
       version: true,
       draft: true,
+      expected: { ...none, edit: true },
+    },
+    {
+      name: 'failed, with a version',
+      state: 'failed',
+      version: true,
+      draft: false,
       expected: { ...none, edit: true },
     },
     { name: 'spec draft', state: 'spec_draft', version: true, draft: false, expected: none },

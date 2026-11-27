@@ -40,7 +40,14 @@ describe('blockText', () => {
 })
 
 describe('actionsFor', () => {
-  const none = { markDone: false, resume: false, cancel: false, rerun: false, rerunKeep: false }
+  const none = {
+    markDone: false,
+    resume: false,
+    cancel: false,
+    rerun: false,
+    rerunKeep: false,
+    redraft: false,
+  }
   it.each<[TaskState, Block | null, Partial<typeof none>]>([
     ['backlog', null, { markDone: true }],
     // A draft is cancelled as a run is; its card goes back where it came from (slice 3, §4).
@@ -55,7 +62,7 @@ describe('actionsFor', () => {
     // An expired question is answered, not resumed past (spec §2).
     ['blocked', { cause: 'approval_expired', stage: 'build' }, { cancel: true }],
     ['review', null, { markDone: true }],
-    ['failed', null, { markDone: true, rerun: true }],
+    ['failed', null, { markDone: true, rerun: true, redraft: true }],
     ['done', null, {}],
   ])('offers on a %s card (%j)', (state, block, offered) => {
     expect(actionsFor(state, block)).toEqual({ ...none, ...offered })
@@ -197,6 +204,7 @@ describe('the shared decision table', () => {
         actions.rerun ? 'rerun_again' : null,
         actions.markDone && row.state === 'failed' ? 'mark_done' : null,
         actions.rerunKeep ? 'rerun_keep' : null,
+        actions.redraft ? 'redraft' : null,
       ].filter((action) => action !== null)
       expect(found).toEqual(row.stopped_run_actions)
     },
