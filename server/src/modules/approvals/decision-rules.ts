@@ -133,8 +133,7 @@ export function subjectOf(
   if (decision === 'stopped_run')
     return {
       // A Failed card's stopped run is its newest delivery run, even when a redraft ran since.
-      run_id:
-        (facts.taskState === 'failed' ? facts.latestDeliveryRunId : facts.latestRunId) ?? '',
+      run_id: (facts.taskState === 'failed' ? facts.latestDeliveryRunId : facts.latestRunId) ?? '',
       task_state: facts.taskState,
       block: facts.taskState === 'failed' ? null : facts.runBlock,
     }
