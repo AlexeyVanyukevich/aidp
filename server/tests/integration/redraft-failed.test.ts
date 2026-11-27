@@ -213,3 +213,45 @@ describe('A redraft from Failed that ends without a new version', () => {
     expect(await stateOf(taskId)).toBe('spec_review')
   })
 })
+
+describe('the claim of a spec run', () => {
+  const claimWork = async () =>
+    (
+      await app.inject({
+        method: 'POST',
+        url: '/api/runner/claim',
+        headers: auth,
+        payload: { runner_id: 'r1', wait_ms: 0 },
+      })
+    ).json().work
+
+  it('names the failed delivery run and its reason when queued from Failed', async () => {
+    const taskId = await failedTask()
+    await redraft(taskId, { note: 'AC4 is wrong' })
+    const work = await claimWork()
+    expect(work.run.failed_run).toEqual({ run: 2, reason: REASON })
+  })
+
+  it('carries no failed run when the failure reason is blank', async () => {
+    const taskId = await failedTask()
+    await db()
+      .updateTable('runs')
+      .set({ failure_reason: '  ' })
+      .where('task_id', '=', taskId)
+      .where('number', '=', 2)
+      .execute()
+    await redraft(taskId, { note: 'AC4 is wrong' })
+    expect((await claimWork()).run.failed_run).toBeNull()
+  })
+
+  it('carries none when redrafted from Spec review', async () => {
+    const taskId = await failedTask()
+    await app.inject({
+      method: 'POST',
+      url: `/api/tasks/${taskId}/specs`,
+      payload: { body_md: GOOD_SPEC },
+    })
+    await redraft(taskId, { note: 'again' })
+    expect((await claimWork()).run.failed_run).toBeNull()
+  })
+})
